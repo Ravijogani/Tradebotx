@@ -280,6 +280,47 @@ export type Database = {
         }
         Relationships: []
       }
+      trade_notes: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          screenshot_urls: string[] | null
+          tags: string[] | null
+          trade_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          screenshot_urls?: string[] | null
+          tags?: string[] | null
+          trade_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          screenshot_urls?: string[] | null
+          tags?: string[] | null
+          trade_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trade_notes_trade_id_fkey"
+            columns: ["trade_id"]
+            isOneToOne: false
+            referencedRelation: "trades"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trades: {
         Row: {
           closed_at: string | null

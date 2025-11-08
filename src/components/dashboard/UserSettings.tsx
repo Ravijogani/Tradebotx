@@ -6,12 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, User, Mail, Building2, CreditCard, Settings as SettingsIcon } from "lucide-react";
+import { Loader2, User, Mail, Building2, CreditCard, Settings as SettingsIcon, Palette } from "lucide-react";
+import { useTheme } from "@/components/theme-provider";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const UserSettings = ({ user }: { user: any }) => {
   const [loading, setLoading] = useState(false);
   const [setupData, setSetupData] = useState<any>(null);
   const { toast } = useToast();
+  const { theme, setTheme } = useTheme();
 
   useEffect(() => {
     loadSetupData();
@@ -73,6 +82,39 @@ export const UserSettings = ({ user }: { user: any }) => {
       </div>
 
       <div className="grid gap-6">
+        {/* Appearance Settings */}
+        <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                <Palette className="w-5 h-5 text-accent" />
+              </div>
+              <div>
+                <CardTitle>Appearance</CardTitle>
+                <CardDescription>Customize how TradeBotX looks</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="theme">Theme</Label>
+              <Select value={theme} onValueChange={(value: any) => setTheme(value)}>
+                <SelectTrigger id="theme">
+                  <SelectValue placeholder="Select theme" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="dark">Dark</SelectItem>
+                  <SelectItem value="system">System</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Choose your preferred theme or sync with your system settings
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Account Information */}
         <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
           <CardHeader>

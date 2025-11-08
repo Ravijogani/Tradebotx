@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { StrategySelector } from "./StrategySelector";
-import { TradesList } from "./TradesList";
+import { TradesListEnhanced } from "./TradesListEnhanced";
 import { StatsOverview } from "./StatsOverview";
 import { RiskCalculator } from "./RiskCalculator";
 import { UserSettings } from "./UserSettings";
@@ -15,6 +15,7 @@ import { PerformanceChart } from "./PerformanceChart";
 import { NotificationsCenter } from "./NotificationsCenter";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { AccountHealth } from "./AccountHealth";
+import { ThemeToggle } from "./ThemeToggle";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -75,6 +76,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <ThemeToggle />
                   <NotificationsCenter />
                   <span className="text-sm text-muted-foreground hidden md:inline px-3 py-1.5 rounded-full bg-muted/50">
                     {user.email}
@@ -133,9 +135,11 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   {/* Performance Chart */}
                   <PerformanceChart />
                   
+                  {/* Enhanced Trades List */}
+                  <TradesListEnhanced />
+                  
                   {/* Two Column Layout */}
                   <div className="grid lg:grid-cols-2 gap-6">
-                    <TradesList />
                     <ActivityTimeline />
                   </div>
                   
