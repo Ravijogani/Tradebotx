@@ -65,7 +65,7 @@ export const PricingSection = () => {
             Choose Your Trading Plan
           </h2>
           <p className="text-xl text-muted-foreground">
-            Start with a free trial. No credit card required. Cancel anytime.
+            Start free forever or try premium features with our risk-free trials. No credit card required.
           </p>
         </div>
 
