@@ -45,24 +45,43 @@ export const StrategySelector = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const action = isRunning ? 'stop' : 'start';
-
-      // Call edge function to execute strategy
-      const { data, error } = await supabase.functions.invoke('execute-strategy', {
-        body: {
-          userId: user.id,
-          strategyId: strategyId,
-          action: action,
-        },
-      });
-
-      if (error) throw error;
+      if (isRunning) {
+        // Stop strategy
+        await supabase
+          .from("user_strategies")
+          .update({ 
+            is_running: false,
+            stopped_at: new Date().toISOString()
+          })
+          .eq("user_id", user.id)
+          .eq("strategy_id", strategyId);
+      } else {
+        // Start strategy
+        const existing = userStrategies.find(us => us.strategy_id === strategyId);
+        
+        if (existing) {
+          await supabase
+            .from("user_strategies")
+            .update({ 
+              is_running: true,
+              started_at: new Date().toISOString()
+            })
+            .eq("id", existing.id);
+        } else {
+          await supabase
+            .from("user_strategies")
+            .insert({
+              user_id: user.id,
+              strategy_id: strategyId,
+              is_running: true,
+              started_at: new Date().toISOString()
+            });
+        }
+      }
 
       toast({
-        title: data.message || (isRunning ? "Strategy stopped" : "Strategy started"),
-        description: data.strategyName 
-          ? `${data.strategyName} ${isRunning ? "stopped" : "activated"} successfully`
-          : `Trading strategy ${isRunning ? "stopped" : "activated"} successfully`,
+        title: isRunning ? "Strategy stopped" : "Strategy started",
+        description: `Trading strategy ${isRunning ? "stopped" : "activated"} successfully`,
       });
 
       loadStrategies();
