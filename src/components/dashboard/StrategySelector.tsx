@@ -10,11 +10,39 @@ export const StrategySelector = () => {
   const [strategies, setStrategies] = useState<any[]>([]);
   const [userStrategies, setUserStrategies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [adminApproved, setAdminApproved] = useState(false);
+  const [planType, setPlanType] = useState<string>('');
   const { toast } = useToast();
 
   useEffect(() => {
     loadStrategies();
+    checkApprovalStatus();
   }, []);
+
+  const checkApprovalStatus = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('plans(plan_type)')
+        .eq('user_id', user.id)
+        .single();
+
+      const { data: setup } = await supabase
+        .from('user_setup')
+        .select('admin_approved')
+        .eq('user_id', user.id)
+        .single();
+
+      const type = (subscription?.plans as any)?.plan_type || '';
+      setPlanType(type);
+      setAdminApproved(setup?.admin_approved || false);
+    } catch (error) {
+      console.error('Error checking approval:', error);
+    }
+  };
 
   const loadStrategies = async () => {
     try {
@@ -111,9 +139,26 @@ export const StrategySelector = () => {
         </p>
       </div>
 
+      {(planType === 'free' || planType === 'starter') && !adminApproved && (
+        <Card className="p-6 bg-orange-500/5 border-orange-500/20">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center flex-shrink-0">
+              <TrendingUp className="w-6 h-6 text-orange-500" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-lg">Waiting for Admin Approval</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Your account setup has been submitted. Our admin team will review and approve your broker account details shortly. You'll be able to start trading bots once approved.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {strategies.map((strategy) => {
           const running = isStrategyRunning(strategy.id);
+          const needsApproval = (planType === 'free' || planType === 'starter') && !adminApproved;
           
           return (
             <Card key={strategy.id} className="p-6 space-y-4">
@@ -138,12 +183,15 @@ export const StrategySelector = () => {
                     : "bg-gradient-hero shadow-glow"
                 }`}
                 onClick={() => handleStrategyToggle(strategy.id, running)}
+                disabled={needsApproval && !running}
               >
                 {running ? (
                   <>
                     <Square className="w-4 h-4 mr-2" />
                     Stop Strategy
                   </>
+                ) : needsApproval ? (
+                  "Pending Approval"
                 ) : (
                   <>
                     <Play className="w-4 h-4 mr-2" />

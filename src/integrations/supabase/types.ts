@@ -393,6 +393,11 @@ export type Database = {
       user_setup: {
         Row: {
           account_size: number | null
+          admin_approved: boolean | null
+          approval_notes: string | null
+          broker_account_id: string | null
+          broker_name: string | null
+          broker_referral_code: string | null
           created_at: string
           id: string
           is_completed: boolean
@@ -401,12 +406,18 @@ export type Database = {
           mt5_password: string | null
           mt5_server: string | null
           risk_per_trade: number | null
+          submitted_for_approval_at: string | null
           telegram_chat_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           account_size?: number | null
+          admin_approved?: boolean | null
+          approval_notes?: string | null
+          broker_account_id?: string | null
+          broker_name?: string | null
+          broker_referral_code?: string | null
           created_at?: string
           id?: string
           is_completed?: boolean
@@ -415,12 +426,18 @@ export type Database = {
           mt5_password?: string | null
           mt5_server?: string | null
           risk_per_trade?: number | null
+          submitted_for_approval_at?: string | null
           telegram_chat_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           account_size?: number | null
+          admin_approved?: boolean | null
+          approval_notes?: string | null
+          broker_account_id?: string | null
+          broker_name?: string | null
+          broker_referral_code?: string | null
           created_at?: string
           id?: string
           is_completed?: boolean
@@ -429,6 +446,7 @@ export type Database = {
           mt5_password?: string | null
           mt5_server?: string | null
           risk_per_trade?: number | null
+          submitted_for_approval_at?: string | null
           telegram_chat_id?: string | null
           updated_at?: string
           user_id?: string

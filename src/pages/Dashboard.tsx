@@ -32,7 +32,7 @@ const Dashboard = () => {
       // Check if setup is completed
       const { data: setup } = await supabase
         .from("user_setup")
-        .select("is_completed")
+        .select("is_completed, admin_approved")
         .eq("user_id", session.user.id)
         .single();
 

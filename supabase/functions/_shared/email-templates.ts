@@ -11,49 +11,64 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
   <title>TradeBotX</title>
   ${preheader ? `<style type="text/css">#preheader{display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0}</style>` : ''}
 </head>
-<body style="margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif; background: linear-gradient(135deg, #1a1f2e 0%, #2d1b4e 100%); min-height: 100vh;">
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif; background: #0a0e1a;">
   ${preheader ? `<div id="preheader" style="display: none; max-height: 0px; overflow: hidden;">${preheader}</div>` : ''}
   
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0; padding: 40px 20px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0; padding: 0;">
     <tr>
-      <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: rgba(34, 40, 58, 0.95); border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 40px rgba(79, 70, 229, 0.2); backdrop-filter: blur(10px); border: 1px solid rgba(79, 70, 229, 0.2);">
-          <!-- Header -->
+      <td align="center" style="padding: 40px 20px;">
+        <!-- Main Container -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: #1a1f2e; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);">
+          
+          <!-- Gradient Header -->
           <tr>
-            <td style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); padding: 40px 30px; text-align: center;">
-              <div style="display: inline-block; background: rgba(255, 255, 255, 0.1); padding: 15px 25px; border-radius: 12px; backdrop-filter: blur(10px);">
-                <h1 style="margin: 0; font-size: 32px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);">
-                  🤖 TradeBotX
-                </h1>
-              </div>
+            <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0; position: relative;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="padding: 48px 40px; text-align: center;">
+                    <div style="background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px 32px; display: inline-block; border: 1px solid rgba(255, 255, 255, 0.2);">
+                      <h1 style="margin: 0; font-size: 36px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);">
+                        <span style="font-size: 40px;">🤖</span> TradeBotX
+                      </h1>
+                      <p style="margin: 8px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); font-weight: 500; letter-spacing: 2px; text-transform: uppercase;">Automated Trading Platform</p>
+                    </div>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
           
-          <!-- Content -->
+          <!-- Content Area -->
           <tr>
-            <td style="padding: 40px 30px;">
+            <td style="padding: 48px 40px; background: #1a1f2e;">
               ${content}
             </td>
           </tr>
           
           <!-- Footer -->
           <tr>
-            <td style="padding: 30px; background: rgba(26, 31, 46, 0.8); border-top: 1px solid rgba(79, 70, 229, 0.2);">
+            <td style="padding: 32px 40px; background: #12161f; border-top: 1px solid rgba(102, 126, 234, 0.2);">
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
-                  <td style="text-align: center; padding-bottom: 15px;">
-                    <p style="margin: 0; font-size: 14px; color: #9ca3af; line-height: 1.5;">
+                  <td style="text-align: center; padding-bottom: 20px;">
+                    <p style="margin: 0; font-size: 14px; color: #8b92a7; line-height: 1.6;">
                       This is an automated message from TradeBotX.<br>
-                      Please do not reply to this email.
+                      For support, contact us at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 600;">support@tradebotx.com</a>
                     </p>
                   </td>
                 </tr>
                 <tr>
-                  <td style="text-align: center; padding-top: 15px; border-top: 1px solid rgba(79, 70, 229, 0.1);">
-                    <p style="margin: 0; font-size: 12px; color: #6b7280;">
-                      &copy; ${new Date().getFullYear()} TradeBotX. All rights reserved.<br>
-                      <a href="mailto:support@tradebotx.com" style="color: #4F46E5; text-decoration: none;">support@tradebotx.com</a>
+                  <td style="text-align: center; padding-top: 20px; border-top: 1px solid rgba(102, 126, 234, 0.1);">
+                    <p style="margin: 0 0 12px 0; font-size: 12px; color: #6b7280;">
+                      &copy; ${new Date().getFullYear()} TradeBotX. All rights reserved.
                     </p>
+                    <div style="margin-top: 12px;">
+                      <a href="https://tradebotx.com" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Website</a>
+                      <span style="color: #4b5563;">•</span>
+                      <a href="https://tradebotx.com/terms" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Terms</a>
+                      <span style="color: #4b5563;">•</span>
+                      <a href="https://tradebotx.com/privacy" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Privacy</a>
+                    </div>
                   </td>
                 </tr>
               </table>
@@ -69,44 +84,49 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
 };
 
 export const otpEmailContent = (otpCode: string, type: 'signup' | 'login' | 'forgot-password') => {
+  const icons = {
+    'signup': '✨',
+    'login': '🔐',
+    'forgot-password': '🔑'
+  };
+  
   const titles = {
-    'signup': 'Email Verification',
+    'signup': 'Verify Your Email',
     'login': 'Login Verification',
-    'forgot-password': 'Password Reset'
+    'forgot-password': 'Reset Password'
   };
   
   const descriptions = {
-    'signup': 'Thank you for signing up with TradeBotX! Your automated trading journey starts here.',
-    'login': 'You are attempting to log in to your TradeBotX account.',
-    'forgot-password': 'We received a request to reset your password.'
+    'signup': 'Welcome to TradeBotX! Please verify your email to start your automated trading journey.',
+    'login': 'A login attempt was detected on your TradeBotX account. Please verify it\'s you.',
+    'forgot-password': 'We received a request to reset your TradeBotX account password.'
   };
   
   return `
-    <div style="text-align: center;">
-      <div style="display: inline-block; background: rgba(79, 70, 229, 0.1); padding: 12px 24px; border-radius: 8px; margin-bottom: 30px;">
-        <p style="margin: 0; font-size: 18px; font-weight: 600; color: #4F46E5;">${titles[type]}</p>
-      </div>
+    <div style="text-align: center; margin-bottom: 32px;">
+      <div style="font-size: 64px; margin-bottom: 16px; line-height: 1;">${icons[type]}</div>
+      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">${titles[type]}</h2>
     </div>
     
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Hello,</p>
+    <p style="margin: 0 0 24px 0; font-size: 16px; color: #d1d5db; line-height: 1.7; text-align: center;">
+      ${descriptions[type]}
+    </p>
     
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">${descriptions[type]}</p>
-    
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6; font-weight: 600;">Your verification code is:</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border: 2px solid #4F46E5; border-radius: 12px; padding: 30px; margin: 30px 0; text-align: center; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.2);">
-      <div style="font-size: 48px; font-weight: 800; color: #4F46E5; letter-spacing: 12px; text-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);">${otpCode}</div>
+    <div style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%); border: 2px solid #667eea; border-radius: 16px; padding: 40px; margin: 32px 0; text-align: center; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.2);">
+      <p style="margin: 0 0 16px 0; font-size: 14px; font-weight: 600; color: #a5b4fc; text-transform: uppercase; letter-spacing: 1px;">Your Verification Code</p>
+      <div style="font-family: 'Courier New', monospace; font-size: 56px; font-weight: 900; color: #667eea; letter-spacing: 16px; text-shadow: 0 4px 16px rgba(102, 126, 234, 0.4); margin: 8px 0;">${otpCode}</div>
+      <p style="margin: 16px 0 0 0; font-size: 13px; color: #9ca3af;">Valid for 2 minutes</p>
     </div>
     
-    <div style="background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 15px 20px; border-radius: 8px; margin: 30px 0;">
-      <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.6;">
-        ⚠️ <strong>Important:</strong> This code will expire in 2 minutes. If you didn't request this code, please ignore this email and ensure your account is secure.
+    <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%); border-left: 4px solid #ef4444; padding: 20px 24px; border-radius: 12px; margin: 32px 0;">
+      <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.7;">
+        <strong style="display: block; margin-bottom: 8px;">⚠️ Security Notice</strong>
+        This code expires in 2 minutes. Never share this code with anyone. If you didn't request this, please secure your account immediately.
       </p>
     </div>
     
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Best regards,<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
+    <p style="margin: 32px 0 0 0; font-size: 15px; color: #9ca3af; line-height: 1.7; text-align: center;">
+      Need help? Contact us at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 600;">support@tradebotx.com</a>
     </p>
   `;
 };
