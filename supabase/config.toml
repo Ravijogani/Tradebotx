@@ -15,6 +15,9 @@ verify_jwt = true
 [functions.stop-trading-bot]
 verify_jwt = true
 
+[functions.trigger-bot]
+verify_jwt = true
+
 [functions.send-admin-alert]
 verify_jwt = true
 

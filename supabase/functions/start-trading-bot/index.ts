@@ -28,7 +28,7 @@ serve(async (req) => {
       throw new Error('Not authenticated');
     }
 
-    const { strategyId, strategyName } = await req.json();
+    const { strategyId } = await req.json();
 
     if (!strategyId) {
       throw new Error('Strategy ID is required');
@@ -56,7 +56,7 @@ serve(async (req) => {
     // Get strategy details
     const { data: strategy, error: strategyError } = await supabaseClient
       .from('strategies')
-      .select('*')
+      .select('name, is_active')
       .eq('id', strategyId)
       .single();
 
@@ -65,6 +65,8 @@ serve(async (req) => {
     if (!strategy.is_active) {
       throw new Error('This strategy is currently inactive');
     }
+
+    const strategyName = strategy.name;
 
     // Check if strategy is already running for this user
     const { data: existingStrategy } = await supabaseClient
@@ -98,32 +100,21 @@ serve(async (req) => {
 
     console.log(`User strategy record created/updated: ${userStrategy.id}`);
 
-    // PRODUCTION: Execute Python trading bot
-    // In production environment, you would:
-    // 1. Use a process manager (PM2, Supervisor) or container orchestration
-    // 2. Run the Python script in a dedicated execution environment
-    // 3. Pass user configuration as JSON
-    
-    const botConfig = {
-      user_id: user.id,
-      strategy_id: strategyId,
-      mt5_account: setup.mt5_account,
-      mt5_password: setup.mt5_password,
-      mt5_server: setup.mt5_server,
-      account_size: setup.account_size,
-      risk_per_trade: setup.risk_per_trade,
-      max_positions: setup.max_positions || 3,
-      supabase_url: Deno.env.get('SUPABASE_URL'),
-      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    };
-    
-    console.log(`Starting bot for user ${user.id} with strategy ${strategyId}`);
-    console.log(`MT5: ${setup.mt5_server} | Account: ${setup.mt5_account}`);
-    console.log(`Risk: ${setup.risk_per_trade}% | Size: $${setup.account_size}`);
-    
-    // NOTE: Actual execution command would be:
-    // python3 /path/to/bot_wrapper.py '${JSON.stringify(botConfig)}'
-    // This should be handled by your deployment infrastructure
+    // Call trigger-bot edge function instead of direct execution
+    const { data: triggerResult, error: triggerError } = await supabaseClient.functions.invoke('trigger-bot', {
+      body: {
+        action: 'start',
+        strategyId,
+        strategyName
+      }
+    });
+
+    if (triggerError) {
+      console.error('Failed to trigger bot:', triggerError);
+      throw new Error('Failed to start bot on remote server');
+    }
+
+    console.log(`Bot start command sent successfully:`, triggerResult);
 
     // Send notification (if Telegram is configured)
     if (setup.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
