@@ -23,20 +23,20 @@ interface BrokerOption {
 const BROKERS: BrokerOption[] = [
   {
     name: "XM",
-    referralLink: "https://www.xm.com/register?ib=YOUR_XM_IB_CODE",
-    referralCode: "XM-IB-12345",
+    referralLink: "https://affs.click/yjD1p",
+    referralCode: "94BT2",
     description: "Regulated global broker with tight spreads"
   },
   {
     name: "Vantage",
-    referralLink: "https://www.vantagemarkets.com/register?ib=YOUR_VANTAGE_IB_CODE",
-    referralCode: "VNTG-IB-67890",
+    referralLink: "https://vigco.co/la-com/vVdfb27A",
+    referralCode: "vVdfb27A",
     description: "Low latency execution with deep liquidity"
   },
   {
     name: "PepperStone",
-    referralLink: "https://www.pepperstone.com/register?ib=YOUR_PEPPER_IB_CODE",
-    referralCode: "PPST-IB-24680",
+    referralLink: "https://trk.pepperstonepartners.com/aff_c?offer_id=367&aff_id=40761",
+    referralCode: "",
     description: "Award-winning platform with excellent support"
   }
 ];
@@ -132,10 +132,10 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
         updateData.broker_name = selectedBroker.name;
         updateData.broker_account_id = formData.brokerAccountId;
         updateData.broker_referral_code = selectedBroker.referralCode;
-        updateData.admin_approved = false;
-      } else {
-        updateData.admin_approved = true; // Auto-approve paid users
       }
+      
+      // All users require admin approval
+      updateData.admin_approved = false;
 
       const { error } = await supabase
         .from('user_setup')
@@ -144,11 +144,7 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
 
       if (error) throw error;
 
-      toast.success(
-        planType === 'free' 
-          ? "Setup submitted! Waiting for admin approval to activate your account."
-          : "Setup completed successfully!"
-      );
+      toast.success("Setup submitted! Waiting for admin approval to activate your account.");
       
       setTimeout(() => {
         window.location.reload();
@@ -223,9 +219,11 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-3">
-                        <code className="text-xs bg-muted px-2 py-1 rounded">
-                          {broker.referralCode}
-                        </code>
+                        {broker.referralCode && (
+                          <code className="text-xs bg-muted px-2 py-1 rounded">
+                            Code: {broker.referralCode}
+                          </code>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"
@@ -247,23 +245,23 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   <Alert>
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>
-                      <strong>Important:</strong> After creating your account with {selectedBroker.name}, copy your account ID and paste it below.
+                      <strong>Important:</strong> After creating your account with {selectedBroker.name}{selectedBroker.referralCode && ` using partner code ${selectedBroker.referralCode}`}, copy your account ID/number and paste it below.
                     </AlertDescription>
                   </Alert>
                   
                   <div>
                     <Label htmlFor="brokerAccountId">
-                      {selectedBroker.name} Account ID *
+                      {selectedBroker.name} Account ID / Account Number *
                     </Label>
                     <Input
                       id="brokerAccountId"
                       value={formData.brokerAccountId}
                       onChange={(e) => setFormData({ ...formData, brokerAccountId: e.target.value })}
-                      placeholder="Enter your broker account ID"
+                      placeholder="e.g., 12345678"
                       className="mt-1.5"
                     />
                     <p className="text-xs text-muted-foreground mt-1.5">
-                      This will be verified by our admin before activation
+                      Enter the account ID/number from your newly created {selectedBroker.name} account. This will be verified by our admin.
                     </p>
                   </div>
                 </div>

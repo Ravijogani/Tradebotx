@@ -126,6 +126,34 @@ export const StrategySelector = () => {
     return userStrategies.some(us => us.strategy_id === strategyId && us.is_running);
   };
 
+  // Show waiting card for users who haven't been approved
+  if (!adminApproved) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-3xl font-bold mb-2">Trading Strategies</h2>
+          <p className="text-muted-foreground">
+            Select and activate strategies based on your subscription plan
+          </p>
+        </div>
+
+        <Card className="p-6 bg-orange-500/5 border-orange-500/20">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center flex-shrink-0">
+              <TrendingUp className="w-6 h-6 text-orange-500" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-lg">Waiting for Admin Approval</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Your account setup has been submitted. Our admin team will review and approve your account details shortly. You'll be able to start trading bots once approved.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (loading) {
     return <div>Loading strategies...</div>;
   }
@@ -139,26 +167,9 @@ export const StrategySelector = () => {
         </p>
       </div>
 
-      {(planType === 'free' || planType === 'starter') && !adminApproved && (
-        <Card className="p-6 bg-orange-500/5 border-orange-500/20">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center flex-shrink-0">
-              <TrendingUp className="w-6 h-6 text-orange-500" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-lg">Waiting for Admin Approval</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Your account setup has been submitted. Our admin team will review and approve your broker account details shortly. You'll be able to start trading bots once approved.
-              </p>
-            </div>
-          </div>
-        </Card>
-      )}
-
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {strategies.map((strategy) => {
           const running = isStrategyRunning(strategy.id);
-          const needsApproval = (planType === 'free' || planType === 'starter') && !adminApproved;
           
           return (
             <Card key={strategy.id} className="p-6 space-y-4">
@@ -183,14 +194,14 @@ export const StrategySelector = () => {
                     : "bg-gradient-hero shadow-glow"
                 }`}
                 onClick={() => handleStrategyToggle(strategy.id, running)}
-                disabled={needsApproval && !running}
+                disabled={loading || running || !adminApproved}
               >
                 {running ? (
                   <>
                     <Square className="w-4 h-4 mr-2" />
                     Stop Strategy
                   </>
-                ) : needsApproval ? (
+                ) : !adminApproved ? (
                   "Pending Approval"
                 ) : (
                   <>

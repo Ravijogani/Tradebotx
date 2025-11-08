@@ -104,15 +104,11 @@ export const AdminUsers = () => {
     user.full_name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Filter for pending approvals (free/starter plan users waiting for approval)
+  // Filter for pending approvals (all users waiting for approval)
   const pendingApprovals = filteredUsers.filter(user => {
     const setup = user.user_setup?.[0];
-    const subscription = user.user_subscriptions?.[0];
-    const planType = subscription?.plans?.plan_type;
     
-    return setup?.is_completed && 
-           !setup?.admin_approved && 
-           (planType === 'free' || planType === 'starter');
+    return setup?.is_completed && !setup?.admin_approved;
   });
 
   if (loading) {
@@ -147,7 +143,7 @@ export const AdminUsers = () => {
                 Pending Approvals
               </CardTitle>
               <CardDescription>
-                Review and approve free/starter plan users
+                Review and approve all user accounts
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -293,21 +289,17 @@ export const AdminUsers = () => {
                             )}
                           </TableCell>
                           <TableCell>
-                            {(planType === 'free' || planType === 'starter') ? (
-                              setup?.admin_approved ? (
-                                <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
-                                  Approved
-                                </Badge>
-                              ) : setup?.is_completed ? (
-                                <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">
-                                  <Clock className="w-3 h-3 mr-1" />
-                                  Pending
-                                </Badge>
-                              ) : (
-                                <Badge variant="secondary">N/A</Badge>
-                              )
+                            {setup?.admin_approved ? (
+                              <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                                Approved
+                              </Badge>
+                            ) : setup?.is_completed ? (
+                              <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">
+                                <Clock className="w-3 h-3 mr-1" />
+                                Pending
+                              </Badge>
                             ) : (
-                              <Badge variant="outline">Not Required</Badge>
+                              <Badge variant="secondary">N/A</Badge>
                             )}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
