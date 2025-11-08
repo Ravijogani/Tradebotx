@@ -50,7 +50,7 @@ export const Hero = () => {
           </h1>
 
           {/* Subheading */}
-          <p className="text-xl md:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto leading-relaxed animate-fade-in" style={{ animationDelay: '0.2s' }}>
+          <p className="text-xl md:text-2xl text-muted-foreground/90 mb-12 max-w-3xl mx-auto leading-relaxed animate-fade-in" style={{ animationDelay: '0.2s' }}>
             Harness the power of advanced algorithms and machine learning to automate your forex and crypto trading. 
             <span className="text-foreground font-semibold"> Maximize profits while minimizing risk.</span>
           </p>
@@ -88,21 +88,21 @@ export const Hero = () => {
 
           {/* Trust indicators */}
           <div className="mt-16 pt-8 border-t border-border/50 animate-fade-in" style={{ animationDelay: '0.5s' }}>
-            <p className="text-sm text-muted-foreground mb-4">Trusted by traders worldwide</p>
+            <p className="text-sm text-muted-foreground/80 mb-4">Trusted by traders worldwide</p>
             <div className="flex justify-center items-center gap-8 text-sm">
               <div className="text-center">
                 <div className="text-2xl font-bold text-foreground">500+</div>
-                <div className="text-muted-foreground">Active Traders</div>
+                <div className="text-muted-foreground/80">Active Traders</div>
               </div>
               <div className="w-px h-12 bg-border"></div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-foreground">$2M+</div>
-                <div className="text-muted-foreground">Trading Volume</div>
+                <div className="text-muted-foreground/80">Trading Volume</div>
               </div>
               <div className="w-px h-12 bg-border"></div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-foreground">24/7</div>
-                <div className="text-muted-foreground">Monitoring</div>
+                <div className="text-muted-foreground/80">Monitoring</div>
               </div>
             </div>
           </div>

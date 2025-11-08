@@ -11,14 +11,14 @@ All colors MUST be HSL.
 @layer base {
   :root {
     /* Deep space backgrounds with rich blues */
-    --background: 220 30% 5%;
-    --foreground: 210 40% 98%;
+    --background: 220 30% 8%;
+    --foreground: 0 0% 98%;
     
     /* Card system with glassmorphism */
-    --card: 220 25% 8%;
-    --card-foreground: 210 40% 98%;
-    --popover: 220 25% 8%;
-    --popover-foreground: 210 40% 98%;
+    --card: 220 25% 12%;
+    --card-foreground: 0 0% 98%;
+    --popover: 220 25% 12%;
+    --popover-foreground: 0 0% 98%;
     
     /* Premium blue primary with electric accent */
     --primary: 217 91% 60%;
@@ -32,7 +32,7 @@ All colors MUST be HSL.
     
     /* Muted tones for subtlety */
     --muted: 220 15% 20%;
-    --muted-foreground: 215 20% 65%;
+    --muted-foreground: 0 0% 70%;
     
     /* Electric purple accent */
     --accent: 271 91% 65%;
