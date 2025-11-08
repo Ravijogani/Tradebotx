@@ -39,14 +39,14 @@ const Admin = () => {
       }
 
       // Check if user is admin
-      const { data: roles } = await supabase
+      const { data: roles, error: roleError } = await supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", user.id)
         .eq("role", "admin")
-        .single();
+        .maybeSingle();
 
-      if (!roles) {
+      if (!roles || roleError) {
         toast({
           title: "Access Denied",
           description: "You don't have admin permissions",
