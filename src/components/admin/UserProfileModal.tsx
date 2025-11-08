@@ -49,21 +49,65 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
       // Load user profile
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select(`
-          *,
-          user_subscriptions (
-            status,
-            subscription_tier,
-            account_balance,
-            plans (name, plan_type)
-          ),
-          user_setup (*)
-        `)
+        .select("*")
         .eq("id", userId)
         .single();
 
       if (profileError) throw profileError;
-      setUserData(profile);
+
+      // Load user subscription
+      const { data: subscription } = await supabase
+        .from("user_subscriptions")
+        .select("*, plans(name, plan_type, price)")
+        .eq("user_id", userId)
+        .single();
+
+      // Load user setup
+      const { data: setup } = await supabase
+        .from("user_setup")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+
+      // Load user roles
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+
+      // Load user strategies
+      const { data: strategies } = await supabase
+        .from("user_strategies")
+        .select("*, strategies(name)")
+        .eq("user_id", userId);
+
+      // Load payment history
+      const { data: payments } = await supabase
+        .from("payment_history")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      // Load referral code
+      const { data: referralCode } = await supabase
+        .from("referral_codes")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      // Combine all data
+      const userData = {
+        ...profile,
+        user_subscriptions: subscription ? [subscription] : [],
+        user_setup: setup ? [setup] : [],
+        user_roles: roles || [],
+        user_strategies: strategies || [],
+        payment_history: payments || [],
+        referral_code: referralCode,
+      };
+
+      setUserData(userData);
       setFormData({
         full_name: profile.full_name || "",
         email: profile.email || "",
@@ -192,8 +236,10 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
           </div>
         ) : (
           <Tabs defaultValue="details" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="setup">Setup</TabsTrigger>
+              <TabsTrigger value="subscription">Subscription</TabsTrigger>
               <TabsTrigger value="performance">Performance</TabsTrigger>
               <TabsTrigger value="trades">Trades</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -256,32 +302,291 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
                 </CardContent>
               </Card>
 
-              {userData?.user_setup?.[0] && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>User Roles</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-2">
+                    {userData?.user_roles?.length > 0 ? (
+                      userData.user_roles.map((role: any, idx: number) => (
+                        <Badge key={idx} variant="secondary">{role.role}</Badge>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground">No roles assigned</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>User Strategies</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {userData?.user_strategies?.length > 0 ? (
+                    <div className="space-y-2">
+                      {userData.user_strategies.map((strategy: any) => (
+                        <div key={strategy.id} className="flex items-center justify-between p-2 border rounded">
+                          <span>{strategy.strategies?.name || "Unknown"}</span>
+                          <Badge variant={strategy.is_running ? "default" : "secondary"}>
+                            {strategy.is_running ? "Running" : "Stopped"}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">No strategies configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {userData?.referral_code && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Trading Setup</CardTitle>
+                    <CardTitle>Referral Program</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="grid grid-cols-2 gap-4">
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-4">
                       <div>
-                        <Label className="text-muted-foreground">Broker</Label>
-                        <p>{userData.user_setup[0].broker_name || "N/A"}</p>
+                        <Label className="text-muted-foreground">Referral Code</Label>
+                        <p className="font-mono">{userData.referral_code.code}</p>
                       </div>
                       <div>
-                        <Label className="text-muted-foreground">MT5 Account</Label>
-                        <p>{userData.user_setup[0].mt5_account || "N/A"}</p>
+                        <Label className="text-muted-foreground">Total Referrals</Label>
+                        <p>{userData.referral_code.total_referrals}</p>
                       </div>
                       <div>
-                        <Label className="text-muted-foreground">Account Size</Label>
-                        <p>${userData.user_setup[0].account_size || 0}</p>
-                      </div>
-                      <div>
-                        <Label className="text-muted-foreground">Risk Per Trade</Label>
-                        <p>{userData.user_setup[0].risk_per_trade || 0}%</p>
+                        <Label className="text-muted-foreground">Total Earnings</Label>
+                        <p>${userData.referral_code.total_earnings}</p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
+              )}
+            </TabsContent>
+
+            <TabsContent value="setup" className="space-y-4">
+              {userData?.user_setup?.[0] ? (
+                <>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Broker Configuration</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-muted-foreground">Broker Name</Label>
+                          <p className="font-medium">{userData.user_setup[0].broker_name || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Broker Account ID</Label>
+                          <p className="font-mono">{userData.user_setup[0].broker_account_id || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Broker Referral Code</Label>
+                          <p className="font-mono">{userData.user_setup[0].broker_referral_code || "N/A"}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>MT5 Configuration</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-muted-foreground">MT5 Account</Label>
+                          <p className="font-mono">{userData.user_setup[0].mt5_account || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">MT5 Server</Label>
+                          <p className="font-mono">{userData.user_setup[0].mt5_server || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">MT5 Password</Label>
+                          <p className="font-mono">
+                            {userData.user_setup[0].mt5_password ? "••••••••" : "N/A"}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Risk Management</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <Label className="text-muted-foreground">Account Size</Label>
+                          <p className="font-medium text-lg">${userData.user_setup[0].account_size || 0}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Risk Per Trade</Label>
+                          <p className="font-medium text-lg">{userData.user_setup[0].risk_per_trade || 0}%</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Max Positions</Label>
+                          <p className="font-medium text-lg">{userData.user_setup[0].max_positions || 0}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Notifications</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div>
+                        <Label className="text-muted-foreground">Telegram Chat ID</Label>
+                        <p className="font-mono">{userData.user_setup[0].telegram_chat_id || "Not configured"}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Setup Status</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-muted-foreground">Setup Completed</Label>
+                          <Badge variant={userData.user_setup[0].is_completed ? "default" : "secondary"}>
+                            {userData.user_setup[0].is_completed ? "Yes" : "No"}
+                          </Badge>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Admin Approved</Label>
+                          <Badge variant={userData.user_setup[0].admin_approved ? "default" : "destructive"}>
+                            {userData.user_setup[0].admin_approved ? "Approved" : "Pending"}
+                          </Badge>
+                        </div>
+                        {userData.user_setup[0].submitted_for_approval_at && (
+                          <div>
+                            <Label className="text-muted-foreground">Submitted At</Label>
+                            <p>{new Date(userData.user_setup[0].submitted_for_approval_at).toLocaleString()}</p>
+                          </div>
+                        )}
+                        {userData.user_setup[0].approval_notes && (
+                          <div className="col-span-2">
+                            <Label className="text-muted-foreground">Approval Notes</Label>
+                            <p className="text-sm mt-1">{userData.user_setup[0].approval_notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <Alert>
+                  <AlertDescription>User has not completed setup yet.</AlertDescription>
+                </Alert>
+              )}
+            </TabsContent>
+
+            <TabsContent value="subscription" className="space-y-4">
+              {userData?.user_subscriptions?.[0] ? (
+                <>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Subscription Details</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-muted-foreground">Plan</Label>
+                          <p className="font-medium">{userData.user_subscriptions[0].plans?.name || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Plan Type</Label>
+                          <Badge>{userData.user_subscriptions[0].plans?.plan_type || "N/A"}</Badge>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Status</Label>
+                          <Badge variant={userData.user_subscriptions[0].status === 'active' ? 'default' : 'secondary'}>
+                            {userData.user_subscriptions[0].status}
+                          </Badge>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Subscription Tier</Label>
+                          <p>{userData.user_subscriptions[0].subscription_tier || "N/A"}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Account Balance</Label>
+                          <p className="font-medium text-lg">${userData.user_subscriptions[0].account_balance || 0}</p>
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground">Price</Label>
+                          <p className="font-medium">${userData.user_subscriptions[0].plans?.price || 0}</p>
+                        </div>
+                        {userData.user_subscriptions[0].trial_ends_at && (
+                          <div>
+                            <Label className="text-muted-foreground">Trial Ends</Label>
+                            <p>{new Date(userData.user_subscriptions[0].trial_ends_at).toLocaleDateString()}</p>
+                          </div>
+                        )}
+                        {userData.user_subscriptions[0].subscription_ends_at && (
+                          <div>
+                            <Label className="text-muted-foreground">Subscription Ends</Label>
+                            <p>{new Date(userData.user_subscriptions[0].subscription_ends_at).toLocaleDateString()}</p>
+                          </div>
+                        )}
+                        {userData.user_subscriptions[0].last_payment_date && (
+                          <div>
+                            <Label className="text-muted-foreground">Last Payment</Label>
+                            <p>{new Date(userData.user_subscriptions[0].last_payment_date).toLocaleDateString()}</p>
+                          </div>
+                        )}
+                        {userData.user_subscriptions[0].payment_method && (
+                          <div>
+                            <Label className="text-muted-foreground">Payment Method</Label>
+                            <p>{userData.user_subscriptions[0].payment_method}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Payment History</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {userData?.payment_history?.length > 0 ? (
+                        <div className="space-y-2">
+                          {userData.payment_history.map((payment: any) => (
+                            <div key={payment.id} className="flex items-center justify-between p-3 border rounded">
+                              <div>
+                                <p className="font-medium">${payment.amount} {payment.currency}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {new Date(payment.created_at).toLocaleDateString()}
+                                </p>
+                                {payment.description && (
+                                  <p className="text-xs text-muted-foreground">{payment.description}</p>
+                                )}
+                              </div>
+                              <Badge variant={payment.status === 'success' ? 'default' : 'secondary'}>
+                                {payment.status}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground">No payment history</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <Alert>
+                  <AlertDescription>No subscription information available.</AlertDescription>
+                </Alert>
               )}
             </TabsContent>
 
