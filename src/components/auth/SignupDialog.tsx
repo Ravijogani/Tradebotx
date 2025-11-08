@@ -107,9 +107,9 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         const fieldErrors: Record<string, string> = {};
-        error.errors.forEach((err) => {
-          if (err.path) {
-            fieldErrors[err.path[0]] = err.message;
+        error.issues.forEach((err) => {
+          if (err.path && err.path.length > 0) {
+            fieldErrors[String(err.path[0])] = err.message;
           }
         });
         setErrors(fieldErrors);

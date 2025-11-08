@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { SetupDialog } from "@/components/dashboard/SetupDialog";
+import { TrialExpiredModal } from "@/components/dashboard/TrialExpiredModal";
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -60,6 +61,7 @@ const Dashboard = () => {
   return (
     <>
       <DashboardLayout user={user} />
+      <TrialExpiredModal />
       {showSetup && <SetupDialog open={showSetup} onComplete={() => setShowSetup(false)} />}
     </>
   );

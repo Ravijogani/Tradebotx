@@ -1,17 +1,37 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, LogOut, Play, Square, LayoutDashboard, Settings } from "lucide-react";
+import { TrendingUp, LogOut, Play, Square, LayoutDashboard, Settings, Calculator } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { StrategySelector } from "./StrategySelector";
 import { TradesList } from "./TradesList";
 import { StatsOverview } from "./StatsOverview";
+import { RiskCalculator } from "./RiskCalculator";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [accountSize, setAccountSize] = useState(10000); // Default account size
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  useEffect(() => {
+    // Load account size from user_setup if available
+    const loadAccountSize = async () => {
+      const { data } = await supabase
+        .from("user_setup")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
+      
+      if (data) {
+        // You can add account_size to user_setup table later
+        setAccountSize(10000); // Default for now
+      }
+    };
+    
+    loadAccountSize();
+  }, [user.id]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -54,6 +74,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           {[
             { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
             { id: "strategies", label: "Strategies", icon: Play },
+            { id: "calculator", label: "Risk Calculator", icon: Calculator },
             { id: "settings", label: "Settings", icon: Settings },
           ].map((tab) => (
             <Button
@@ -77,6 +98,17 @@ export const DashboardLayout = ({ user }: { user: any }) => {
         )}
 
         {activeTab === "strategies" && <StrategySelector />}
+
+        {activeTab === "calculator" && (
+          <div className="max-w-4xl mx-auto">
+            <RiskCalculator 
+              accountSize={accountSize}
+              onLotSizeChange={(lotSize) => {
+                console.log("Calculated lot size:", lotSize);
+              }}
+            />
+          </div>
+        )}
 
         {activeTab === "settings" && (
           <div className="max-w-2xl">
