@@ -33,7 +33,7 @@ const plans = [
       "Real-time Trade Execution",
       "Risk Management Tools",
     ],
-    cta: "Start 14-Day Trial",
+    cta: "Start 7-Day Free Trial",
     popular: true,
   },
   {
@@ -51,7 +51,7 @@ const plans = [
       "Premium API Access",
       "Dedicated Account Manager",
     ],
-    cta: "Start 30-Day Trial",
+    cta: "Start 7-Day Free Trial",
     popular: false,
   },
 ];
