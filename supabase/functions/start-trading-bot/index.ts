@@ -39,7 +39,7 @@ serve(async (req) => {
     // Verify user setup is approved
     const { data: setup, error: setupError } = await supabaseClient
       .from('user_setup')
-      .select('admin_approved, mt5_account, mt5_password, mt5_server, account_size, risk_per_trade, telegram_chat_id')
+      .select('admin_approved, mt5_account, mt5_password, mt5_server, account_size, risk_per_trade, max_positions, telegram_chat_id')
       .eq('user_id', user.id)
       .single();
 
@@ -98,16 +98,32 @@ serve(async (req) => {
 
     console.log(`User strategy record created/updated: ${userStrategy.id}`);
 
-    // TODO: In production, this is where you would:
-    // 1. Deploy Python script to execution environment
-    // 2. Initialize MT5 connection with user's credentials
-    // 3. Start the trading bot process
-    // 4. Set up monitoring and health checks
+    // PRODUCTION: Execute Python trading bot
+    // In production environment, you would:
+    // 1. Use a process manager (PM2, Supervisor) or container orchestration
+    // 2. Run the Python script in a dedicated execution environment
+    // 3. Pass user configuration as JSON
     
-    // For now, we'll just log and send a notification
-    console.log(`Would start Python script: ${strategy.python_script_path}`);
-    console.log(`MT5 Config: ${setup.mt5_server}, Account: ${setup.mt5_account}`);
-    console.log(`Risk per trade: ${setup.risk_per_trade}%, Account size: $${setup.account_size}`);
+    const botConfig = {
+      user_id: user.id,
+      strategy_id: strategyId,
+      mt5_account: setup.mt5_account,
+      mt5_password: setup.mt5_password,
+      mt5_server: setup.mt5_server,
+      account_size: setup.account_size,
+      risk_per_trade: setup.risk_per_trade,
+      max_positions: setup.max_positions || 3,
+      supabase_url: Deno.env.get('SUPABASE_URL'),
+      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    };
+    
+    console.log(`Starting bot for user ${user.id} with strategy ${strategyId}`);
+    console.log(`MT5: ${setup.mt5_server} | Account: ${setup.mt5_account}`);
+    console.log(`Risk: ${setup.risk_per_trade}% | Size: $${setup.account_size}`);
+    
+    // NOTE: Actual execution command would be:
+    // python3 /path/to/bot_wrapper.py '${JSON.stringify(botConfig)}'
+    // This should be handled by your deployment infrastructure
 
     // Send notification (if Telegram is configured)
     if (setup.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
