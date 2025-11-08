@@ -9,16 +9,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Plus, MessageSquare, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, Plus, MessageSquare, Clock, CheckCircle, XCircle, Search } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export const SupportTickets = () => {
   const [tickets, setTickets] = useState<any[]>([]);
+  const [filteredTickets, setFilteredTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newMessage, setNewMessage] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
 
   // Form state
@@ -37,6 +39,20 @@ export const SupportTickets = () => {
       loadMessages(selectedTicket.id);
     }
   }, [selectedTicket]);
+
+  useEffect(() => {
+    // Filter tickets based on search query
+    if (searchQuery.trim()) {
+      const filtered = tickets.filter(ticket =>
+        ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        ticket.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        ticket.category.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredTickets(filtered);
+    } else {
+      setFilteredTickets(tickets);
+    }
+  }, [searchQuery, tickets]);
 
   const setupRealtime = () => {
     const channel = supabase
@@ -65,13 +81,15 @@ export const SupportTickets = () => {
   const loadTickets = async () => {
     try {
       const { data, error } = await supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .select("*")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       setTickets(data || []);
+      setFilteredTickets(data || []);
     } catch (error: any) {
+      console.error("Error loading tickets:", error);
       toast({
         title: "Error loading tickets",
         description: error.message,
@@ -85,7 +103,7 @@ export const SupportTickets = () => {
   const loadMessages = async (ticketId: string) => {
     try {
       const { data, error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId)
         .order("created_at", { ascending: true });
@@ -116,7 +134,7 @@ export const SupportTickets = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .insert([{
           user_id: user.id,
           subject,
@@ -155,7 +173,7 @@ export const SupportTickets = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .insert([{
           ticket_id: selectedTicket.id,
           user_id: user.id,
@@ -208,39 +226,60 @@ export const SupportTickets = () => {
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <CardTitle>Support Tickets</CardTitle>
               <CardDescription>Get help from our support team</CardDescription>
             </div>
-            <Button onClick={() => setShowCreateDialog(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              New Ticket
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search tickets..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                  aria-label="Search support tickets"
+                />
+              </div>
+              <Button onClick={() => setShowCreateDialog(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                New Ticket
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Tickets List */}
-            <div className="space-y-2">
-              {tickets.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No support tickets yet
-                </p>
+            <div className="space-y-2 overflow-x-auto">
+              {filteredTickets.length === 0 ? (
+                <div className="text-center text-muted-foreground py-8">
+                  <p>{searchQuery ? "No tickets found matching your search" : "No support tickets yet"}</p>
+                </div>
               ) : (
-                tickets.map((ticket) => (
+                filteredTickets.map((ticket) => (
                   <div
                     key={ticket.id}
                     onClick={() => setSelectedTicket(ticket)}
-                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedTicket(ticket);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`View ticket: ${ticket.subject}`}
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-primary ${
                       selectedTicket?.id === ticket.id
                         ? "border-primary bg-primary/5"
                         : "hover:bg-muted/50"
                     }`}
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h4 className="font-medium">{ticket.subject}</h4>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-medium truncate">{ticket.subject}</h4>
                         <p className="text-sm text-muted-foreground line-clamp-1">
                           {ticket.description}
                         </p>
@@ -250,7 +289,7 @@ export const SupportTickets = () => {
                         <span className="ml-1">{ticket.status}</span>
                       </Badge>
                     </div>
-                    <div className="flex gap-2 mt-2">
+                    <div className="flex gap-2 mt-2 flex-wrap">
                       <Badge variant="outline">{ticket.category}</Badge>
                       <Badge variant="outline">{ticket.priority}</Badge>
                     </div>
@@ -263,7 +302,7 @@ export const SupportTickets = () => {
             </div>
 
             {/* Messages */}
-            <div>
+            <div className="min-h-[600px]">
               {selectedTicket ? (
                 <div className="border rounded-lg flex flex-col h-[600px]">
                   <div className="p-4 border-b">
@@ -273,7 +312,7 @@ export const SupportTickets = () => {
                     </p>
                   </div>
                   <ScrollArea className="flex-1 p-4">
-                    <div className="space-y-4">
+                    <div className="space-y-4" role="log" aria-label="Ticket conversation">
                       {messages.map((msg) => (
                         <div
                           key={msg.id}
@@ -301,9 +340,10 @@ export const SupportTickets = () => {
                         placeholder="Type your message..."
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                        onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage()}
+                        aria-label="Message input"
                       />
-                      <Button onClick={handleSendMessage}>Send</Button>
+                      <Button onClick={handleSendMessage} aria-label="Send message">Send</Button>
                     </div>
                   </div>
                 </div>
@@ -335,6 +375,7 @@ export const SupportTickets = () => {
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Brief description of your issue"
+                aria-required="true"
               />
             </div>
 
@@ -346,6 +387,7 @@ export const SupportTickets = () => {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Detailed description of your issue..."
                 className="min-h-[120px]"
+                aria-required="true"
               />
             </div>
 

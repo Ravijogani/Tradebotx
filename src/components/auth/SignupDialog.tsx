@@ -194,7 +194,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number *</Label>
+            <Label htmlFor="phone">Phone Number (with country code) *</Label>
             <Input
               id="phone"
               type="tel"
@@ -202,7 +202,11 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
               value={formData.phone}
               onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
               className={errors.phone ? "border-destructive" : ""}
+              aria-describedby="phone-hint"
             />
+            <p id="phone-hint" className="text-xs text-muted-foreground">
+              Include country code (e.g., +1 for US, +91 for India)
+            </p>
             {errors.phone && <p className="text-sm text-destructive">{errors.phone}</p>}
           </div>
 

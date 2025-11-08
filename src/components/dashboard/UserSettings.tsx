@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TelegramNotificationSettings } from "./TelegramNotificationSettings";
 
 export const UserSettings = ({ user }: { user: any }) => {
   const [loading, setLoading] = useState(false);
@@ -190,6 +191,9 @@ export const UserSettings = ({ user }: { user: any }) => {
             </CardContent>
           </Card>
         )}
+
+        {/* Telegram Notifications */}
+        <TelegramNotificationSettings userId={user.id} />
 
         {/* Trading Configuration */}
         {setupData && (
