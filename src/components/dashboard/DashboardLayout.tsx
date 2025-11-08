@@ -14,6 +14,8 @@ import { PerformanceChart } from "./PerformanceChart";
 import { NotificationsCenter } from "./NotificationsCenter";
 import { NotificationCenter } from "./NotificationCenter";
 import { ActivityTimeline } from "./ActivityTimeline";
+import { UserSupport } from "./UserSupport";
+import { SubscriptionManager } from "./SubscriptionManager";
 import { AccountHealth } from "./AccountHealth";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserProfileDropdown } from "./UserProfileDropdown";
@@ -171,6 +173,30 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               {activeTab === "settings" && (
                 <div className="animate-fade-in">
                   <UserSettings user={user} />
+                </div>
+              )}
+
+              {activeTab === "support" && (
+                <div className="animate-fade-in">
+                  <div className="mb-8">
+                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      Support Center
+                    </h1>
+                    <p className="text-muted-foreground">Get help from our support team</p>
+                  </div>
+                  <UserSupport />
+                </div>
+              )}
+
+              {activeTab === "subscription" && (
+                <div className="animate-fade-in">
+                  <div className="mb-8">
+                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      Subscription Management
+                    </h1>
+                    <p className="text-muted-foreground">Manage your plan and billing</p>
+                  </div>
+                  <SubscriptionManager />
                 </div>
               )}
             </div>
