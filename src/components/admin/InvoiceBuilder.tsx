@@ -218,6 +218,52 @@ export const InvoiceBuilder = () => {
     }
   };
 
+  const handleCreatePaymentLink = async (invoice: any) => {
+    setActionLoading(true);
+    try {
+      // Create Razorpay order
+      const { data: orderData, error: orderError } = await supabase.functions.invoke(
+        "create-razorpay-order",
+        {
+          body: {
+            amount: invoice.amount,
+            description: `Invoice #${invoice.invoice_number}`,
+            metadata: {
+              invoice_id: invoice.id,
+              invoice_number: invoice.invoice_number,
+            },
+          },
+        }
+      );
+
+      if (orderError) throw orderError;
+
+      // Update invoice with payment details
+      await supabase
+        .from("invoices")
+        .update({ 
+          status: "awaiting_payment",
+          razorpay_order_id: orderData.order_id 
+        })
+        .eq("id", invoice.id);
+
+      toast({
+        title: "Payment Link Created",
+        description: "Razorpay payment link created successfully",
+      });
+
+      loadData();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleSendInvoice = async (invoice: any) => {
     setActionLoading(true);
     try {
@@ -349,14 +395,24 @@ export const InvoiceBuilder = () => {
                             <Download className="w-4 h-4" />
                           </Button>
                           {invoice.status === "draft" && (
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={() => handleSendInvoice(invoice)}
-                              disabled={actionLoading}
-                            >
-                              <Mail className="w-4 h-4" />
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => handleSendInvoice(invoice)}
+                                disabled={actionLoading}
+                              >
+                                <Mail className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => handleCreatePaymentLink(invoice)}
+                                disabled={actionLoading}
+                              >
+                                Payment Link
+                              </Button>
+                            </>
                           )}
                         </div>
                       </TableCell>

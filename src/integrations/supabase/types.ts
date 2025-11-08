@@ -85,7 +85,10 @@ export type Database = {
           items: Json
           notes: string | null
           paid_at: string | null
+          payment_verified_at: string | null
           pdf_url: string | null
+          razorpay_order_id: string | null
+          razorpay_payment_id: string | null
           sent_at: string | null
           status: string
           updated_at: string | null
@@ -101,7 +104,10 @@ export type Database = {
           items?: Json
           notes?: string | null
           paid_at?: string | null
+          payment_verified_at?: string | null
           pdf_url?: string | null
+          razorpay_order_id?: string | null
+          razorpay_payment_id?: string | null
           sent_at?: string | null
           status?: string
           updated_at?: string | null
@@ -117,7 +123,10 @@ export type Database = {
           items?: Json
           notes?: string | null
           paid_at?: string | null
+          payment_verified_at?: string | null
           pdf_url?: string | null
+          razorpay_order_id?: string | null
+          razorpay_payment_id?: string | null
           sent_at?: string | null
           status?: string
           updated_at?: string | null
