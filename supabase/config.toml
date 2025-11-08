@@ -1,5 +1,8 @@
 project_id = "yqgqgmzlvbglusupsjpz"
 
+[functions.encrypt-password]
+verify_jwt = true
+
 [functions.admin-ai-insights]
 verify_jwt = true
 
