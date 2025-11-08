@@ -1,64 +1,120 @@
-import { Bot, TrendingUp, Shield, Zap, LineChart, Clock } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Bot, TrendingUp, Shield, Zap, LineChart, Clock, Brain, Lock } from "lucide-react";
 
 const features = [
   {
     icon: Bot,
     title: "AI-Powered Trading",
-    description: "Advanced algorithms analyze market patterns and execute trades with precision, maximizing your profit potential 24/7.",
+    description: "Advanced machine learning algorithms analyze market patterns in real-time, adapting to market conditions for optimal trade execution.",
+    gradient: "from-blue-500 to-cyan-500",
   },
   {
-    icon: TrendingUp,
-    title: "Multiple Strategies",
-    description: "Choose from proven trading strategies tailored for different market conditions and risk appetites.",
+    icon: Brain,
+    title: "Smart Strategies",
+    description: "Choose from battle-tested trading strategies optimized by AI, each designed for specific market conditions and risk profiles.",
+    gradient: "from-purple-500 to-pink-500",
   },
   {
     icon: Shield,
-    title: "Risk Management",
-    description: "Built-in risk controls with customizable stop-loss, take-profit, and position sizing to protect your capital.",
+    title: "Advanced Risk Management",
+    description: "Multi-layer protection with dynamic stop-loss, trailing stops, position sizing, and maximum drawdown limits.",
+    gradient: "from-emerald-500 to-green-500",
   },
   {
     icon: Zap,
-    title: "Real-Time Execution",
-    description: "Lightning-fast trade execution through MT5 integration ensures you never miss an opportunity.",
+    title: "Lightning Execution",
+    description: "Sub-millisecond trade execution through optimized MT5 integration. Never miss a profitable opportunity again.",
+    gradient: "from-yellow-500 to-orange-500",
   },
   {
     icon: LineChart,
-    title: "Performance Analytics",
-    description: "Comprehensive analytics dashboard showing profit/loss, win rates, and detailed trade history.",
+    title: "Advanced Analytics",
+    description: "Real-time performance metrics, AI-powered insights, and predictive analytics to optimize your trading strategy.",
+    gradient: "from-indigo-500 to-purple-500",
   },
   {
     icon: Clock,
-    title: "24/7 Monitoring",
-    description: "Our bots work around the clock, monitoring markets and executing trades even while you sleep.",
+    title: "24/7 Autonomous Trading",
+    description: "Fully automated trading system that never sleeps. Monitor multiple markets simultaneously across all time zones.",
+    gradient: "from-rose-500 to-red-500",
+  },
+  {
+    icon: Lock,
+    title: "Enterprise Security",
+    description: "Bank-grade encryption, secure API integration, and SOC 2 compliance to protect your trading data and credentials.",
+    gradient: "from-teal-500 to-cyan-500",
+  },
+  {
+    icon: TrendingUp,
+    title: "Performance Optimization",
+    description: "Continuous AI learning from market data and trade results to improve strategy performance over time.",
+    gradient: "from-violet-500 to-purple-500",
   },
 ];
 
 export const Features = () => {
   return (
-    <section className="py-24 bg-gradient-to-b from-background to-muted/20">
-      <div className="container mx-auto px-4">
-        <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
-            Powerful Features for Serious Traders
+    <section id="features" className="py-32 relative overflow-hidden">
+      {/* Background effects */}
+      <div className="absolute inset-0 bg-gradient-mesh opacity-30"></div>
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-3xl"></div>
+      
+      <div className="container mx-auto px-4 relative z-10">
+        <div className="text-center mb-20 animate-fade-in-up">
+          <div className="inline-block px-4 py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-6">
+            <span className="text-sm font-medium text-primary">POWERFUL FEATURES</span>
+          </div>
+          <h2 className="font-display text-5xl md:text-6xl font-bold mb-6">
+            <span className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">
+              Built for
+            </span>{" "}
+            <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
+              Professional Traders
+            </span>
           </h2>
-          <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Everything you need to automate your trading and achieve consistent profits
+          <p className="text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+            Enterprise-grade tools and AI technology designed to give you an unfair advantage in the markets
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {features.map((feature, index) => (
-            <Card key={index} className="border-border/50 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/10">
-              <CardContent className="p-6">
-                <div className="w-14 h-14 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
-                  <feature.icon className="w-7 h-7 text-primary" />
+            <div
+              key={index}
+              className="group relative animate-fade-in"
+              style={{ animationDelay: `${index * 0.1}s` }}
+            >
+              {/* Glassmorphism card */}
+              <div className="relative h-full p-6 rounded-2xl bg-gradient-surface backdrop-blur-xl border border-border/50 hover:border-primary/50 transition-all duration-500 hover:shadow-glow group-hover:-translate-y-2">
+                {/* Gradient icon container */}
+                <div className={`relative w-14 h-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-0.5 mb-5 group-hover:scale-110 transition-transform duration-300`}>
+                  <div className="w-full h-full rounded-xl bg-card flex items-center justify-center">
+                    <feature.icon className="w-7 h-7 text-foreground" />
+                  </div>
                 </div>
-                <h3 className="text-xl font-semibold mb-3">{feature.title}</h3>
-                <p className="text-muted-foreground leading-relaxed">{feature.description}</p>
-              </CardContent>
-            </Card>
+
+                {/* Content */}
+                <h3 className="font-display text-xl font-semibold mb-3 group-hover:text-primary transition-colors">
+                  {feature.title}
+                </h3>
+                <p className="text-muted-foreground leading-relaxed text-sm">
+                  {feature.description}
+                </p>
+
+                {/* Hover glow effect */}
+                <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-10 transition-opacity duration-500 blur-xl -z-10`}></div>
+              </div>
+            </div>
           ))}
+        </div>
+
+        {/* Bottom CTA */}
+        <div className="text-center mt-16 animate-fade-in" style={{ animationDelay: '0.8s' }}>
+          <p className="text-muted-foreground mb-4">And many more features to supercharge your trading</p>
+          <div className="flex justify-center gap-2">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="w-2 h-2 rounded-full bg-primary/30"></div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
