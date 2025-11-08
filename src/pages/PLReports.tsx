@@ -102,8 +102,8 @@ const PLReports = () => {
     
     // Add branding header
     doc.setFontSize(20);
-    doc.setTextColor(59, 130, 246); // Primary color
-    doc.text("AlgoTrade Platform", 14, 20);
+    doc.setTextColor(79, 70, 229); // Primary color
+    doc.text("TradeBotX Platform", 14, 20);
     
     doc.setFontSize(16);
     doc.setTextColor(0, 0, 0);
@@ -158,7 +158,7 @@ const PLReports = () => {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.text(
-        `AlgoTrade Platform - Confidential | Page ${i} of ${pageCount}`,
+        `TradeBotX Platform - Confidential | Page ${i} of ${pageCount}`,
         doc.internal.pageSize.getWidth() / 2,
         doc.internal.pageSize.getHeight() - 10,
         { align: "center" }

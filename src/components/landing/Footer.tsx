@@ -9,7 +9,7 @@ export const Footer = () => {
           <div>
             <Link to="/" className="flex items-center gap-2 mb-4">
               <Bot className="w-8 h-8 text-primary" />
-              <span className="text-xl font-bold">AlgoTradeX</span>
+              <span className="text-xl font-bold">TradeBotX</span>
             </Link>
             <p className="text-muted-foreground text-sm">
               Advanced AI-powered trading automation platform for forex and crypto traders.
@@ -30,7 +30,7 @@ export const Footer = () => {
             <h3 className="font-semibold mb-4">Support</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><Link to="/#faq" className="hover:text-primary transition-colors">FAQ</Link></li>
-              <li><a href="mailto:support@algotradex.com" className="hover:text-primary transition-colors">Contact Us</a></li>
+              <li><a href="mailto:support@tradebotx.com" className="hover:text-primary transition-colors">Contact Us</a></li>
               <li><Link to="/docs" className="hover:text-primary transition-colors">Documentation</Link></li>
               <li><Link to="/status" className="hover:text-primary transition-colors">System Status</Link></li>
             </ul>
@@ -47,7 +47,7 @@ export const Footer = () => {
         </div>
 
         <div className="border-t border-border/50 pt-8 text-center text-sm text-muted-foreground">
-          <p>&copy; {new Date().getFullYear()} AlgoTradeX. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} TradeBotX. All rights reserved.</p>
           <p className="mt-2">Trading involves risk. Past performance does not guarantee future results.</p>
         </div>
       </div>

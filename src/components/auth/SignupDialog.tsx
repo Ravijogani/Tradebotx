@@ -97,6 +97,14 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         throw new Error('Failed to send verification code');
       }
 
+      // Send welcome email after successful OTP verification
+      await supabase.functions.invoke('send-welcome-email', {
+        body: {
+          to: validated.email,
+          userName: validated.fullName
+        }
+      });
+
       setUserEmail(validated.email);
       setShowOTPVerification(true);
 
@@ -155,7 +163,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         <DialogHeader>
           <DialogTitle>Create Your Account</DialogTitle>
           <DialogDescription>
-            {planName ? `Sign up for ${planName} plan` : "Sign up to start trading with AlgoTradeX"}
+            {planName ? `Sign up for ${planName} plan` : "Sign up to start trading with TradeBotX"}
           </DialogDescription>
         </DialogHeader>
 

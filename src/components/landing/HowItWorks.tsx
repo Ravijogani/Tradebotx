@@ -29,7 +29,7 @@ export const HowItWorks = () => {
       <div className="container mx-auto px-4">
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold mb-4">
-            How AlgoTradeX Works
+            How TradeBotX Works
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Get started in minutes with our simple 4-step process

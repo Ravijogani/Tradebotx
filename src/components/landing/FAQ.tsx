@@ -7,8 +7,8 @@ import {
 
 const faqs = [
   {
-    question: "What is AlgoTradeX?",
-    answer: "AlgoTradeX is an advanced automated trading platform that uses AI-powered algorithms to execute trades on your behalf in forex and crypto markets. Our bots work 24/7, analyzing market conditions and executing trades based on proven strategies.",
+    question: "What is TradeBotX?",
+    answer: "TradeBotX is an advanced automated trading platform that uses AI-powered algorithms to execute trades on your behalf in forex and crypto markets. Our bots work 24/7, analyzing market conditions and executing trades based on proven strategies.",
   },
   {
     question: "How does the trading bot work?",
@@ -20,7 +20,7 @@ const faqs = [
   },
   {
     question: "What markets can I trade?",
-    answer: "AlgoTradeX supports both forex and cryptocurrency trading through MetaTrader 5 integration. You can trade major forex pairs, crypto pairs, and other instruments supported by your MT5 broker.",
+    answer: "TradeBotX supports both forex and cryptocurrency trading through MetaTrader 5 integration. You can trade major forex pairs, crypto pairs, and other instruments supported by your MT5 broker.",
   },
   {
     question: "Can I customize risk parameters?",
@@ -49,7 +49,7 @@ export const FAQ = () => {
             Frequently Asked Questions
           </h2>
           <p className="text-xl text-muted-foreground">
-            Everything you need to know about AlgoTradeX
+            Everything you need to know about TradeBotX
           </p>
         </div>
 

@@ -162,7 +162,7 @@ const Admin = () => {
                 <TrendingUp className="w-6 h-6 text-primary-foreground" />
               </div>
               <span className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                AlgoTradeX Admin
+                TradeBotX Admin
               </span>
             </div>
 

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { getEmailTemplate, otpEmailContent } from "../_shared/email-templates.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,59 +44,30 @@ serve(async (req) => {
     const smtpPort = parseInt(Deno.env.get('SMTP_PORT') || '587');
     const smtpUser = Deno.env.get('SMTP_USER');
     const smtpPass = Deno.env.get('SMTP_PASS');
-    const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser || 'noreply@algotradex.com';
+    const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser || 'noreply@tradebotx.com';
 
     if (!smtpHost || !smtpUser || !smtpPass) {
       throw new Error('SMTP configuration is missing');
     }
 
-    const subject = otpType === 'signup' ? 'Verify Your Email - AlgoTradeX' : 'Login Verification Code - AlgoTradeX';
-    const emailBody = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
-          .otp-box { background: white; border: 2px solid #4F46E5; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0; }
-          .otp-code { font-size: 32px; font-weight: bold; color: #4F46E5; letter-spacing: 8px; }
-          .warning { color: #dc2626; font-size: 14px; margin-top: 20px; }
-          .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #6b7280; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🚀 AlgoTradeX</h1>
-            <p>${otpType === 'signup' ? 'Email Verification' : 'Login Verification'}</p>
-          </div>
-          <div class="content">
-            <p>Hello,</p>
-            <p>${otpType === 'signup' ? 'Thank you for signing up with AlgoTradeX!' : 'You are attempting to log in to your AlgoTradeX account.'}</p>
-            <p>Your verification code is:</p>
-            
-            <div class="otp-box">
-              <div class="otp-code">${otpCode}</div>
-            </div>
-            
-            <p><strong>This code will expire in 2 minutes.</strong></p>
-            
-            <div class="warning">
-              ⚠️ If you didn't request this code, please ignore this email and ensure your account is secure.
-            </div>
-            
-            <p>Best regards,<br>The AlgoTradeX Team</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated message, please do not reply.</p>
-            <p>&copy; ${new Date().getFullYear()} AlgoTradeX. All rights reserved.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
+    const subjects = {
+      'signup': 'Verify Your Email - TradeBotX',
+      'login': 'Login Verification - TradeBotX',
+      'forgot-password': 'Password Reset - TradeBotX'
+    };
+    
+    const preheaders = {
+      'signup': 'Complete your TradeBotX account setup with this verification code',
+      'login': 'Your TradeBotX login verification code',
+      'forgot-password': 'Reset your TradeBotX password'
+    };
+    
+    const subject = subjects[otpType as keyof typeof subjects] || 'Verification Code - TradeBotX';
+    const preheader = preheaders[otpType as keyof typeof preheaders] || 'Your verification code';
+    const emailBody = getEmailTemplate(
+      otpEmailContent(otpCode, otpType as 'signup' | 'login' | 'forgot-password'),
+      preheader
+    );
 
     // Create SMTP client and send email
     const client = new SMTPClient({

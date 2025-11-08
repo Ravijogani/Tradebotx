@@ -6,6 +6,12 @@ verify_jwt = false
 [functions.send-welcome-email]
 verify_jwt = false
 
+[functions.send-login-alert]
+verify_jwt = true
+
+[functions.send-bot-start-alert]
+verify_jwt = true
+
 [functions.send-trial-expiry]
 verify_jwt = false
 

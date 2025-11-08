@@ -45,7 +45,7 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
         key: razorpayKeyId,
         amount: orderData.amount,
         currency: 'INR',
-        name: 'AlgoTradeX',
+        name: 'TradeBotX',
         description: `${planName} Plan Subscription`,
         order_id: orderData.id,
         handler: async function (response: any) {

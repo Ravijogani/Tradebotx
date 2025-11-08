@@ -14,7 +14,7 @@ export const Navbar = () => {
             </div>
           </div>
           <span className="font-display text-2xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
-            AlgoTradeX
+            TradeBotX
           </span>
           <Sparkles className="w-4 h-4 text-accent" />
         </Link>

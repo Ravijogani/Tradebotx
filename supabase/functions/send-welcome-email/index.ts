@@ -1,16 +1,11 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { getEmailTemplate, welcomeEmailContent } from "../_shared/email-templates.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-interface EmailRequest {
-  to: string;
-  userName: string;
-  planName: string;
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -18,87 +13,74 @@ serve(async (req) => {
   }
 
   try {
-    const { to, userName, planName }: EmailRequest = await req.json();
+    const { to, userName } = await req.json();
 
-    // SMTP configuration - will be set up by user
+    if (!to || !userName) {
+      throw new Error('Email (to) and userName are required');
+    }
+
+    console.log('Sending welcome email to:', to);
+
+    // Get SMTP configuration
     const smtpHost = Deno.env.get('SMTP_HOST');
-    const smtpPort = Deno.env.get('SMTP_PORT');
+    const smtpPort = parseInt(Deno.env.get('SMTP_PORT') || '587');
     const smtpUser = Deno.env.get('SMTP_USER');
     const smtpPass = Deno.env.get('SMTP_PASS');
-    const smtpFrom = Deno.env.get('SMTP_FROM') || 'noreply@algotradex.com';
+    const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser || 'noreply@tradebotx.com';
 
     if (!smtpHost || !smtpUser || !smtpPass) {
       throw new Error('SMTP configuration is missing');
     }
 
-    const emailBody = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #1e40af 0%, #7c3aed 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; background: #1e40af; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Welcome to AlgoTradeX!</h1>
-          </div>
-          <div class="content">
-            <p>Hello ${userName},</p>
-            <p>Thank you for joining AlgoTradeX! We're excited to have you on board.</p>
-            <p>You've successfully signed up for the <strong>${planName}</strong> plan.</p>
-            <p>Here's what you can do next:</p>
-            <ul>
-              <li>Complete your account setup by connecting your MT5 account</li>
-              <li>Configure your risk management parameters</li>
-              <li>Select a trading strategy that matches your goals</li>
-              <li>Start automated trading and watch your profits grow</li>
-            </ul>
-            <center>
-              <a href="${Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '')}/dashboard" class="button">Go to Dashboard</a>
-            </center>
-            <p>If you have any questions, feel free to reach out to our support team.</p>
-            <p>Happy Trading!<br>The AlgoTradeX Team</p>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} AlgoTradeX. All rights reserved.</p>
-            <p>This is an automated message, please do not reply.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
+    const subject = 'Welcome to TradeBotX - Your Trading Journey Begins!';
+    const preheader = 'Get started with automated trading in minutes';
+    const emailBody = getEmailTemplate(
+      welcomeEmailContent(userName),
+      preheader
+    );
 
-    // Send email using SMTP
-    const emailResponse = await fetch(`https://api.smtp2go.com/v3/email/send`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Smtp2go-Api-Key': smtpPass,
+    // Create SMTP client and send email
+    const client = new SMTPClient({
+      connection: {
+        hostname: smtpHost,
+        port: smtpPort,
+        tls: true,
+        auth: {
+          username: smtpUser,
+          password: smtpPass,
+        },
       },
-      body: JSON.stringify({
-        sender: smtpFrom,
-        to: [to],
-        subject: `Welcome to AlgoTradeX - ${planName}`,
-        html_body: emailBody,
+    });
+
+    try {
+      await client.send({
+        from: smtpFrom,
+        to: to,
+        subject: subject,
+        content: emailBody,
+        html: emailBody,
+      });
+      
+      console.log('Welcome email sent successfully to:', to);
+      
+      await client.close();
+    } catch (emailError: any) {
+      console.error('SMTP send error:', emailError);
+      throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: 'Welcome email sent successfully'
       }),
-    });
-
-    const result = await emailResponse.json();
-    console.log('Email sent successfully:', result);
-
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+      {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   } catch (error: any) {
-    console.error('Error sending email:', error);
+    console.error('Error sending welcome email:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
