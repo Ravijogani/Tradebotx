@@ -19,6 +19,7 @@ import { InvoiceBuilder } from "@/components/admin/InvoiceBuilder";
 import { PlatformSettings } from "@/components/admin/PlatformSettings";
 import { SupportTicketsManagement } from "@/components/admin/SupportTicketsManagement";
 import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboard";
+import { AIInsightsDashboard } from "@/components/admin/AIInsightsDashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
@@ -29,7 +30,7 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const activeTab = searchParams.get('tab') || 'botmonitor';
+  const activeTab = searchParams.get('tab') || 'ai-insights';
 
   useEffect(() => {
     checkAdminAccess();
@@ -108,6 +109,8 @@ const AdminDashboard = () => {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'ai-insights':
+        return <AIInsightsDashboard />;
       case 'botmonitor':
         return <BotMonitoringDashboard />;
       case 'users':
@@ -135,7 +138,7 @@ const AdminDashboard = () => {
       case 'logs':
         return <AdminActivityLogs />;
       default:
-        return <BotMonitoringDashboard />;
+        return <AIInsightsDashboard />;
     }
   };
 
@@ -207,7 +210,7 @@ const AdminDashboard = () => {
           <main className="flex-1 overflow-auto">
             <div className="container mx-auto p-6 space-y-6 animate-fade-in">
               {/* Welcome Banner */}
-              {activeTab === 'botmonitor' && (
+              {activeTab === 'ai-insights' && (
                 <Card className="border-none bg-gradient-to-br from-primary/10 via-accent/5 to-background shadow-glow">
                   <CardHeader>
                     <CardTitle className="text-2xl">Welcome to Admin Control Center</CardTitle>

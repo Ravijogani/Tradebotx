@@ -14,7 +14,8 @@ import {
   Receipt, 
   MessageSquare, 
   MonitorDot,
-  ChevronDown
+  ChevronDown,
+  Sparkles
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -34,6 +35,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useState } from "react";
 
 const mainItems = [
+  { title: "AI Insights", path: "ai-insights", icon: Sparkles },
   { title: "Bot Monitor", path: "botmonitor", icon: MonitorDot },
   { title: "Users", path: "users", icon: Users },
   { title: "Support", path: "support", icon: MessageSquare },
@@ -70,7 +72,7 @@ export function AdminSidebar() {
   
   const getActiveTab = () => {
     const params = new URLSearchParams(location.search);
-    return params.get('tab') || 'botmonitor';
+    return params.get('tab') || 'ai-insights';
   };
 
   const isActive = (path: string) => getActiveTab() === path;
