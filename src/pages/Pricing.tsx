@@ -71,6 +71,15 @@ const Pricing = () => {
             status: trialDays > 0 ? "trial" : "active",
             trial_ends_at: trialEndsAt,
           });
+
+          // Send welcome email
+          await supabase.functions.invoke('send-welcome-email', {
+            body: {
+              to: formData.email,
+              userName: formData.fullName,
+              planName: plans.name,
+            },
+          });
         }
 
         toast({
