@@ -20,6 +20,7 @@ import { PlatformSettings } from "@/components/admin/PlatformSettings";
 import { SupportTicketsManagement } from "@/components/admin/SupportTicketsManagement";
 import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboard";
 import { AIInsightsDashboard } from "@/components/admin/AIInsightsDashboard";
+import { SystemHealthCheck } from "@/components/admin/SystemHealthCheck";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
@@ -111,6 +112,8 @@ const AdminDashboard = () => {
     switch (activeTab) {
       case 'ai-insights':
         return <AIInsightsDashboard />;
+      case 'health-check':
+        return <SystemHealthCheck />;
       case 'botmonitor':
         return <BotMonitoringDashboard />;
       case 'users':

@@ -64,17 +64,46 @@ serve(async (req) => {
 
     if (updateError) throw updateError;
 
-    console.log(`User strategy stopped: ${userStrategyId}`);
+    console.log(`User strategy stopped in database: ${userStrategyId}`);
 
-    // TODO: In production, this is where you would:
-    // 1. Send stop signal to the running Python process
-    // 2. Wait for graceful shutdown
-    // 3. Close MT5 connections
-    // 4. Log final performance metrics
-    // 5. Clean up resources
+    // Call the Lightsail bot manager to actually stop the Python bot
+    const botManagerUrl = Deno.env.get('LIGHTSAIL_BOT_MANAGER_URL');
+    const botManagerSecret = Deno.env.get('BOT_MANAGER_SECRET');
     
-    // For now, we'll just log
-    console.log(`Would stop Python script: ${userStrategy.strategies?.python_script_path}`);
+    if (botManagerUrl && botManagerSecret) {
+      try {
+        console.log(`Calling bot manager to stop bot: ${botManagerUrl}`);
+        
+        const stopResponse = await fetch(`${botManagerUrl}/stop-bot`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${botManagerSecret}`,
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            strategy_id: userStrategy.strategy_id,
+            user_strategy_id: userStrategyId,
+          }),
+        });
+
+        if (!stopResponse.ok) {
+          const errorText = await stopResponse.text();
+          console.error(`Bot manager stop failed: ${stopResponse.status} - ${errorText}`);
+          throw new Error(`Failed to stop bot on remote server: ${errorText}`);
+        }
+
+        const stopResult = await stopResponse.json();
+        console.log(`Bot stopped successfully on Lightsail:`, stopResult);
+      } catch (fetchError: any) {
+        console.error('Error calling bot manager:', fetchError);
+        // Don't throw - database already updated, just log the error
+        // The bot might have already crashed or stopped on its own
+        console.warn('Bot manager communication failed, but database updated. Bot may need manual cleanup.');
+      }
+    } else {
+      console.warn('LIGHTSAIL_BOT_MANAGER_URL or BOT_MANAGER_SECRET not configured. Bot stop only updated database.');
+    }
 
     // Get user setup for notification
     const { data: setup } = await supabaseClient

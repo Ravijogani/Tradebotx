@@ -15,7 +15,8 @@ import {
   MessageSquare, 
   MonitorDot,
   ChevronDown,
-  Sparkles
+  Sparkles,
+  HeartPulse
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -36,6 +37,7 @@ import { useState } from "react";
 
 const mainItems = [
   { title: "AI Insights", path: "ai-insights", icon: Sparkles },
+  { title: "System Health", path: "health-check", icon: HeartPulse },
   { title: "Bot Monitor", path: "botmonitor", icon: MonitorDot },
   { title: "Users", path: "users", icon: Users },
   { title: "Support", path: "support", icon: MessageSquare },

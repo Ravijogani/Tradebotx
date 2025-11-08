@@ -100,12 +100,36 @@ serve(async (req) => {
 
     console.log(`User strategy record created/updated: ${userStrategy.id}`);
 
-    // Log to audit trail
+    // Create service client for privileged operations
     const serviceClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
     
+    // Initialize strategy performance record
+    await serviceClient
+      .from('strategy_performance')
+      .upsert({
+        user_id: user.id,
+        strategy_id: strategyId,
+        initial_balance: setup.account_size || 10000,
+        current_balance: setup.account_size || 10000,
+        total_trades: 0,
+        winning_trades: 0,
+        losing_trades: 0,
+        total_profit_loss: 0,
+        win_rate: 0,
+        best_trade: 0,
+        worst_trade: 0,
+        avg_win: 0,
+        avg_loss: 0,
+      }, {
+        onConflict: 'user_id,strategy_id'
+      });
+
+    console.log(`Strategy performance initialized for user ${user.id}`);
+
+    // Log to audit trail
     await serviceClient.from('bot_audit_logs').insert({
       user_id: user.id,
       strategy_id: strategyId,
