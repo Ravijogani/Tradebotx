@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { decrypt } from "../_shared/crypto-utils.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -44,13 +45,23 @@ serve(async (req) => {
       throw new Error('Account setup not approved');
     }
 
-    // Prepare bot configuration
+    // CRITICAL: Decrypt MT5 password before sending to bot
+    let decryptedPassword: string;
+    try {
+      decryptedPassword = await decrypt(setup.mt5_password);
+      console.log('MT5 password decrypted successfully');
+    } catch (decryptError) {
+      console.error('Failed to decrypt MT5 password:', decryptError);
+      throw new Error('Failed to decrypt MT5 credentials. Please update your setup.');
+    }
+
+    // Prepare bot configuration with decrypted password
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
       strategy_name: strategyName,
       mt5_account: setup.mt5_account,
-      mt5_password: setup.mt5_password,
+      mt5_password: decryptedPassword, // Plain text password (in memory only)
       mt5_server: setup.mt5_server,
       account_size: setup.account_size,
       risk_per_trade: setup.risk_per_trade,

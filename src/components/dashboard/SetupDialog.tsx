@@ -111,36 +111,51 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
       return;
     }
 
+    // Validate MT5 credentials format
+    if (formData.mt5Account.length < 5 || formData.mt5Account.length > 20) {
+      toast.error("Invalid MT5 account number format");
+      return;
+    }
+
+    if (formData.mt5Password.length < 4) {
+      toast.error("MT5 password must be at least 4 characters");
+      return;
+    }
+
+    if (formData.mt5Server.length < 3 || formData.mt5Server.length > 100) {
+      toast.error("Invalid MT5 server format");
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const updateData: any = {
-        mt5_account: formData.mt5Account,
-        mt5_password: formData.mt5Password,
-        mt5_server: formData.mt5Server,
+      // Prepare setup data (without password)
+      const setupData: any = {
+        mt5_account: formData.mt5Account.trim(),
+        mt5_server: formData.mt5Server.trim(),
         account_size: parseFloat(formData.accountSize),
         risk_per_trade: parseFloat(formData.riskPerTrade),
         max_positions: parseInt(formData.maxPositions),
-        telegram_chat_id: formData.telegramChatId || null,
-        is_completed: true,
-        submitted_for_approval_at: new Date().toISOString()
+        telegram_chat_id: formData.telegramChatId.trim() || null,
+        admin_approved: false
       };
 
       if (planType === 'free' && selectedBroker) {
-        updateData.broker_name = selectedBroker.name;
-        updateData.broker_account_id = formData.brokerAccountId;
-        updateData.broker_referral_code = selectedBroker.referralCode;
+        setupData.broker_name = selectedBroker.name;
+        setupData.broker_account_id = formData.brokerAccountId.trim();
+        setupData.broker_referral_code = selectedBroker.referralCode;
       }
       
-      // All users require admin approval
-      updateData.admin_approved = false;
-
-      const { error } = await supabase
-        .from('user_setup')
-        .update(updateData)
-        .eq('user_id', user.id);
+      // Call edge function to encrypt password and save setup
+      const { data, error } = await supabase.functions.invoke('encrypt-password', {
+        body: {
+          password: formData.mt5Password,
+          setupData
+        }
+      });
 
       if (error) throw error;
 
