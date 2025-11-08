@@ -10,27 +10,34 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TradeBotX</title>
   ${preheader ? `<style type="text/css">#preheader{display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0}</style>` : ''}
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+  </style>
+  <![endif]-->
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif; background: #0a0e1a;">
-  ${preheader ? `<div id="preheader" style="display: none; max-height: 0px; overflow: hidden;">${preheader}</div>` : ''}
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #0a0e1a 0%, #1a1f2e 100%);">
+  ${preheader ? `<div id="preheader" style="display: none; max-height: 0px; overflow: hidden; font-size: 1px; line-height: 1px; color: transparent; opacity: 0;">${preheader}</div>` : ''}
   
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0; padding: 0;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0; padding: 0; background: linear-gradient(135deg, #0a0e1a 0%, #1a1f2e 100%);">
     <tr>
-      <td align="center" style="padding: 40px 20px;">
+      <td align="center" style="padding: 50px 20px;">
         <!-- Main Container -->
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: #1a1f2e; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: #1a1f2e; border-radius: 24px; overflow: hidden; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.7), 0 0 40px rgba(102, 126, 234, 0.15);">
           
-          <!-- Gradient Header -->
+          <!-- Premium Gradient Header with Glass Effect -->
           <tr>
             <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0; position: relative;">
+              <!-- Decorative Elements -->
+              <div style="position: absolute; top: -100px; right: -100px; width: 300px; height: 300px; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); border-radius: 50%;"></div>
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
-                  <td style="padding: 48px 40px; text-align: center;">
-                    <div style="background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 20px 32px; display: inline-block; border: 1px solid rgba(255, 255, 255, 0.2);">
-                      <h1 style="margin: 0; font-size: 36px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);">
-                        <span style="font-size: 40px;">🤖</span> TradeBotX
+                  <td style="padding: 60px 40px; text-align: center; position: relative;">
+                    <div style="background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: 20px; padding: 28px 40px; display: inline-block; border: 2px solid rgba(255, 255, 255, 0.25); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);">
+                      <h1 style="margin: 0; font-size: 42px; font-weight: 900; color: #ffffff; letter-spacing: -1.5px; text-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);">
+                        <span style="font-size: 48px; display: inline-block; animation: float 3s ease-in-out infinite;">🤖</span> TradeBotX
                       </h1>
-                      <p style="margin: 8px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); font-weight: 500; letter-spacing: 2px; text-transform: uppercase;">Automated Trading Platform</p>
+                      <p style="margin: 12px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.95); font-weight: 600; letter-spacing: 3px; text-transform: uppercase; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);">AI-Powered Trading Platform</p>
                     </div>
                   </td>
                 </tr>
@@ -38,37 +45,41 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
             </td>
           </tr>
           
-          <!-- Content Area -->
+          <!-- Enhanced Content Area -->
           <tr>
-            <td style="padding: 48px 40px; background: #1a1f2e;">
+            <td style="padding: 56px 48px; background: linear-gradient(180deg, #1a1f2e 0%, #1e2433 100%);">
               ${content}
             </td>
           </tr>
           
-          <!-- Footer -->
+          <!-- Enhanced Footer -->
           <tr>
-            <td style="padding: 32px 40px; background: #12161f; border-top: 1px solid rgba(102, 126, 234, 0.2);">
+            <td style="padding: 40px 48px; background: #12161f; border-top: 2px solid rgba(102, 126, 234, 0.2);">
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
-                  <td style="text-align: center; padding-bottom: 20px;">
-                    <p style="margin: 0; font-size: 14px; color: #8b92a7; line-height: 1.6;">
-                      This is an automated message from TradeBotX.<br>
-                      For support, contact us at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 600;">support@tradebotx.com</a>
+                  <td style="text-align: center; padding-bottom: 24px;">
+                    <p style="margin: 0; font-size: 15px; color: #9ca3b5; line-height: 1.8;">
+                      This is an automated message from <strong style="color: #667eea;">TradeBotX</strong>.<br>
+                      For support, reach out at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 700; border-bottom: 2px solid rgba(102, 126, 234, 0.3); padding-bottom: 2px;">support@tradebotx.com</a>
                     </p>
                   </td>
                 </tr>
                 <tr>
-                  <td style="text-align: center; padding-top: 20px; border-top: 1px solid rgba(102, 126, 234, 0.1);">
-                    <p style="margin: 0 0 12px 0; font-size: 12px; color: #6b7280;">
+                  <td style="text-align: center; padding-top: 24px; border-top: 1px solid rgba(102, 126, 234, 0.1);">
+                    <p style="margin: 0 0 16px 0; font-size: 13px; color: #7b8296;">
                       &copy; ${new Date().getFullYear()} TradeBotX. All rights reserved.
                     </p>
-                    <div style="margin-top: 12px;">
-                      <a href="https://tradebotx.com" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Website</a>
-                      <span style="color: #4b5563;">•</span>
-                      <a href="https://tradebotx.com/terms" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Terms</a>
-                      <span style="color: #4b5563;">•</span>
-                      <a href="https://tradebotx.com/privacy" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none; font-size: 12px; font-weight: 500;">Privacy</a>
+                    <div style="margin-top: 16px;">
+                      <a href="https://tradebotx.com" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Website</a>
+                      <span style="color: #4b5563; font-weight: 300;">•</span>
+                      <a href="https://tradebotx.com/terms" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Terms</a>
+                      <span style="color: #4b5563; font-weight: 300;">•</span>
+                      <a href="https://tradebotx.com/privacy" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Privacy</a>
                     </div>
+                    <p style="margin: 20px 0 0 0; font-size: 11px; color: #5f6575; line-height: 1.5;">
+                      You're receiving this because you have an account with TradeBotX.<br>
+                      Update your preferences in your <a href="https://tradebotx.com/dashboard/settings" style="color: #667eea; text-decoration: none;">account settings</a>.
+                    </p>
                   </td>
                 </tr>
               </table>

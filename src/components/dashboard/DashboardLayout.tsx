@@ -24,6 +24,8 @@ import { FAQ } from "./FAQ";
 import { OpenPositions } from "./OpenPositions";
 import { BotHealthIndicator } from "./BotHealthIndicator";
 import { BotStatusSync } from "./BotStatusSync";
+import { ActiveBotsCounter } from "./ActiveBotsCounter";
+import { StrategyPerformance } from "./StrategyPerformance";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -111,6 +113,9 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   {/* Stats Overview */}
                   <StatsOverview />
                   
+                  {/* Active Bots Counter */}
+                  <ActiveBotsCounter />
+                  
                   {/* Bot Health & Open Positions */}
                   <div className="grid lg:grid-cols-3 gap-6">
                     <BotHealthIndicator />
@@ -118,6 +123,9 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                       <OpenPositions />
                     </div>
                   </div>
+                  
+                  {/* Strategy Performance */}
+                  <StrategyPerformance />
                   
                   {/* Performance Chart */}
                   <PerformanceChart />

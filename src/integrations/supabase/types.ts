@@ -521,6 +521,142 @@ export type Database = {
         }
         Relationships: []
       }
+      strategy_performance: {
+        Row: {
+          avg_loss: number
+          avg_win: number
+          best_trade: number
+          current_balance: number
+          id: string
+          initial_balance: number
+          last_updated: string
+          losing_trades: number
+          started_at: string
+          strategy_id: string
+          total_profit_loss: number
+          total_trades: number
+          user_id: string
+          win_rate: number
+          winning_trades: number
+          worst_trade: number
+        }
+        Insert: {
+          avg_loss?: number
+          avg_win?: number
+          best_trade?: number
+          current_balance: number
+          id?: string
+          initial_balance: number
+          last_updated?: string
+          losing_trades?: number
+          started_at?: string
+          strategy_id: string
+          total_profit_loss?: number
+          total_trades?: number
+          user_id: string
+          win_rate?: number
+          winning_trades?: number
+          worst_trade?: number
+        }
+        Update: {
+          avg_loss?: number
+          avg_win?: number
+          best_trade?: number
+          current_balance?: number
+          id?: string
+          initial_balance?: number
+          last_updated?: string
+          losing_trades?: number
+          started_at?: string
+          strategy_id?: string
+          total_profit_loss?: number
+          total_trades?: number
+          user_id?: string
+          win_rate?: number
+          winning_trades?: number
+          worst_trade?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_performance_strategy_id_fkey"
+            columns: ["strategy_id"]
+            isOneToOne: false
+            referencedRelation: "strategies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      support_tickets: {
+        Row: {
+          category: string
+          created_at: string
+          description: string
+          id: string
+          priority: string
+          status: string
+          subject: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          description: string
+          id?: string
+          priority?: string
+          status?: string
+          subject: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string
+          id?: string
+          priority?: string
+          status?: string
+          subject?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ticket_messages: {
+        Row: {
+          created_at: string
+          id: string
+          is_admin: boolean
+          message: string
+          ticket_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_admin?: boolean
+          message: string
+          ticket_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_admin?: boolean
+          message?: string
+          ticket_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_messages_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trade_notes: {
         Row: {
           created_at: string
@@ -644,6 +780,39 @@ export type Database = {
           id?: string
           ip_address?: string | null
           user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          message: string
+          metadata: Json | null
+          read: boolean
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          message: string
+          metadata?: Json | null
+          read?: boolean
+          title: string
+          type?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          message?: string
+          metadata?: Json | null
+          read?: boolean
+          title?: string
+          type?: string
           user_id?: string
         }
         Relationships: []
