@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap, Mail, FileText, BarChart3, Gift, Settings as SettingsIcon, Receipt, MessageSquare, MonitorDot } from "lucide-react";
+import { Loader2, LogOut, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { AdminUsers } from "@/components/admin/AdminUsers";
 import { AdminSubscriptions } from "@/components/admin/AdminSubscriptions";
 import { AdminAnalytics } from "@/components/admin/AdminAnalytics";
@@ -18,13 +19,17 @@ import { InvoiceBuilder } from "@/components/admin/InvoiceBuilder";
 import { PlatformSettings } from "@/components/admin/PlatformSettings";
 import { SupportTicketsManagement } from "@/components/admin/SupportTicketsManagement";
 import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboard";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  const activeTab = searchParams.get('tab') || 'botmonitor';
 
   useEffect(() => {
     checkAdminAccess();
@@ -32,7 +37,6 @@ const AdminDashboard = () => {
 
   const checkAdminAccess = async () => {
     try {
-      // Check if user is authenticated
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError) throw sessionError;
@@ -49,7 +53,6 @@ const AdminDashboard = () => {
 
       setUser(session.user);
 
-      // Check if user has admin role
       const { data: roleData, error: roleError } = await supabase
         .from("user_roles")
         .select("role")
@@ -103,6 +106,39 @@ const AdminDashboard = () => {
     }
   };
 
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'botmonitor':
+        return <BotMonitoringDashboard />;
+      case 'users':
+        return <AdminUsers />;
+      case 'support':
+        return <SupportTicketsManagement />;
+      case 'roles':
+        return <RoleManagement />;
+      case 'strategies':
+        return <AdminStrategies />;
+      case 'subscriptions':
+        return <AdminSubscriptions />;
+      case 'analytics':
+        return <AdminAnalytics />;
+      case 'platform':
+        return <PlatformAnalytics />;
+      case 'referrals':
+        return <ReferralProgramDashboard />;
+      case 'invoices':
+        return <InvoiceBuilder />;
+      case 'emails':
+        return <EmailTemplatesManager />;
+      case 'settings':
+        return <PlatformSettings />;
+      case 'logs':
+        return <AdminActivityLogs />;
+      default:
+        return <BotMonitoringDashboard />;
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -119,177 +155,78 @@ const AdminDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Background gradient */}
-      <div className="fixed inset-0 bg-gradient-mesh opacity-40 pointer-events-none" />
+    <SidebarProvider defaultOpen={true}>
+      <div className="min-h-screen flex w-full bg-background">
+        {/* Background gradient mesh */}
+        <div className="fixed inset-0 bg-gradient-mesh opacity-30 pointer-events-none -z-10" />
+        
+        {/* Sidebar */}
+        <AdminSidebar />
 
-      {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-lg sticky top-0 z-40 relative">
-        <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-hero flex items-center justify-center shadow-glow">
-                <Shield className="w-6 h-6 text-primary-foreground" />
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Header */}
+          <header className="sticky top-0 z-40 border-b border-border bg-card/80 backdrop-blur-lg">
+            <div className="flex items-center justify-between h-16 px-6">
+              <div className="flex items-center gap-4">
+                <SidebarTrigger className="-ml-2" />
+                <div>
+                  <h1 className="text-lg font-bold text-foreground">
+                    Admin Dashboard
+                  </h1>
+                  <p className="text-xs text-muted-foreground">
+                    {user?.email}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                  Admin Dashboard
-                </h1>
-                <p className="text-xs text-muted-foreground">
-                  {user?.email}
-                </p>
+
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => navigate("/dashboard")}
+                  className="gap-2 hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  <span className="hidden sm:inline">User Dashboard</span>
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={handleLogout}
+                  className="gap-2 hover:bg-destructive/10 hover:text-destructive transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Logout</span>
+                </Button>
               </div>
             </div>
+          </header>
 
-            <div className="flex items-center gap-2">
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => navigate("/dashboard")}
-                className="gap-2"
-              >
-                <LayoutDashboard className="w-4 h-4" />
-                User Dashboard
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handleLogout}
-                className="gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
-              </Button>
+          {/* Main Content Area */}
+          <main className="flex-1 overflow-auto">
+            <div className="container mx-auto p-6 space-y-6 animate-fade-in">
+              {/* Welcome Banner */}
+              {activeTab === 'botmonitor' && (
+                <Card className="border-none bg-gradient-to-br from-primary/10 via-accent/5 to-background shadow-glow">
+                  <CardHeader>
+                    <CardTitle className="text-2xl">Welcome to Admin Control Center</CardTitle>
+                    <CardDescription className="text-base">
+                      Monitor, manage, and optimize your trading platform from this central hub.
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+              )}
+
+              {/* Active Tab Content */}
+              <div className="animate-fade-in">
+                {renderContent()}
+              </div>
             </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <div className="container mx-auto px-4 py-8 relative">
-        <div className="space-y-6">
-          {/* Welcome Section */}
-          <div className="bg-gradient-hero p-6 rounded-lg shadow-glow">
-            <h2 className="text-2xl font-bold text-primary-foreground mb-2">
-              Welcome to Admin Panel
-            </h2>
-            <p className="text-primary-foreground/80">
-              Manage users, subscriptions, and view analytics from this central hub.
-            </p>
-          </div>
-
-          {/* Tabs Section */}
-          <Tabs defaultValue="botmonitor" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-13 lg:w-full bg-card/50 backdrop-blur-sm overflow-x-auto">
-              <TabsTrigger value="botmonitor" className="gap-2">
-                <MonitorDot className="w-4 h-4" />
-                <span className="hidden sm:inline">Bots</span>
-              </TabsTrigger>
-              <TabsTrigger value="users" className="gap-2">
-                <Users className="w-4 h-4" />
-                <span className="hidden sm:inline">Users</span>
-              </TabsTrigger>
-              <TabsTrigger value="support" className="gap-2">
-                <MessageSquare className="w-4 h-4" />
-                <span className="hidden sm:inline">Support</span>
-              </TabsTrigger>
-              <TabsTrigger value="roles" className="gap-2">
-                <UserCog className="w-4 h-4" />
-                <span className="hidden sm:inline">Roles</span>
-              </TabsTrigger>
-              <TabsTrigger value="strategies" className="gap-2">
-                <Zap className="w-4 h-4" />
-                <span className="hidden sm:inline">Strategies</span>
-              </TabsTrigger>
-              <TabsTrigger value="subscriptions" className="gap-2">
-                <Package className="w-4 h-4" />
-                <span className="hidden sm:inline">Plans</span>
-              </TabsTrigger>
-              <TabsTrigger value="analytics" className="gap-2">
-                <TrendingUp className="w-4 h-4" />
-                <span className="hidden sm:inline">Analytics</span>
-              </TabsTrigger>
-              <TabsTrigger value="platform" className="gap-2">
-                <BarChart3 className="w-4 h-4" />
-                <span className="hidden sm:inline">Platform</span>
-              </TabsTrigger>
-              <TabsTrigger value="referrals" className="gap-2">
-                <Gift className="w-4 h-4" />
-                <span className="hidden sm:inline">Referrals</span>
-              </TabsTrigger>
-              <TabsTrigger value="invoices" className="gap-2">
-                <Receipt className="w-4 h-4" />
-                <span className="hidden sm:inline">Invoices</span>
-              </TabsTrigger>
-              <TabsTrigger value="emails" className="gap-2">
-                <Mail className="w-4 h-4" />
-                <span className="hidden sm:inline">Emails</span>
-              </TabsTrigger>
-              <TabsTrigger value="settings" className="gap-2">
-                <SettingsIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">Settings</span>
-              </TabsTrigger>
-              <TabsTrigger value="logs" className="gap-2">
-                <Activity className="w-4 h-4" />
-                <span className="hidden sm:inline">Logs</span>
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="botmonitor" className="space-y-4">
-              <BotMonitoringDashboard />
-            </TabsContent>
-
-            <TabsContent value="users" className="space-y-4">
-              <AdminUsers />
-            </TabsContent>
-
-            <TabsContent value="support" className="space-y-4">
-              <SupportTicketsManagement />
-            </TabsContent>
-
-            <TabsContent value="roles" className="space-y-4">
-              <RoleManagement />
-            </TabsContent>
-
-            <TabsContent value="strategies" className="space-y-4">
-              <AdminStrategies />
-            </TabsContent>
-
-            <TabsContent value="subscriptions" className="space-y-4">
-              <AdminSubscriptions />
-            </TabsContent>
-
-            <TabsContent value="analytics" className="space-y-4">
-              <AdminAnalytics />
-            </TabsContent>
-
-            <TabsContent value="platform" className="space-y-4">
-              <PlatformAnalytics />
-            </TabsContent>
-
-            <TabsContent value="referrals" className="space-y-4">
-              <ReferralProgramDashboard />
-            </TabsContent>
-
-            <TabsContent value="invoices" className="space-y-4">
-              <InvoiceBuilder />
-            </TabsContent>
-
-            <TabsContent value="emails" className="space-y-4">
-              <EmailTemplatesManager />
-            </TabsContent>
-
-            <TabsContent value="settings" className="space-y-4">
-              <PlatformSettings />
-            </TabsContent>
-
-            <TabsContent value="logs" className="space-y-4">
-              <AdminActivityLogs />
-            </TabsContent>
-          </Tabs>
+          </main>
         </div>
       </div>
-    </div>
+    </SidebarProvider>
   );
 };
 
