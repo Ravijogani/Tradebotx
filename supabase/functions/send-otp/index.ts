@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,13 +38,14 @@ serve(async (req) => {
     const otpCode = otpData[0]?.otp_code;
     console.log('OTP generated for:', email, 'Type:', otpType);
 
+    // Get SMTP configuration
     const smtpHost = Deno.env.get('SMTP_HOST');
-    const smtpPort = Deno.env.get('SMTP_PORT');
+    const smtpPort = parseInt(Deno.env.get('SMTP_PORT') || '587');
     const smtpUser = Deno.env.get('SMTP_USER');
     const smtpPass = Deno.env.get('SMTP_PASS');
-    const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser;
+    const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser || 'noreply@algotradex.com';
 
-    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
+    if (!smtpHost || !smtpUser || !smtpPass) {
       throw new Error('SMTP configuration is missing');
     }
 
@@ -53,7 +55,7 @@ serve(async (req) => {
       <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
           .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
@@ -95,12 +97,35 @@ serve(async (req) => {
       </html>
     `;
 
-    // Use Gmail SMTP directly
-    const emailData = `From: ${smtpFrom}\r\nTo: ${email}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${emailBody}`;
+    // Create SMTP client and send email
+    const client = new SMTPClient({
+      connection: {
+        hostname: smtpHost,
+        port: smtpPort,
+        tls: true,
+        auth: {
+          username: smtpUser,
+          password: smtpPass,
+        },
+      },
+    });
 
-    // Note: For production, you should use a proper SMTP library or service like Resend
-    // For now, we'll use the existing edge function pattern
-    console.log('Email would be sent to:', email, 'with OTP:', otpCode);
+    try {
+      await client.send({
+        from: smtpFrom,
+        to: email,
+        subject: subject,
+        content: emailBody,
+        html: emailBody,
+      });
+      
+      console.log('OTP email sent successfully to:', email);
+      
+      await client.close();
+    } catch (emailError: any) {
+      console.error('SMTP send error:', emailError);
+      throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
+    }
 
     return new Response(
       JSON.stringify({ 
