@@ -58,7 +58,7 @@ export const SupportTicketsManagement = () => {
   const loadTickets = async () => {
     try {
       let query = supabase
-        .from("support_tickets")
+        .from("support_tickets" as any)
         .select(`
           *,
           profiles (
@@ -90,7 +90,7 @@ export const SupportTicketsManagement = () => {
   const loadMessages = async (ticketId: string) => {
     try {
       const { data, error } = await supabase
-        .from("ticket_messages")
+        .from("ticket_messages" as any)
         .select(`
           *,
           profiles (
@@ -124,7 +124,7 @@ export const SupportTicketsManagement = () => {
       }
 
       const { error } = await supabase
-        .from("support_tickets")
+        .from("support_tickets" as any)
         .update(updates)
         .eq("id", selectedTicket.id);
 
@@ -154,7 +154,7 @@ export const SupportTicketsManagement = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("ticket_messages")
+        .from("ticket_messages" as any)
         .insert([{
           ticket_id: selectedTicket.id,
           user_id: user.id,
@@ -167,7 +167,7 @@ export const SupportTicketsManagement = () => {
       // Update ticket status to in_progress if it's open
       if (selectedTicket.status === "open") {
         await supabase
-          .from("support_tickets")
+          .from("support_tickets" as any)
           .update({ status: "in_progress" })
           .eq("id", selectedTicket.id);
       }

@@ -65,7 +65,7 @@ export const SupportTickets = () => {
   const loadTickets = async () => {
     try {
       const { data, error } = await supabase
-        .from("support_tickets")
+        .from("support_tickets" as any)
         .select("*")
         .order("created_at", { ascending: false });
 
@@ -85,7 +85,7 @@ export const SupportTickets = () => {
   const loadMessages = async (ticketId: string) => {
     try {
       const { data, error } = await supabase
-        .from("ticket_messages")
+        .from("ticket_messages" as any)
         .select("*")
         .eq("ticket_id", ticketId)
         .order("created_at", { ascending: true });
@@ -116,7 +116,7 @@ export const SupportTickets = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("support_tickets")
+        .from("support_tickets" as any)
         .insert([{
           user_id: user.id,
           subject,
@@ -155,7 +155,7 @@ export const SupportTickets = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("ticket_messages")
+        .from("ticket_messages" as any)
         .insert([{
           ticket_id: selectedTicket.id,
           user_id: user.id,

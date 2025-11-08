@@ -49,14 +49,14 @@ export const NotificationCenter = () => {
   const loadNotifications = async () => {
     try {
       const { data, error } = await supabase
-        .from("user_notifications")
+        .from("user_notifications" as any)
         .select("*")
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (error) throw error;
       setNotifications(data || []);
-      setUnreadCount(data?.filter(n => !n.read).length || 0);
+      setUnreadCount(data?.filter((n: any) => !n.read).length || 0);
     } catch (error: any) {
       console.error("Error loading notifications:", error);
     }
@@ -65,8 +65,8 @@ export const NotificationCenter = () => {
   const markAsRead = async (id: string) => {
     try {
       const { error } = await supabase
-        .from("user_notifications")
-        .update({ read: true })
+        .from("user_notifications" as any)
+        .update({ read: true } as any)
         .eq("id", id);
 
       if (error) throw error;
@@ -82,11 +82,11 @@ export const NotificationCenter = () => {
 
   const markAllAsRead = async () => {
     try {
-      const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
+      const unreadIds = notifications.filter((n: any) => !n.read).map((n: any) => n.id);
       
       const { error } = await supabase
-        .from("user_notifications")
-        .update({ read: true })
+        .from("user_notifications" as any)
+        .update({ read: true } as any)
         .in("id", unreadIds);
 
       if (error) throw error;
@@ -103,7 +103,7 @@ export const NotificationCenter = () => {
   const deleteNotification = async (id: string) => {
     try {
       const { error } = await supabase
-        .from("user_notifications")
+        .from("user_notifications" as any)
         .delete()
         .eq("id", id);
 

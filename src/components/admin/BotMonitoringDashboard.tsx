@@ -87,7 +87,7 @@ export const BotMonitoringDashboard = () => {
   const loadLogs = async (userId: string, strategyId: string) => {
     try {
       const { data, error } = await supabase
-        .from("bot_logs")
+        .from("bot_logs" as any)
         .select("*")
         .eq("user_id", userId)
         .eq("strategy_id", strategyId)
