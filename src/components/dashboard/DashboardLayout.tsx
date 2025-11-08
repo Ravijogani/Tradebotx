@@ -20,13 +20,12 @@ export const DashboardLayout = ({ user }: { user: any }) => {
     const loadAccountSize = async () => {
       const { data } = await supabase
         .from("user_setup")
-        .select("*")
+        .select("account_size")
         .eq("user_id", user.id)
         .single();
       
-      if (data) {
-        // You can add account_size to user_setup table later
-        setAccountSize(10000); // Default for now
+      if (data?.account_size) {
+        setAccountSize(data.account_size);
       }
     };
     

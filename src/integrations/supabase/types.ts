@@ -231,6 +231,7 @@ export type Database = {
       }
       user_setup: {
         Row: {
+          account_size: number | null
           created_at: string
           id: string
           is_completed: boolean
@@ -239,10 +240,12 @@ export type Database = {
           mt5_password: string | null
           mt5_server: string | null
           risk_per_trade: number | null
+          telegram_chat_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          account_size?: number | null
           created_at?: string
           id?: string
           is_completed?: boolean
@@ -251,10 +254,12 @@ export type Database = {
           mt5_password?: string | null
           mt5_server?: string | null
           risk_per_trade?: number | null
+          telegram_chat_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          account_size?: number | null
           created_at?: string
           id?: string
           is_completed?: boolean
@@ -263,6 +268,7 @@ export type Database = {
           mt5_password?: string | null
           mt5_server?: string | null
           risk_per_trade?: number | null
+          telegram_chat_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -308,31 +314,43 @@ export type Database = {
       }
       user_subscriptions: {
         Row: {
+          account_balance: number | null
           created_at: string
           id: string
+          last_payment_date: string | null
+          payment_method: string | null
           plan_id: string
           status: Database["public"]["Enums"]["subscription_status"]
           subscription_ends_at: string | null
+          subscription_tier: string | null
           trial_ends_at: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          account_balance?: number | null
           created_at?: string
           id?: string
+          last_payment_date?: string | null
+          payment_method?: string | null
           plan_id: string
           status?: Database["public"]["Enums"]["subscription_status"]
           subscription_ends_at?: string | null
+          subscription_tier?: string | null
           trial_ends_at?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          account_balance?: number | null
           created_at?: string
           id?: string
+          last_payment_date?: string | null
+          payment_method?: string | null
           plan_id?: string
           status?: Database["public"]["Enums"]["subscription_status"]
           subscription_ends_at?: string | null
+          subscription_tier?: string | null
           trial_ends_at?: string | null
           updated_at?: string
           user_id?: string
