@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
-import { StrategySelector } from "./StrategySelector";
+import { StrategySelection } from "./StrategySelection";
 import { TradesListEnhanced } from "./TradesListEnhanced";
 import { StatsOverview } from "./StatsOverview";
 import { RiskCalculator } from "./RiskCalculator";
@@ -124,7 +124,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                     </h1>
                     <p className="text-muted-foreground">Select and manage your automated trading strategies</p>
                   </div>
-                  <StrategySelector />
+                  <StrategySelection />
                 </div>
               )}
 

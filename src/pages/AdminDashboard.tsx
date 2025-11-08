@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog } from "lucide-react";
+import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminUsers } from "@/components/admin/AdminUsers";
@@ -10,6 +10,7 @@ import { AdminSubscriptions } from "@/components/admin/AdminSubscriptions";
 import { AdminAnalytics } from "@/components/admin/AdminAnalytics";
 import { AdminActivityLogs } from "@/components/admin/AdminActivityLogs";
 import { RoleManagement } from "@/components/admin/RoleManagement";
+import { AdminStrategies } from "@/components/admin/AdminStrategies";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -172,7 +173,7 @@ const AdminDashboard = () => {
 
           {/* Tabs Section */}
           <Tabs defaultValue="users" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-5 lg:w-[800px] bg-card/50 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-6 lg:w-[900px] bg-card/50 backdrop-blur-sm">
               <TabsTrigger value="users" className="gap-2">
                 <Users className="w-4 h-4" />
                 <span className="hidden sm:inline">Users</span>
@@ -180,6 +181,10 @@ const AdminDashboard = () => {
               <TabsTrigger value="roles" className="gap-2">
                 <UserCog className="w-4 h-4" />
                 <span className="hidden sm:inline">Roles</span>
+              </TabsTrigger>
+              <TabsTrigger value="strategies" className="gap-2">
+                <Zap className="w-4 h-4" />
+                <span className="hidden sm:inline">Strategies</span>
               </TabsTrigger>
               <TabsTrigger value="subscriptions" className="gap-2">
                 <Package className="w-4 h-4" />
@@ -201,6 +206,10 @@ const AdminDashboard = () => {
 
             <TabsContent value="roles" className="space-y-4">
               <RoleManagement />
+            </TabsContent>
+
+            <TabsContent value="strategies" className="space-y-4">
+              <AdminStrategies />
             </TabsContent>
 
             <TabsContent value="subscriptions" className="space-y-4">
