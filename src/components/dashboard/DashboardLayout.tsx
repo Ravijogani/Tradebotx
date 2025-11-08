@@ -30,7 +30,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
         .from("user_setup")
         .select("account_size")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
       
       if (data?.account_size) {
         setAccountSize(data.account_size);
@@ -40,6 +40,13 @@ export const DashboardLayout = ({ user }: { user: any }) => {
     loadAccountSize();
   }, [user.id]);
 
+  // Handle tab changes with smooth scrolling
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    // Scroll to top when changing tabs
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <SidebarProvider defaultOpen>
       <div className="min-h-screen flex w-full bg-background relative">
@@ -47,7 +54,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
         <div className="fixed inset-0 bg-gradient-mesh opacity-40 pointer-events-none" />
         
         {/* Sidebar */}
-        <AppSidebar activeTab={activeTab} onTabChange={setActiveTab} />
+        <AppSidebar activeTab={activeTab} onTabChange={handleTabChange} />
         
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col relative">
@@ -72,7 +79,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                 <div className="flex items-center gap-2">
                   <NotificationsCenter />
                   <ThemeToggle />
-                  <UserProfileDropdown user={user} onSettingsClick={() => setActiveTab("settings")} />
+                  <UserProfileDropdown user={user} onSettingsClick={() => handleTabChange("settings")} />
                 </div>
               </div>
             </div>

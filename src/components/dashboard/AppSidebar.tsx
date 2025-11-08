@@ -37,9 +37,13 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
     { id: "reports", label: "Reports", icon: BarChart3, path: "/pl-reports" },
   ];
 
+  const handleQuickAccessClick = (path: string) => {
+    navigate(path);
+  };
+
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
-      <SidebarContent className="bg-card/30 backdrop-blur-xl">
+      <SidebarContent className="bg-sidebar/50 backdrop-blur-xl">
         <SidebarGroup>
           <SidebarGroupLabel className={isCollapsed ? "justify-center" : ""}>
             {!isCollapsed && "Navigation"}
@@ -52,7 +56,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                     onClick={() => onTabChange(item.id)}
                     isActive={activeTab === item.id}
                     tooltip={isCollapsed ? item.label : undefined}
-                    className="transition-all duration-200"
+                    className="transition-all duration-200 hover:bg-sidebar-accent"
                   >
                     <item.icon className="w-5 h-5" />
                     {!isCollapsed && <span>{item.label}</span>}
@@ -63,7 +67,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarSeparator />
+        <SidebarSeparator className="my-2" />
 
         <SidebarGroup>
           <SidebarGroupLabel className={isCollapsed ? "justify-center" : ""}>
@@ -74,9 +78,9 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
               {quickAccessItems.map((item) => (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    onClick={() => navigate(item.path)}
+                    onClick={() => handleQuickAccessClick(item.path)}
                     tooltip={isCollapsed ? item.label : undefined}
-                    className="transition-all duration-200"
+                    className="transition-all duration-200 hover:bg-sidebar-accent"
                   >
                     <item.icon className="w-5 h-5" />
                     {!isCollapsed && <span>{item.label}</span>}
@@ -87,7 +91,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarSeparator />
+        <SidebarSeparator className="my-2" />
 
         <SidebarGroup>
           <SidebarGroupContent>
@@ -97,7 +101,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                   onClick={() => onTabChange("settings")}
                   isActive={activeTab === "settings"}
                   tooltip={isCollapsed ? "Settings" : undefined}
-                  className="transition-all duration-200"
+                  className="transition-all duration-200 hover:bg-sidebar-accent"
                 >
                   <Settings className="w-5 h-5" />
                   {!isCollapsed && <span>Settings</span>}
