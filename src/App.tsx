@@ -9,6 +9,9 @@ import Login from "./pages/auth/Login";
 import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import AdminDashboard from "./pages/AdminDashboard";
+import PaymentHistory from "./pages/PaymentHistory";
+import ReferralProgram from "./pages/ReferralProgram";
+import PLReports from "./pages/PLReports";
 import NotFound from "./pages/NotFound";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
@@ -31,6 +34,9 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="/payment-history" element={<PaymentHistory />} />
+          <Route path="/referral-program" element={<ReferralProgram />} />
+          <Route path="/pl-reports" element={<PLReports />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/disclaimer" element={<Disclaimer />} />

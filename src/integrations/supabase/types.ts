@@ -558,6 +558,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      notify_trial_expiring: { Args: never; Returns: undefined }
       process_referral_signup: {
         Args: { referral_code_param: string; referred_user_id_param: string }
         Returns: boolean

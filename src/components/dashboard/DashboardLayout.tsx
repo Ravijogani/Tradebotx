@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, LogOut, Play, Square, LayoutDashboard, Settings, Calculator } from "lucide-react";
+import { TrendingUp, LogOut, Play, Square, LayoutDashboard, Settings, Calculator, FileText, Gift, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -55,11 +55,35 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               </span>
             </div>
 
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">{user.email}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground hidden md:inline">{user.email}</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => navigate("/payment-history")}
+              >
+                <FileText className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Payments</span>
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => navigate("/referral-program")}
+              >
+                <Gift className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Referrals</span>
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => navigate("/pl-reports")}
+              >
+                <BarChart3 className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Reports</span>
+              </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
+                <LogOut className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Logout</span>
               </Button>
             </div>
           </div>

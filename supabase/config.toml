@@ -1,1 +1,19 @@
 project_id = "yqgqgmzlvbglusupsjpz"
+
+[functions.send-otp]
+verify_jwt = false
+
+[functions.send-welcome-email]
+verify_jwt = false
+
+[functions.send-trial-expiry]
+verify_jwt = false
+
+[functions.create-razorpay-order]
+verify_jwt = true
+
+[functions.verify-razorpay-payment]
+verify_jwt = true
+
+[functions.send-telegram-notification]
+verify_jwt = true
