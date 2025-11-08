@@ -22,40 +22,54 @@ export const TradesList = () => {
   };
 
   return (
-    <Card className="p-6">
-      <h3 className="text-xl font-semibold mb-4">Recent Trades</h3>
+    <Card className="p-6 border-border/50 bg-card/50 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h3 className="text-xl font-semibold">Recent Trades</h3>
+          <p className="text-sm text-muted-foreground mt-1">Your latest trading activity</p>
+        </div>
+      </div>
       
       {trades.length === 0 ? (
-        <p className="text-muted-foreground text-center py-8">
-          No trades yet. Start a strategy to begin trading.
-        </p>
+        <div className="text-center py-12">
+          <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-4">
+            <ArrowUpRight className="w-8 h-8 text-muted-foreground" />
+          </div>
+          <p className="text-muted-foreground">
+            No trades yet. Start a strategy to begin trading.
+          </p>
+        </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {trades.map((trade) => (
             <div
               key={trade.id}
-              className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+              className="flex items-center justify-between p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group"
             >
               <div className="flex items-center gap-4">
                 {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
-                  <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
+                  <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors">
                     <ArrowUpRight className="w-5 h-5 text-success" />
                   </div>
                 ) : (
-                  <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center">
+                  <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors">
                     <ArrowDownRight className="w-5 h-5 text-destructive" />
                   </div>
                 )}
                 
                 <div>
-                  <div className="font-semibold">{trade.symbol}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {trade.trade_type} • {new Date(trade.opened_at).toLocaleDateString()}
+                  <div className="font-semibold text-foreground group-hover:text-primary transition-colors">
+                    {trade.symbol}
+                  </div>
+                  <div className="text-sm text-muted-foreground flex items-center gap-2">
+                    <span className="font-medium">{trade.trade_type}</span>
+                    <span>•</span>
+                    <span>{new Date(trade.opened_at).toLocaleDateString()}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="text-right">
+              <div className="text-right flex items-center gap-3">
                 {trade.profit_loss && (
                   <div
                     className={`text-lg font-bold ${
@@ -68,7 +82,10 @@ export const TradesList = () => {
                     ${parseFloat(trade.profit_loss).toFixed(2)}
                   </div>
                 )}
-                <Badge variant={trade.status === "executed" ? "default" : "secondary"}>
+                <Badge 
+                  variant={trade.status === "executed" ? "default" : "secondary"}
+                  className="min-w-[80px] justify-center"
+                >
                   {trade.status}
                 </Badge>
               </div>
