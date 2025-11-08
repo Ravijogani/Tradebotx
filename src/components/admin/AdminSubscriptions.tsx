@@ -23,34 +23,38 @@ export const AdminSubscriptions = () => {
 
   const loadSubscriptions = async () => {
     try {
-      const { data, error } = await supabase
+      // Load subscriptions
+      const { data: subscriptions, error } = await supabase
         .from("user_subscriptions")
-        .select(`
-          *,
-          profiles (
-            email,
-            full_name
-          ),
-          plans (
-            name,
-            price
-          )
-        `)
+        .select("*, plans(name, price)")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      setSubscriptions(data || []);
+      // Load user profiles
+      const userIds = subscriptions?.map(s => s.user_id) || [];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", userIds);
+
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
+      const subsWithProfiles = subscriptions?.map(sub => ({
+        ...sub,
+        profiles: profileMap.get(sub.user_id),
+      }));
+
+      setSubscriptions(subsWithProfiles || []);
 
       // Calculate stats
-      const active = data?.filter(s => s.status === "active").length || 0;
-      const trial = data?.filter(s => s.status === "trial").length || 0;
-      const revenue = data
+      const active = subsWithProfiles?.filter(s => s.status === "active").length || 0;
+      const trial = subsWithProfiles?.filter(s => s.status === "trial").length || 0;
+      const revenue = subsWithProfiles
         ?.filter(s => s.status === "active")
         .reduce((sum, s) => sum + (s.plans?.price || 0), 0) || 0;
 
       setStats({
-        total: data?.length || 0,
+        total: subsWithProfiles?.length || 0,
         active,
         trial,
         revenue,

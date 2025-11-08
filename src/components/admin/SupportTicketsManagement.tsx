@@ -59,23 +59,31 @@ export const SupportTicketsManagement = () => {
     try {
       let query = supabase
         .from("support_tickets" as any)
-        .select(`
-          *,
-          profiles (
-            full_name,
-            email
-          )
-        `)
+        .select("*")
         .order("created_at", { ascending: false });
 
       if (filterStatus !== "all") {
         query = query.eq("status", filterStatus);
       }
 
-      const { data, error } = await query;
+      const { data: tickets, error } = await query;
 
       if (error) throw error;
-      setTickets(data || []);
+
+      // Load user profiles
+      const userIds = (tickets as any[])?.map((t: any) => t.user_id) || [];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
+      const ticketsWithProfiles = (tickets as any[])?.map((ticket: any) => ({
+        ...ticket,
+        profiles: profileMap.get(ticket.user_id),
+      }));
+
+      setTickets(ticketsWithProfiles || []);
     } catch (error: any) {
       toast({
         title: "Error loading tickets",
@@ -89,20 +97,28 @@ export const SupportTicketsManagement = () => {
 
   const loadMessages = async (ticketId: string) => {
     try {
-      const { data, error } = await supabase
+      const { data: messages, error } = await supabase
         .from("ticket_messages" as any)
-        .select(`
-          *,
-          profiles (
-            full_name,
-            email
-          )
-        `)
+        .select("*")
         .eq("ticket_id", ticketId)
         .order("created_at", { ascending: true });
 
       if (error) throw error;
-      setMessages(data || []);
+
+      // Load user profiles for message senders
+      const userIds = (messages as any[])?.map((m: any) => m.user_id) || [];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
+      const messagesWithProfiles = (messages as any[])?.map((msg: any) => ({
+        ...msg,
+        profiles: profileMap.get(msg.user_id),
+      }));
+
+      setMessages(messagesWithProfiles || []);
     } catch (error: any) {
       toast({
         title: "Error loading messages",

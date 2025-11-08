@@ -40,33 +40,38 @@ export const AdminUsers = () => {
 
   const loadUsers = async () => {
     try {
-      const { data: profiles, error } = await supabase
+      // Load profiles first
+      const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select(`
-          *,
-          user_subscriptions (
-            status,
-            subscription_tier,
-            trial_ends_at,
-            plans (
-              plan_type
-            )
-          ),
-          user_setup (
-            mt5_account,
-            is_completed,
-            admin_approved,
-            broker_name,
-            broker_account_id,
-            broker_referral_code,
-            submitted_for_approval_at,
-            approval_notes
-          )
-        `)
+        .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setUsers(profiles || []);
+      if (profilesError) throw profilesError;
+
+      // Load subscriptions
+      const userIds = profiles?.map(p => p.id) || [];
+      const { data: subscriptions } = await supabase
+        .from("user_subscriptions")
+        .select("*, plans(plan_type)")
+        .in("user_id", userIds);
+
+      // Load user setup
+      const { data: setups } = await supabase
+        .from("user_setup")
+        .select("*")
+        .in("user_id", userIds);
+
+      // Combine data
+      const subscriptionMap = new Map(subscriptions?.map(s => [s.user_id, s]));
+      const setupMap = new Map(setups?.map(s => [s.user_id, s]));
+
+      const usersWithData = profiles?.map(profile => ({
+        ...profile,
+        user_subscriptions: subscriptionMap.get(profile.id) ? [subscriptionMap.get(profile.id)] : [],
+        user_setup: setupMap.get(profile.id) ? [setupMap.get(profile.id)] : [],
+      }));
+
+      setUsers(usersWithData || []);
     } catch (error: any) {
       toast({
         title: "Error loading users",

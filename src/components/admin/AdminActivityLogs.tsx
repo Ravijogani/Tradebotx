@@ -28,22 +28,36 @@ export const AdminActivityLogs = () => {
 
   const loadActivityLogs = async () => {
     try {
-      const { data, error } = await supabase
+      // First get the logs
+      const { data: logsData, error } = await supabase
         .from("admin_activity_logs")
-        .select(`
-          *,
-          admin:admin_user_id(email),
-          target:target_user_id(email)
-        `)
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(100);
 
       if (error) throw error;
 
-      const formattedLogs = data?.map((log: any) => ({
+      // Then get admin and target user emails separately
+      const adminIds = [...new Set(logsData?.map(log => log.admin_user_id) || [])];
+      const targetIds = [...new Set(logsData?.filter(log => log.target_user_id).map(log => log.target_user_id) || [])];
+
+      const { data: adminProfiles } = await supabase
+        .from("profiles")
+        .select("id, email")
+        .in("id", adminIds);
+
+      const { data: targetProfiles } = await supabase
+        .from("profiles")
+        .select("id, email")
+        .in("id", targetIds);
+
+      const adminMap = new Map(adminProfiles?.map(p => [p.id, p.email]));
+      const targetMap = new Map(targetProfiles?.map(p => [p.id, p.email]));
+
+      const formattedLogs = logsData?.map((log: any) => ({
         ...log,
-        admin_email: log.admin?.email,
-        target_email: log.target?.email,
+        admin_email: adminMap.get(log.admin_user_id),
+        target_email: log.target_user_id ? targetMap.get(log.target_user_id) : null,
       })) || [];
 
       setLogs(formattedLogs);

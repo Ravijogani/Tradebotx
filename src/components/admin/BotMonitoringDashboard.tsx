@@ -55,24 +55,38 @@ export const BotMonitoringDashboard = () => {
 
   const loadData = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: strategies, error } = await supabase
         .from("user_strategies")
-        .select(`
-          *,
-          strategies (
-            name,
-            description
-          ),
-          profiles (
-            full_name,
-            email
-          )
-        `)
+        .select("*")
         .eq("is_running", true)
         .order("started_at", { ascending: false });
 
       if (error) throw error;
-      setRunningBots(data || []);
+
+      // Load strategy details
+      const strategyIds = [...new Set(strategies?.map(s => s.strategy_id) || [])];
+      const { data: strategyDetails } = await supabase
+        .from("strategies")
+        .select("id, name, description")
+        .in("id", strategyIds);
+
+      // Load user profiles
+      const userIds = [...new Set(strategies?.map(s => s.user_id) || [])];
+      const { data: userProfiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+
+      const strategyMap = new Map(strategyDetails?.map(s => [s.id, s]));
+      const profileMap = new Map(userProfiles?.map(p => [p.id, p]));
+
+      const botsWithDetails = strategies?.map(bot => ({
+        ...bot,
+        strategies: strategyMap.get(bot.strategy_id),
+        profiles: profileMap.get(bot.user_id),
+      }));
+
+      setRunningBots(botsWithDetails || []);
     } catch (error: any) {
       toast({
         title: "Error loading bots",

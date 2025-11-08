@@ -23,17 +23,28 @@ export const ReferralProgramDashboard = () => {
 
   const loadReferralData = async () => {
     try {
-      // Load referral codes with transaction count
+      // Load referral codes
       const { data: codes, error: codesError } = await supabase
         .from("referral_codes")
-        .select(`
-          *,
-          profiles!referral_codes_user_id_fkey(email, full_name)
-        `)
+        .select("*")
         .order("total_earnings", { ascending: false });
 
       if (codesError) throw codesError;
-      setReferralData(codes || []);
+
+      // Get user profiles separately
+      const userIds = codes?.map(code => code.user_id) || [];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", userIds);
+
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
+      const codesWithProfiles = codes?.map(code => ({
+        ...code,
+        profiles: profileMap.get(code.user_id),
+      }));
+
+      setReferralData(codesWithProfiles || []);
 
       // Calculate stats
       const totalReferrals = codes?.reduce((sum, code) => sum + code.total_referrals, 0) || 0;
