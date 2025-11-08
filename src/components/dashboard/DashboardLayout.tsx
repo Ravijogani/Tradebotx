@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { TrendingUp, LogOut, FileText, Gift, BarChart3 } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +15,7 @@ import { NotificationsCenter } from "./NotificationsCenter";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { AccountHealth } from "./AccountHealth";
 import { ThemeToggle } from "./ThemeToggle";
+import { UserProfileDropdown } from "./UserProfileDropdown";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -40,14 +40,6 @@ export const DashboardLayout = ({ user }: { user: any }) => {
     loadAccountSize();
   }, [user.id]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    toast({
-      title: "Logged out successfully",
-    });
-    navigate("/");
-  };
-
   return (
     <SidebarProvider defaultOpen>
       <div className="min-h-screen flex w-full bg-background relative">
@@ -63,6 +55,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           <header className="border-b border-border/50 bg-card/30 backdrop-blur-xl sticky top-0 z-40 shadow-sm">
             <div className="container mx-auto px-4 lg:px-8">
               <div className="flex items-center justify-between h-16">
+                {/* Left Side: Sidebar Trigger + Logo */}
                 <div className="flex items-center gap-3">
                   <SidebarTrigger className="-ml-1" />
                   <div className="flex items-center gap-3">
@@ -75,43 +68,11 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   </div>
                 </div>
 
+                {/* Right Side: Notifications + Theme + Profile */}
                 <div className="flex items-center gap-2">
-                  <ThemeToggle />
                   <NotificationsCenter />
-                  <span className="text-sm text-muted-foreground hidden md:inline px-3 py-1.5 rounded-full bg-muted/50">
-                    {user.email}
-                  </span>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => navigate("/payment-history")}
-                    className="hidden sm:flex"
-                  >
-                    <FileText className="w-4 h-4 mr-2" />
-                    Payments
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => navigate("/referral-program")}
-                    className="hidden sm:flex"
-                  >
-                    <Gift className="w-4 h-4 mr-2" />
-                    Referrals
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => navigate("/pl-reports")}
-                    className="hidden sm:flex"
-                  >
-                    <BarChart3 className="w-4 h-4 mr-2" />
-                    Reports
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={handleLogout}>
-                    <LogOut className="w-4 h-4 lg:mr-2" />
-                    <span className="hidden lg:inline">Logout</span>
-                  </Button>
+                  <ThemeToggle />
+                  <UserProfileDropdown user={user} onSettingsClick={() => setActiveTab("settings")} />
                 </div>
               </div>
             </div>
