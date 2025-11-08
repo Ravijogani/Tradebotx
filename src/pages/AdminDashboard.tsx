@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap, Mail, FileText, BarChart3, Gift, Settings as SettingsIcon } from "lucide-react";
+import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap, Mail, FileText, BarChart3, Gift, Settings as SettingsIcon, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminUsers } from "@/components/admin/AdminUsers";
@@ -14,6 +14,8 @@ import { AdminStrategies } from "@/components/admin/AdminStrategies";
 import { EmailTemplatesManager } from "@/components/admin/EmailTemplatesManager";
 import { PlatformAnalytics } from "@/components/admin/PlatformAnalytics";
 import { ReferralProgramDashboard } from "@/components/admin/ReferralProgramDashboard";
+import { InvoiceBuilder } from "@/components/admin/InvoiceBuilder";
+import { PlatformSettings } from "@/components/admin/PlatformSettings";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -176,7 +178,7 @@ const AdminDashboard = () => {
 
           {/* Tabs Section */}
           <Tabs defaultValue="users" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-9 lg:w-full bg-card/50 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-11 lg:w-full bg-card/50 backdrop-blur-sm">
               <TabsTrigger value="users" className="gap-2">
                 <Users className="w-4 h-4" />
                 <span className="hidden sm:inline">Users</span>
@@ -205,9 +207,17 @@ const AdminDashboard = () => {
                 <Gift className="w-4 h-4" />
                 <span className="hidden sm:inline">Referrals</span>
               </TabsTrigger>
+              <TabsTrigger value="invoices" className="gap-2">
+                <Receipt className="w-4 h-4" />
+                <span className="hidden sm:inline">Invoices</span>
+              </TabsTrigger>
               <TabsTrigger value="emails" className="gap-2">
                 <Mail className="w-4 h-4" />
                 <span className="hidden sm:inline">Emails</span>
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="gap-2">
+                <SettingsIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">Settings</span>
               </TabsTrigger>
               <TabsTrigger value="logs" className="gap-2">
                 <Activity className="w-4 h-4" />
@@ -243,8 +253,16 @@ const AdminDashboard = () => {
               <ReferralProgramDashboard />
             </TabsContent>
 
+            <TabsContent value="invoices" className="space-y-4">
+              <InvoiceBuilder />
+            </TabsContent>
+
             <TabsContent value="emails" className="space-y-4">
               <EmailTemplatesManager />
+            </TabsContent>
+
+            <TabsContent value="settings" className="space-y-4">
+              <PlatformSettings />
             </TabsContent>
 
             <TabsContent value="logs" className="space-y-4">

@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle, Eye } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle, Eye, Filter, Mail, Download } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { UserProfileModal } from "@/components/admin/UserProfileModal";
 
@@ -23,6 +25,13 @@ export const AdminUsers = () => {
   const [selectedUserIdForProfile, setSelectedUserIdForProfile] = useState<string | null>(null);
   const [approvalNotes, setApprovalNotes] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterPlan, setFilterPlan] = useState<string>("all");
+  const [filterApproval, setFilterApproval] = useState<string>("all");
+  const [showBulkEmailDialog, setShowBulkEmailDialog] = useState(false);
+  const [bulkEmailSubject, setBulkEmailSubject] = useState("");
+  const [bulkEmailMessage, setBulkEmailMessage] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -133,10 +142,141 @@ export const AdminUsers = () => {
     }
   };
 
-  const filteredUsers = users.filter(user =>
-    user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.full_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleBulkApproval = async () => {
+    if (selectedUsers.length === 0) {
+      toast({
+        title: "No users selected",
+        description: "Please select users to approve",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      
+      for (const userId of selectedUsers) {
+        await supabase
+          .from("user_setup")
+          .update({ admin_approved: true })
+          .eq("user_id", userId);
+
+        if (currentUser) {
+          const targetUser = users.find(u => u.id === userId);
+          await supabase.from("admin_activity_logs").insert({
+            admin_user_id: currentUser.id,
+            action_type: "bulk_user_approved",
+            target_user_id: userId,
+            description: `Bulk approved setup for ${targetUser?.email}`,
+          });
+        }
+      }
+
+      toast({
+        title: "Bulk Approval Complete",
+        description: `${selectedUsers.length} users approved successfully`,
+      });
+
+      setSelectedUsers([]);
+      loadUsers();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleBulkEmail = async () => {
+    if (selectedUsers.length === 0) {
+      toast({
+        title: "No users selected",
+        description: "Please select users to send email",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!bulkEmailSubject || !bulkEmailMessage) {
+      toast({
+        title: "Missing information",
+        description: "Please provide subject and message",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const selectedUserEmails = users
+        .filter(u => selectedUsers.includes(u.id))
+        .map(u => u.email);
+
+      await supabase.functions.invoke('send-custom-email', {
+        body: {
+          to: selectedUserEmails,
+          subject: bulkEmailSubject,
+          message: bulkEmailMessage,
+        }
+      });
+
+      toast({
+        title: "Emails Sent",
+        description: `Email sent to ${selectedUsers.length} users successfully`,
+      });
+
+      setShowBulkEmailDialog(false);
+      setBulkEmailSubject("");
+      setBulkEmailMessage("");
+      setSelectedUsers([]);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUsers(prev =>
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const toggleAllUsers = () => {
+    if (selectedUsers.length === filteredUsers.length) {
+      setSelectedUsers([]);
+    } else {
+      setSelectedUsers(filteredUsers.map(u => u.id));
+    }
+  };
+
+  const filteredUsers = users.filter(user => {
+    const matchesSearch = user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const subscription = user.user_subscriptions?.[0];
+    const setup = user.user_setup?.[0];
+    const planType = subscription?.plans?.plan_type;
+
+    const matchesStatus = filterStatus === "all" || subscription?.status === filterStatus;
+    const matchesPlan = filterPlan === "all" || planType === filterPlan;
+    const matchesApproval = filterApproval === "all" || 
+      (filterApproval === "approved" && setup?.admin_approved) ||
+      (filterApproval === "pending" && setup?.is_completed && !setup?.admin_approved) ||
+      (filterApproval === "not_submitted" && !setup?.is_completed);
+
+    return matchesSearch && matchesStatus && matchesPlan && matchesApproval;
+  });
 
   // Filter for pending approvals (all users waiting for approval)
   const pendingApprovals = filteredUsers.filter(user => {
@@ -247,26 +387,94 @@ export const AdminUsers = () => {
         {/* All Users Section */}
         <Card>
           <CardHeader>
-            <CardTitle>All Users</CardTitle>
-            <CardDescription>
-              Manage user accounts and subscriptions
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>All Users</CardTitle>
+                <CardDescription>
+                  Manage user accounts and subscriptions
+                </CardDescription>
+              </div>
+              {selectedUsers.length > 0 && (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={handleBulkApproval}
+                    disabled={actionLoading}
+                  >
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Approve Selected ({selectedUsers.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowBulkEmailDialog(true)}
+                    disabled={actionLoading}
+                  >
+                    <Mail className="w-4 h-4 mr-2" />
+                    Email Selected
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Search className="w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search users by email or name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="max-w-sm"
-              />
+            {/* Search and Filters */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="flex items-center gap-2">
+                <Search className="w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="trial">Trial</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterPlan} onValueChange={setFilterPlan}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by plan" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Plans</SelectItem>
+                  <SelectItem value="free">Free</SelectItem>
+                  <SelectItem value="starter">Starter</SelectItem>
+                  <SelectItem value="pro">Pro</SelectItem>
+                  <SelectItem value="enterprise">Enterprise</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterApproval} onValueChange={setFilterApproval}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by approval" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Approvals</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="not_submitted">Not Submitted</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">
+                      <Checkbox
+                        checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
+                        onCheckedChange={toggleAllUsers}
+                      />
+                    </TableHead>
                     <TableHead>User</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Plan</TableHead>
@@ -280,7 +488,7 @@ export const AdminUsers = () => {
                 <TableBody>
                   {filteredUsers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center text-muted-foreground">
                         No users found
                       </TableCell>
                     </TableRow>
@@ -292,6 +500,12 @@ export const AdminUsers = () => {
                       
                       return (
                         <TableRow key={user.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedUsers.includes(user.id)}
+                              onCheckedChange={() => toggleUserSelection(user.id)}
+                            />
+                          </TableCell>
                           <TableCell className="font-medium">
                             {user.full_name || "N/A"}
                           </TableCell>
@@ -362,10 +576,71 @@ export const AdminUsers = () => {
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>Total Users: {filteredUsers.length}</span>
               <span>Pending Approvals: {pendingApprovals.length}</span>
+              {selectedUsers.length > 0 && (
+                <span className="text-primary font-medium">{selectedUsers.length} selected</span>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Bulk Email Dialog */}
+      <Dialog open={showBulkEmailDialog} onOpenChange={setShowBulkEmailDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Send Email to Selected Users</DialogTitle>
+            <DialogDescription>
+              Send a custom email to {selectedUsers.length} selected user(s)
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="subject">Subject</Label>
+              <Input
+                id="subject"
+                value={bulkEmailSubject}
+                onChange={(e) => setBulkEmailSubject(e.target.value)}
+                placeholder="Email subject..."
+                className="mt-1.5"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="message">Message</Label>
+              <Textarea
+                id="message"
+                value={bulkEmailMessage}
+                onChange={(e) => setBulkEmailMessage(e.target.value)}
+                placeholder="Email message..."
+                className="mt-1.5 min-h-[200px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkEmailDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBulkEmail}
+              disabled={actionLoading || !bulkEmailSubject || !bulkEmailMessage}
+            >
+              {actionLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="mr-2 h-4 w-4" />
+                  Send Email
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Approval Dialog */}
       <Dialog open={!!selectedUser} onOpenChange={() => setSelectedUser(null)}>

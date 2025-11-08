@@ -3,6 +3,9 @@ project_id = "yqgqgmzlvbglusupsjpz"
 [functions.send-custom-email]
 verify_jwt = true
 
+[functions.send-invoice-email]
+verify_jwt = true
+
 [functions.start-trading-bot]
 verify_jwt = true
 
