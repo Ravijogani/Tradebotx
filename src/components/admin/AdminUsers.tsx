@@ -78,6 +78,19 @@ export const AdminUsers = () => {
 
       if (error) throw error;
 
+      // Log activity
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const targetUser = users.find(u => u.id === userId);
+      
+      if (currentUser && targetUser) {
+        await supabase.from("admin_activity_logs").insert({
+          admin_user_id: currentUser.id,
+          action_type: approved ? "user_approved" : "user_rejected",
+          target_user_id: userId,
+          description: `${approved ? "Approved" : "Rejected"} setup for ${targetUser.email}${approvalNotes ? ` - ${approvalNotes}` : ""}`,
+        });
+      }
+
       toast({
         title: approved ? "User Approved" : "User Rejected",
         description: approved 

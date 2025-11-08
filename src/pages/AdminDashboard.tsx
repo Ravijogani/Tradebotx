@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard } from "lucide-react";
+import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminUsers } from "@/components/admin/AdminUsers";
 import { AdminSubscriptions } from "@/components/admin/AdminSubscriptions";
 import { AdminAnalytics } from "@/components/admin/AdminAnalytics";
+import { AdminActivityLogs } from "@/components/admin/AdminActivityLogs";
+import { RoleManagement } from "@/components/admin/RoleManagement";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -170,23 +172,35 @@ const AdminDashboard = () => {
 
           {/* Tabs Section */}
           <Tabs defaultValue="users" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 lg:w-[600px] bg-card/50 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-5 lg:w-[800px] bg-card/50 backdrop-blur-sm">
               <TabsTrigger value="users" className="gap-2">
                 <Users className="w-4 h-4" />
                 <span className="hidden sm:inline">Users</span>
               </TabsTrigger>
+              <TabsTrigger value="roles" className="gap-2">
+                <UserCog className="w-4 h-4" />
+                <span className="hidden sm:inline">Roles</span>
+              </TabsTrigger>
               <TabsTrigger value="subscriptions" className="gap-2">
                 <Package className="w-4 h-4" />
-                <span className="hidden sm:inline">Subscriptions</span>
+                <span className="hidden sm:inline">Plans</span>
               </TabsTrigger>
               <TabsTrigger value="analytics" className="gap-2">
                 <TrendingUp className="w-4 h-4" />
                 <span className="hidden sm:inline">Analytics</span>
               </TabsTrigger>
+              <TabsTrigger value="logs" className="gap-2">
+                <Activity className="w-4 h-4" />
+                <span className="hidden sm:inline">Logs</span>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="users" className="space-y-4">
               <AdminUsers />
+            </TabsContent>
+
+            <TabsContent value="roles" className="space-y-4">
+              <RoleManagement />
             </TabsContent>
 
             <TabsContent value="subscriptions" className="space-y-4">
@@ -195,6 +209,10 @@ const AdminDashboard = () => {
 
             <TabsContent value="analytics" className="space-y-4">
               <AdminAnalytics />
+            </TabsContent>
+
+            <TabsContent value="logs" className="space-y-4">
+              <AdminActivityLogs />
             </TabsContent>
           </Tabs>
         </div>
