@@ -59,6 +59,8 @@ export type Database = {
           email: string
           full_name: string | null
           id: string
+          phone: string | null
+          referral_code: string | null
           updated_at: string
         }
         Insert: {
@@ -66,6 +68,8 @@ export type Database = {
           email: string
           full_name?: string | null
           id: string
+          phone?: string | null
+          referral_code?: string | null
           updated_at?: string
         }
         Update: {
@@ -73,6 +77,8 @@ export type Database = {
           email?: string
           full_name?: string | null
           id?: string
+          phone?: string | null
+          referral_code?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -168,6 +174,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_otps: {
+        Row: {
+          created_at: string | null
+          email: string
+          expires_at: string
+          id: string
+          otp_code: string
+          otp_type: string
+          user_id: string | null
+          verified: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          email: string
+          expires_at: string
+          id?: string
+          otp_code: string
+          otp_type: string
+          user_id?: string | null
+          verified?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          email?: string
+          expires_at?: string
+          id?: string
+          otp_code?: string
+          otp_type?: string
+          user_id?: string | null
+          verified?: boolean | null
+        }
+        Relationships: []
       }
       user_roles: {
         Row: {
@@ -313,6 +352,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_expired_otps: { Args: never; Returns: undefined }
       create_admin_account: {
         Args: {
           admin_email: string
@@ -321,11 +361,22 @@ export type Database = {
         }
         Returns: Json
       }
+      generate_otp: {
+        Args: { p_email: string; p_otp_type?: string; p_user_id?: string }
+        Returns: {
+          expires_at: string
+          otp_code: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      verify_otp: {
+        Args: { p_email: string; p_otp_code: string; p_otp_type: string }
         Returns: boolean
       }
     }

@@ -7,9 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, TrendingUp } from "lucide-react";
+import { OTPVerification } from "@/components/auth/OTPVerification";
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
+  const [showOTPVerification, setShowOTPVerification] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -22,6 +25,7 @@ const Login = () => {
     setLoading(true);
 
     try {
+      // First verify credentials
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
@@ -30,11 +34,29 @@ const Login = () => {
       if (error) throw error;
 
       if (data.user) {
-        toast({
-          title: "Welcome back!",
-          description: "Successfully logged in to your account.",
+        // Send OTP for additional verification
+        const { error: otpError } = await supabase.functions.invoke('send-otp', {
+          body: {
+            email: formData.email,
+            otpType: 'login'
+          }
         });
-        navigate("/dashboard");
+
+        if (otpError) {
+          console.error('OTP sending error:', otpError);
+          throw new Error('Failed to send verification code');
+        }
+
+        // Sign out temporarily until OTP is verified
+        await supabase.auth.signOut();
+
+        setUserEmail(formData.email);
+        setShowOTPVerification(true);
+
+        toast({
+          title: "Verification code sent!",
+          description: "Please check your email for the OTP",
+        });
       }
     } catch (error: any) {
       toast({
@@ -46,6 +68,48 @@ const Login = () => {
       setLoading(false);
     }
   };
+
+  const handleOTPVerified = async () => {
+    // Sign in again after OTP verification
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: formData.email,
+      password: formData.password,
+    });
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (data.user) {
+      toast({
+        title: "Welcome back!",
+        description: "Successfully logged in to your account.",
+      });
+      navigate("/dashboard");
+    }
+  };
+
+  if (showOTPVerification) {
+    return (
+      <OTPVerification
+        open={true}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowOTPVerification(false);
+            setUserEmail("");
+          }
+        }}
+        email={userEmail}
+        otpType="login"
+        onVerified={handleOTPVerified}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/10 p-4">
