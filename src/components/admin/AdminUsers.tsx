@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+const ADMIN_EMAIL = "admin@tradebotx.com"; // Configure this with your admin email
+
 export const AdminUsers = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,6 +91,23 @@ export const AdminUsers = () => {
           target_user_id: userId,
           description: `${approved ? "Approved" : "Rejected"} setup for ${targetUser.email}${approvalNotes ? ` - ${approvalNotes}` : ""}`,
         });
+
+        // Send email notification to admin
+        try {
+          await supabase.functions.invoke('send-admin-alert', {
+            body: {
+              adminEmail: ADMIN_EMAIL,
+              actionType: approved ? 'User Approved' : 'User Rejected',
+              performedBy: currentUser.email || 'Unknown Admin',
+              targetUser: targetUser.email || 'Unknown User',
+              details: approved 
+                ? `User account has been approved and is now active. The user can now access all platform features according to their subscription plan.${approvalNotes ? `\n\nNotes: ${approvalNotes}` : ''}`
+                : `User account setup has been rejected. The user will not be able to access the platform until their setup is approved.${approvalNotes ? `\n\nReason: ${approvalNotes}` : ''}`
+            }
+          });
+        } catch (emailError) {
+          console.error('Failed to send admin alert email:', emailError);
+        }
       }
 
       toast({

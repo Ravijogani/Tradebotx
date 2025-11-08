@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Shield, UserPlus, UserMinus, Search } from "lucide-react";
 
+const ADMIN_EMAIL = "admin@tradebotx.com"; // Configure this with your admin email
+
 interface UserWithRoles {
   id: string;
   email: string;
@@ -99,6 +101,22 @@ export const RoleManagement = () => {
         `Assigned ${role} role to ${userEmail}`
       );
 
+      // Send email notification to admin
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.functions.invoke('send-admin-alert', {
+          body: {
+            adminEmail: ADMIN_EMAIL,
+            actionType: 'Role Assigned',
+            performedBy: currentUser?.email || 'Unknown Admin',
+            targetUser: userEmail,
+            details: `The ${role} role has been assigned to this user. This grants them ${role === 'admin' ? 'administrative privileges including user management and system configuration' : 'standard user access to the platform'}.`
+          }
+        });
+      } catch (emailError) {
+        console.error('Failed to send admin alert email:', emailError);
+      }
+
       toast({
         title: "Role Assigned",
         description: `Successfully assigned ${role} role to ${userEmail}`,
@@ -129,6 +147,22 @@ export const RoleManagement = () => {
         userId,
         `Revoked ${role} role from ${userEmail}`
       );
+
+      // Send email notification to admin
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.functions.invoke('send-admin-alert', {
+          body: {
+            adminEmail: ADMIN_EMAIL,
+            actionType: 'Role Revoked',
+            performedBy: currentUser?.email || 'Unknown Admin',
+            targetUser: userEmail,
+            details: `The ${role} role has been revoked from this user. They will no longer have ${role === 'admin' ? 'administrative privileges' : 'this role\'s permissions'}.`
+          }
+        });
+      } catch (emailError) {
+        console.error('Failed to send admin alert email:', emailError);
+      }
 
       toast({
         title: "Role Revoked",
