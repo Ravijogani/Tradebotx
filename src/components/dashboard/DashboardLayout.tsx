@@ -23,6 +23,7 @@ import { SupportTickets } from "./SupportTickets";
 import { FAQ } from "./FAQ";
 import { OpenPositions } from "./OpenPositions";
 import { BotHealthIndicator } from "./BotHealthIndicator";
+import { BotStatusSync } from "./BotStatusSync";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -56,6 +57,9 @@ export const DashboardLayout = ({ user }: { user: any }) => {
 
   return (
     <SidebarProvider defaultOpen>
+      {/* Background component to sync bot status */}
+      <BotStatusSync />
+      
       <div className="min-h-screen flex w-full bg-background relative">
         {/* Animated Background Mesh */}
         <div className="fixed inset-0 bg-gradient-mesh opacity-40 pointer-events-none" />

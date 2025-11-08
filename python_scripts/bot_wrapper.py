@@ -339,6 +339,14 @@ class SupabaseTradingBot:
         except KeyboardInterrupt:
             logger.info("⚠️ Bot stopped by user")
             self.update_heartbeat(status='stopped', mt5_connected=False)
+            # Update user_strategies to reflect stopped state
+            try:
+                self.supabase.table('user_strategies').update({
+                    'is_running': False,
+                    'stopped_at': datetime.utcnow().isoformat()
+                }).eq('user_id', self.user_id).eq('strategy_id', self.strategy_id).execute()
+            except:
+                pass
         except Exception as e:
             logger.error(f"❌ Critical error: {e}", exc_info=True)
             self.update_heartbeat(status='crashed', mt5_connected=False, error_message=str(e))
@@ -347,6 +355,16 @@ class SupabaseTradingBot:
                 f"Error: {str(e)}\n"
                 f"Check logs for details"
             )
+            
+            # CRITICAL: Update user_strategies to show bot is stopped
+            try:
+                self.supabase.table('user_strategies').update({
+                    'is_running': False,
+                    'stopped_at': datetime.utcnow().isoformat()
+                }).eq('user_id', self.user_id).eq('strategy_id', self.strategy_id).execute()
+                logger.info("✅ Updated user_strategies to is_running=false")
+            except Exception as update_error:
+                logger.error(f"Failed to update user_strategies: {update_error}")
             
             # Log crash to audit table
             try:

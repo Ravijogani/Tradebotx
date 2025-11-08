@@ -35,6 +35,42 @@ export const StrategySelection = () => {
 
   useEffect(() => {
     loadData();
+    
+    // Set up realtime subscription for user_strategies changes
+    const channel = supabase
+      .channel('user-strategies-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_strategies'
+        },
+        (payload) => {
+          console.log('User strategy change:', payload);
+          // Reload data when any user_strategy changes
+          loadData();
+          
+          // Show toast for bot status changes
+          if (payload.eventType === 'UPDATE') {
+            const isRunning = payload.new.is_running;
+            const wasRunning = payload.old?.is_running;
+            
+            if (wasRunning && !isRunning) {
+              toast({
+                title: "Bot Stopped",
+                description: "Trading bot has been stopped",
+                variant: "default"
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadData = async () => {
