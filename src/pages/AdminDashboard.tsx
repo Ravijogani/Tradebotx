@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap, Mail, FileText, BarChart3, Gift, Settings as SettingsIcon, Receipt } from "lucide-react";
+import { Loader2, Users, Package, TrendingUp, Shield, LogOut, LayoutDashboard, Activity, UserCog, Zap, Mail, FileText, BarChart3, Gift, Settings as SettingsIcon, Receipt, MessageSquare, MonitorDot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminUsers } from "@/components/admin/AdminUsers";
@@ -16,6 +16,8 @@ import { PlatformAnalytics } from "@/components/admin/PlatformAnalytics";
 import { ReferralProgramDashboard } from "@/components/admin/ReferralProgramDashboard";
 import { InvoiceBuilder } from "@/components/admin/InvoiceBuilder";
 import { PlatformSettings } from "@/components/admin/PlatformSettings";
+import { SupportTicketsManagement } from "@/components/admin/SupportTicketsManagement";
+import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboard";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -177,11 +179,19 @@ const AdminDashboard = () => {
           </div>
 
           {/* Tabs Section */}
-          <Tabs defaultValue="users" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-11 lg:w-full bg-card/50 backdrop-blur-sm">
+          <Tabs defaultValue="botmonitor" className="space-y-6">
+            <TabsList className="grid w-full grid-cols-13 lg:w-full bg-card/50 backdrop-blur-sm overflow-x-auto">
+              <TabsTrigger value="botmonitor" className="gap-2">
+                <MonitorDot className="w-4 h-4" />
+                <span className="hidden sm:inline">Bots</span>
+              </TabsTrigger>
               <TabsTrigger value="users" className="gap-2">
                 <Users className="w-4 h-4" />
                 <span className="hidden sm:inline">Users</span>
+              </TabsTrigger>
+              <TabsTrigger value="support" className="gap-2">
+                <MessageSquare className="w-4 h-4" />
+                <span className="hidden sm:inline">Support</span>
               </TabsTrigger>
               <TabsTrigger value="roles" className="gap-2">
                 <UserCog className="w-4 h-4" />
@@ -225,8 +235,16 @@ const AdminDashboard = () => {
               </TabsTrigger>
             </TabsList>
 
+            <TabsContent value="botmonitor" className="space-y-4">
+              <BotMonitoringDashboard />
+            </TabsContent>
+
             <TabsContent value="users" className="space-y-4">
               <AdminUsers />
+            </TabsContent>
+
+            <TabsContent value="support" className="space-y-4">
+              <SupportTicketsManagement />
             </TabsContent>
 
             <TabsContent value="roles" className="space-y-4">

@@ -12,10 +12,13 @@ import { RiskCalculator } from "./RiskCalculator";
 import { UserSettings } from "./UserSettings";
 import { PerformanceChart } from "./PerformanceChart";
 import { NotificationsCenter } from "./NotificationsCenter";
+import { NotificationCenter } from "./NotificationCenter";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { AccountHealth } from "./AccountHealth";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserProfileDropdown } from "./UserProfileDropdown";
+import { SupportTickets } from "./SupportTickets";
+import { FAQ } from "./FAQ";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -77,7 +80,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
 
                 {/* Right Side: Notifications + Theme + Profile */}
                 <div className="flex items-center gap-2">
-                  <NotificationsCenter />
+                  <NotificationCenter />
                   <ThemeToggle />
                   <UserProfileDropdown user={user} onSettingsClick={() => handleTabChange("settings")} />
                 </div>
