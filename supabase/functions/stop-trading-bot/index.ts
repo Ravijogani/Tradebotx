@@ -83,6 +83,24 @@ serve(async (req) => {
       .eq('user_id', user.id)
       .single();
 
+    console.log(`Strategy stopped for user ${user.id}`);
+
+    // Log to audit trail
+    const serviceClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+    
+    await serviceClient.from('bot_audit_logs').insert({
+      user_id: user.id,
+      strategy_id: userStrategy.strategy_id,
+      action: 'stop',
+      performed_by: user.id,
+      metadata: {
+        timestamp: new Date().toISOString()
+      }
+    });
+
     // Send notification (if Telegram is configured)
     if (setup?.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
       try {

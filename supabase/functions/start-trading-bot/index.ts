@@ -100,6 +100,23 @@ serve(async (req) => {
 
     console.log(`User strategy record created/updated: ${userStrategy.id}`);
 
+    // Log to audit trail
+    const serviceClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+    
+    await serviceClient.from('bot_audit_logs').insert({
+      user_id: user.id,
+      strategy_id: strategyId,
+      action: 'start',
+      performed_by: user.id,
+      metadata: {
+        strategy_name: strategyName,
+        timestamp: new Date().toISOString()
+      }
+    });
+
     // Call trigger-bot edge function instead of direct execution
     const { data: triggerResult, error: triggerError } = await supabaseClient.functions.invoke('trigger-bot', {
       body: {

@@ -21,6 +21,8 @@ import { ThemeToggle } from "./ThemeToggle";
 import { UserProfileDropdown } from "./UserProfileDropdown";
 import { SupportTickets } from "./SupportTickets";
 import { FAQ } from "./FAQ";
+import { OpenPositions } from "./OpenPositions";
+import { BotHealthIndicator } from "./BotHealthIndicator";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -104,6 +106,14 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   
                   {/* Stats Overview */}
                   <StatsOverview />
+                  
+                  {/* Bot Health & Open Positions */}
+                  <div className="grid lg:grid-cols-3 gap-6">
+                    <BotHealthIndicator />
+                    <div className="lg:col-span-2">
+                      <OpenPositions />
+                    </div>
+                  </div>
                   
                   {/* Performance Chart */}
                   <PerformanceChart />

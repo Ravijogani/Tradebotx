@@ -44,6 +44,27 @@ export const TradesListEnhanced = () => {
 
   useEffect(() => {
     loadTrades();
+    
+    // Set up realtime subscription for trades
+    const channel = supabase
+      .channel('trades-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'trades'
+        },
+        (payload) => {
+          console.log('Trade change:', payload);
+          loadTrades();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {

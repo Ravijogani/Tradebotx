@@ -34,7 +34,7 @@ serve(async (req) => {
     // Get user setup
     const { data: setup, error: setupError } = await supabaseClient
       .from('user_setup')
-      .select('admin_approved, mt5_account, mt5_password, mt5_server, account_size, risk_per_trade, max_positions')
+      .select('admin_approved, mt5_account, mt5_password, mt5_server, account_size, risk_per_trade, max_positions, telegram_chat_id')
       .eq('user_id', user.id)
       .single();
 
@@ -48,12 +48,15 @@ serve(async (req) => {
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
+      strategy_name: strategyName,
       mt5_account: setup.mt5_account,
       mt5_password: setup.mt5_password,
       mt5_server: setup.mt5_server,
       account_size: setup.account_size,
       risk_per_trade: setup.risk_per_trade,
       max_positions: setup.max_positions || 3,
+      telegram_chat_id: setup.telegram_chat_id,
+      telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
       supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
