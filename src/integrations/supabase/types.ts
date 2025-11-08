@@ -44,6 +44,87 @@ export type Database = {
         }
         Relationships: []
       }
+      email_templates: {
+        Row: {
+          body: string
+          created_at: string | null
+          id: string
+          name: string
+          subject: string
+          updated_at: string | null
+          variables: Json | null
+        }
+        Insert: {
+          body: string
+          created_at?: string | null
+          id?: string
+          name: string
+          subject: string
+          updated_at?: string | null
+          variables?: Json | null
+        }
+        Update: {
+          body?: string
+          created_at?: string | null
+          id?: string
+          name?: string
+          subject?: string
+          updated_at?: string | null
+          variables?: Json | null
+        }
+        Relationships: []
+      }
+      invoices: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string
+          due_date: string | null
+          id: string
+          invoice_number: string
+          items: Json
+          notes: string | null
+          paid_at: string | null
+          pdf_url: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string
+          due_date?: string | null
+          id?: string
+          invoice_number: string
+          items?: Json
+          notes?: string | null
+          paid_at?: string | null
+          pdf_url?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string
+          due_date?: string | null
+          id?: string
+          invoice_number?: string
+          items?: Json
+          notes?: string | null
+          paid_at?: string | null
+          pdf_url?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       notification_log: {
         Row: {
           channel: string
@@ -175,6 +256,36 @@ export type Database = {
           price?: number
           trial_days?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      platform_settings: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: Json
         }
         Relationships: []
       }
@@ -406,6 +517,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_activity_detailed: {
+        Row: {
+          activity_data: Json | null
+          activity_type: string
+          created_at: string | null
+          id: string
+          ip_address: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          activity_data?: Json | null
+          activity_type: string
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          activity_data?: Json | null
+          activity_type?: string
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       user_otps: {
         Row: {
@@ -639,6 +780,45 @@ export type Database = {
       generate_referral_code: {
         Args: { user_id_param: string }
         Returns: string
+      }
+      get_platform_pnl_overview: {
+        Args: never
+        Returns: {
+          active_traders: number
+          avg_pnl_per_user: number
+          losing_users: number
+          profitable_users: number
+          total_pnl: number
+          total_trades: number
+          total_users: number
+        }[]
+      }
+      get_strategy_performance: {
+        Args: never
+        Returns: {
+          active_users: number
+          avg_trade_pnl: number
+          strategy_id: string
+          strategy_name: string
+          total_pnl: number
+          total_trades: number
+          total_users: number
+          win_rate: number
+        }[]
+      }
+      get_user_performance: {
+        Args: { p_user_id: string }
+        Returns: {
+          avg_loss: number
+          avg_profit: number
+          best_trade: number
+          losing_trades: number
+          total_pnl: number
+          total_trades: number
+          win_rate: number
+          winning_trades: number
+          worst_trade: number
+        }[]
       }
       has_role: {
         Args: {

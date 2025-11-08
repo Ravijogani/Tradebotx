@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle } from "lucide-react";
+import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle, Eye } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { UserProfileModal } from "@/components/admin/UserProfileModal";
 
 const ADMIN_EMAIL = "admin@tradebotx.com"; // Configure this with your admin email
 
@@ -19,6 +20,7 @@ export const AdminUsers = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [selectedUserIdForProfile, setSelectedUserIdForProfile] = useState<string | null>(null);
   const [approvalNotes, setApprovalNotes] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const { toast } = useToast();
@@ -272,12 +274,13 @@ export const AdminUsers = () => {
                     <TableHead>Setup</TableHead>
                     <TableHead>Approval</TableHead>
                     <TableHead>Joined</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground">
                         No users found
                       </TableCell>
                     </TableRow>
@@ -336,6 +339,17 @@ export const AdminUsers = () => {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {new Date(user.created_at).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setSelectedUserIdForProfile(user.id)}
+                              className="gap-2"
+                            >
+                              <Eye className="w-4 h-4" />
+                              View
+                            </Button>
                           </TableCell>
                         </TableRow>
                       );
@@ -426,6 +440,12 @@ export const AdminUsers = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <UserProfileModal
+        userId={selectedUserIdForProfile}
+        open={!!selectedUserIdForProfile}
+        onClose={() => setSelectedUserIdForProfile(null)}
+      />
     </>
   );
 };
