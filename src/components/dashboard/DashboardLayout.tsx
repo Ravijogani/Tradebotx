@@ -33,12 +33,39 @@ import { AIInsightsDashboard } from "./AIInsightsDashboard";
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [accountSize, setAccountSize] = useState(10000);
+  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">("dark");
   const navigate = useNavigate();
   const { toast } = useToast();
   const { theme } = useTheme();
   
-  // Determine which logo to use based on theme
-  const currentLogo = theme === "light" ? logo : logoWhite;
+  // Update effective theme when theme setting changes or system preference changes
+  useEffect(() => {
+    const updateEffectiveTheme = () => {
+      if (theme === "light") {
+        setEffectiveTheme("light");
+      } else if (theme === "dark") {
+        setEffectiveTheme("dark");
+      } else if (theme === "system") {
+        const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        setEffectiveTheme(isDark ? "dark" : "light");
+      }
+    };
+
+    updateEffectiveTheme();
+
+    // Listen for system theme changes
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      if (theme === "system") {
+        updateEffectiveTheme();
+      }
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+  
+  const currentLogo = effectiveTheme === "light" ? logo : logoWhite;
 
   useEffect(() => {
     // Load account size from user_setup if available
