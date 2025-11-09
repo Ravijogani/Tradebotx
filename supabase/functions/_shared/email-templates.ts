@@ -1,84 +1,142 @@
-// Shared email template system for TradeBotX
-// Matches the website theme with proper branding
+// Professional Email Template System for TradeBotX
+// Designed for professional traders - institutional-grade design
 
 export const getEmailTemplate = (content: string, preheader?: string) => {
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
   <title>TradeBotX</title>
-  ${preheader ? `<style type="text/css">#preheader{display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0}</style>` : ''}
   <!--[if mso]>
-  <style type="text/css">
-    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
-  </style>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
   <![endif]-->
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #0a0e1a; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .preheader { display: none !important; visibility: hidden; mso-hide: all; font-size: 1px; line-height: 1px; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; color: #0a0e1a; }
+    @media only screen and (max-width: 600px) {
+      .mobile-hide { display: none !important; }
+      .mobile-padding { padding: 20px !important; }
+      .mobile-center { text-align: center !important; }
+      .logo-mobile { max-width: 180px !important; }
+    }
+  </style>
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #0a0e1a 0%, #1a1f2e 100%);">
-  ${preheader ? `<div id="preheader" style="display: none; max-height: 0px; overflow: hidden; font-size: 1px; line-height: 1px; color: transparent; opacity: 0;">${preheader}</div>` : ''}
+<body style="margin: 0; padding: 0; background: #0a0e1a;">
+  ${preheader ? `<div class="preheader">${preheader}</div>` : ''}
   
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin: 0; padding: 0; background: linear-gradient(135deg, #0a0e1a 0%, #1a1f2e 100%);">
+  <!-- Outer Container -->
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: #0a0e1a; padding: 40px 0;">
     <tr>
-      <td align="center" style="padding: 50px 20px;">
-        <!-- Main Container -->
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: #1a1f2e; border-radius: 24px; overflow: hidden; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.7), 0 0 40px rgba(102, 126, 234, 0.15);">
+      <td align="center">
+        
+        <!-- Main Email Container -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="max-width: 600px; background: #1a1f2e; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);">
           
-          <!-- Premium Gradient Header with Glass Effect -->
+          <!-- Premium Header with Logo -->
           <tr>
-            <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0; position: relative;">
-              <!-- Decorative Elements -->
-              <div style="position: absolute; top: -100px; right: -100px; width: 300px; height: 300px; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); border-radius: 50%;"></div>
+            <td style="background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%); padding: 0; position: relative;">
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
-                  <td style="padding: 60px 40px; text-align: center; position: relative;">
-                    <div style="background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: 20px; padding: 28px 40px; display: inline-block; border: 2px solid rgba(255, 255, 255, 0.25); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);">
-                      <h1 style="margin: 0; font-size: 42px; font-weight: 900; color: #ffffff; letter-spacing: -1.5px; text-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);">
-                        <span style="font-size: 48px; display: inline-block; animation: float 3s ease-in-out infinite;">🤖</span> TradeBotX
-                      </h1>
-                      <p style="margin: 12px 0 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.95); font-weight: 600; letter-spacing: 3px; text-transform: uppercase; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);">AI-Powered Trading Platform</p>
-                    </div>
+                  <td align="center" style="padding: 48px 40px;">
+                    <!-- Logo Container -->
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td align="center">
+                          <img src="https://yqgqgmzlvbglusupsjpz.supabase.co/storage/v1/object/public/invoices/tradebotx-logo.png" 
+                               alt="TradeBotX" 
+                               width="240" 
+                               class="logo-mobile"
+                               style="display: block; max-width: 240px; height: auto; margin: 0 auto; filter: brightness(1.1);" />
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
               </table>
             </td>
           </tr>
           
-          <!-- Enhanced Content Area -->
+          <!-- Content Area -->
           <tr>
-            <td style="padding: 56px 48px; background: linear-gradient(180deg, #1a1f2e 0%, #1e2433 100%);">
+            <td class="mobile-padding" style="padding: 48px 40px; background: linear-gradient(180deg, #1a1f2e 0%, #1e2433 100%);">
               ${content}
             </td>
           </tr>
           
-          <!-- Enhanced Footer -->
+          <!-- Professional Footer -->
           <tr>
-            <td style="padding: 40px 48px; background: #12161f; border-top: 2px solid rgba(102, 126, 234, 0.2);">
+            <td style="padding: 40px; background: #12161f; border-top: 1px solid rgba(16, 185, 105, 0.15);">
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                <!-- Divider Line -->
                 <tr>
-                  <td style="text-align: center; padding-bottom: 24px;">
-                    <p style="margin: 0; font-size: 15px; color: #9ca3b5; line-height: 1.8;">
-                      This is an automated message from <strong style="color: #667eea;">TradeBotX</strong>.<br>
-                      For support, reach out at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 700; border-bottom: 2px solid rgba(102, 126, 234, 0.3); padding-bottom: 2px;">support@tradebotx.com</a>
-                    </p>
+                  <td style="padding-bottom: 24px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td style="height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(16, 185, 105, 0.3) 50%, transparent 100%);"></td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
+                
+                <!-- Footer Content -->
                 <tr>
-                  <td style="text-align: center; padding-top: 24px; border-top: 1px solid rgba(102, 126, 234, 0.1);">
-                    <p style="margin: 0 0 16px 0; font-size: 13px; color: #7b8296;">
-                      &copy; ${new Date().getFullYear()} TradeBotX. All rights reserved.
+                  <td align="center">
+                    <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.8; color: #9ca3b5;">
+                      <strong style="color: #10b981; font-weight: 600;">TradeBotX</strong> - Institutional-Grade Algorithmic Trading<br>
+                      Professional automated trading solutions for serious traders
                     </p>
-                    <div style="margin-top: 16px;">
-                      <a href="https://tradebotx.com" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Website</a>
-                      <span style="color: #4b5563; font-weight: 300;">•</span>
-                      <a href="https://tradebotx.com/terms" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Terms</a>
-                      <span style="color: #4b5563; font-weight: 300;">•</span>
-                      <a href="https://tradebotx.com/privacy" style="display: inline-block; margin: 0 12px; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600; transition: color 0.2s;">Privacy</a>
-                    </div>
-                    <p style="margin: 20px 0 0 0; font-size: 11px; color: #5f6575; line-height: 1.5;">
-                      You're receiving this because you have an account with TradeBotX.<br>
-                      Update your preferences in your <a href="https://tradebotx.com/dashboard/settings" style="color: #667eea; text-decoration: none;">account settings</a>.
+                    
+                    <!-- Contact Info -->
+                    <p style="margin: 0 0 24px 0; font-size: 14px; color: #7b8296;">
+                      Support: <a href="mailto:support@tradebotx.com" style="color: #10b981; text-decoration: none; font-weight: 600;">support@tradebotx.com</a><br>
+                      Security: <a href="mailto:security@tradebotx.com" style="color: #10b981; text-decoration: none; font-weight: 600;">security@tradebotx.com</a>
+                    </p>
+                    
+                    <!-- Footer Links -->
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                      <tr>
+                        <td style="padding: 0 12px;">
+                          <a href="https://tradebotx.com" style="color: #10b981; text-decoration: none; font-size: 13px; font-weight: 600;">Website</a>
+                        </td>
+                        <td style="color: #4b5563; font-size: 13px;">•</td>
+                        <td style="padding: 0 12px;">
+                          <a href="https://tradebotx.com/dashboard" style="color: #10b981; text-decoration: none; font-size: 13px; font-weight: 600;">Dashboard</a>
+                        </td>
+                        <td style="color: #4b5563; font-size: 13px;">•</td>
+                        <td style="padding: 0 12px;">
+                          <a href="https://tradebotx.com/terms" style="color: #10b981; text-decoration: none; font-size: 13px; font-weight: 600;">Terms</a>
+                        </td>
+                        <td style="color: #4b5563; font-size: 13px;">•</td>
+                        <td style="padding: 0 12px;">
+                          <a href="https://tradebotx.com/privacy" style="color: #10b981; text-decoration: none; font-size: 13px; font-weight: 600;">Privacy</a>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <!-- Legal Text -->
+                    <p style="margin: 24px 0 0 0; font-size: 11px; line-height: 1.6; color: #5f6575;">
+                      &copy; ${new Date().getFullYear()} TradeBotX. All rights reserved.<br>
+                      This is an automated notification from your trading account.<br>
+                      Update preferences in your <a href="https://tradebotx.com/dashboard/settings" style="color: #10b981; text-decoration: none;">account settings</a>.
+                    </p>
+                    
+                    <!-- Disclaimer -->
+                    <p style="margin: 16px 0 0 0; font-size: 10px; line-height: 1.5; color: #4b5563;">
+                      <strong>Risk Warning:</strong> Trading involves substantial risk. Past performance does not guarantee future results.<br>
+                      Only trade with funds you can afford to lose. Ensure you understand the risks involved.
                     </p>
                   </td>
                 </tr>
@@ -86,6 +144,7 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
             </td>
           </tr>
         </table>
+        
       </td>
     </tr>
   </table>
@@ -95,384 +154,498 @@ export const getEmailTemplate = (content: string, preheader?: string) => {
 };
 
 export const otpEmailContent = (otpCode: string, type: 'signup' | 'login' | 'forgot-password') => {
-  const icons = {
-    'signup': '✨',
-    'login': '🔐',
-    'forgot-password': '🔑'
-  };
-  
-  const titles = {
-    'signup': 'Verify Your Email',
-    'login': 'Login Verification',
-    'forgot-password': 'Reset Password'
-  };
-  
+  const icons = { 'signup': '🔐', 'login': '✅', 'forgot-password': '🔑' };
+  const titles = { 'signup': 'Verify Your Account', 'login': 'Login Verification', 'forgot-password': 'Password Reset' };
   const descriptions = {
-    'signup': 'Welcome to TradeBotX! Please verify your email to start your automated trading journey.',
-    'login': 'A login attempt was detected on your TradeBotX account. Please verify it\'s you.',
-    'forgot-password': 'We received a request to reset your TradeBotX account password.'
+    'signup': 'Complete your TradeBotX account verification to access institutional-grade trading.',
+    'login': 'Secure login verification for your TradeBotX trading account.',
+    'forgot-password': 'Password reset request for your TradeBotX account.'
   };
   
   return `
-    <div style="text-align: center; margin-bottom: 32px;">
-      <div style="font-size: 64px; margin-bottom: 16px; line-height: 1;">${icons[type]}</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">${titles[type]}</h2>
-    </div>
-    
-    <p style="margin: 0 0 24px 0; font-size: 16px; color: #d1d5db; line-height: 1.7; text-align: center;">
-      ${descriptions[type]}
-    </p>
-    
-    <div style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%); border: 2px solid #667eea; border-radius: 16px; padding: 40px; margin: 32px 0; text-align: center; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.2);">
-      <p style="margin: 0 0 16px 0; font-size: 14px; font-weight: 600; color: #a5b4fc; text-transform: uppercase; letter-spacing: 1px;">Your Verification Code</p>
-      <div style="font-family: 'Courier New', monospace; font-size: 56px; font-weight: 900; color: #667eea; letter-spacing: 16px; text-shadow: 0 4px 16px rgba(102, 126, 234, 0.4); margin: 8px 0;">${otpCode}</div>
-      <p style="margin: 16px 0 0 0; font-size: 13px; color: #9ca3af;">Valid for 2 minutes</p>
-    </div>
-    
-    <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%); border-left: 4px solid #ef4444; padding: 20px 24px; border-radius: 12px; margin: 32px 0;">
-      <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.7;">
-        <strong style="display: block; margin-bottom: 8px;">⚠️ Security Notice</strong>
-        This code expires in 2 minutes. Never share this code with anyone. If you didn't request this, please secure your account immediately.
-      </p>
-    </div>
-    
-    <p style="margin: 32px 0 0 0; font-size: 15px; color: #9ca3af; line-height: 1.7; text-align: center;">
-      Need help? Contact us at <a href="mailto:support@tradebotx.com" style="color: #667eea; text-decoration: none; font-weight: 600;">support@tradebotx.com</a>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">${icons[type]}</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">${titles[type]}</h1>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
+            ${descriptions[type]}
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 40px; background: linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%); border: 2px solid #10b981; border-radius: 12px; text-align: center;">
+          <p style="margin: 0 0 16px 0; font-size: 13px; font-weight: 600; color: #10b981; text-transform: uppercase; letter-spacing: 1.5px;">Your Verification Code</p>
+          <div style="font-family: 'Courier New', monospace; font-size: 48px; font-weight: 900; color: #10b981; letter-spacing: 12px; margin: 16px 0; text-shadow: 0 2px 8px rgba(16, 185, 105, 0.3);">${otpCode}</div>
+          <p style="margin: 16px 0 0 0; font-size: 13px; color: #9ca3af; font-weight: 500;">⏱️ Valid for 2 minutes only</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top: 32px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: rgba(239, 68, 68, 0.08); border-left: 4px solid #ef4444; border-radius: 8px;">
+            <tr>
+              <td style="padding: 20px 24px;">
+                <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.7;">
+                  <strong style="display: block; margin-bottom: 8px; color: #ef4444;">⚠️ Security Alert</strong>
+                  Never share this code. TradeBotX staff will never ask for verification codes. If you didn't request this, secure your account immediately.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const welcomeEmailContent = (userName: string) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">🎉</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">Welcome to TradeBotX!</h2>
-    </div>
-    
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Hello ${userName},</p>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Congratulations! Your TradeBotX account has been successfully created. You are now part of an elite community of automated traders leveraging AI-powered strategies.</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">🚀 Quick Start Guide</h3>
-      <ol style="margin: 0; padding-left: 20px; color: #d1d5db; font-size: 15px; line-height: 2;">
-        <li>Complete your MT5 account setup</li>
-        <li>Configure your risk parameters</li>
-        <li>Select your trading strategies</li>
-        <li>Start your first automated bot</li>
-      </ol>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">Go to Dashboard</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Need help? Our support team is available 24/7 at <a href="mailto:support@tradebotx.com" style="color: #4F46E5; text-decoration: none;">support@tradebotx.com</a>
-    </p>
-    
-    <p style="margin: 20px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Happy Trading!<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">🎯</div>
+          <h1 style="margin: 0 0 8px 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Welcome to TradeBotX</h1>
+          <p style="margin: 0; font-size: 14px; color: #10b981; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">Institutional Trading Platform</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Hello <strong style="color: #ffffff;">${userName}</strong>,</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Welcome to the future of algorithmic trading. Your TradeBotX account has been successfully created and you now have access to institutional-grade automated trading strategies powered by advanced AI.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%); border-left: 4px solid #10b981; border-radius: 12px;">
+          <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: #10b981;">⚡ Quick Start Guide</h3>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+              <td style="padding: 10px 0; font-size: 15px; color: #d1d5db; line-height: 1.7;">
+                <strong style="color: #10b981; font-weight: 700;">1.</strong> Configure your MT5 trading account
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0; font-size: 15px; color: #d1d5db; line-height: 1.7;">
+                <strong style="color: #10b981; font-weight: 700;">2.</strong> Set up risk management parameters
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0; font-size: 15px; color: #d1d5db; line-height: 1.7;">
+                <strong style="color: #10b981; font-weight: 700;">3.</strong> Select your trading strategies
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0; font-size: 15px; color: #d1d5db; line-height: 1.7;">
+                <strong style="color: #10b981; font-weight: 700;">4.</strong> Activate your first automated bot
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 40px 0 32px 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">Launch Dashboard</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid rgba(16, 185, 105, 0.15); padding-top: 32px;">
+            <tr>
+              <td>
+                <p style="margin: 0 0 16px 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+                  <strong style="color: #ffffff;">Need Assistance?</strong><br>
+                  Our professional support team is available 24/7 to help you maximize your trading potential.
+                </p>
+                <p style="margin: 0; font-size: 15px; color: #9ca3af;">
+                  <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const loginAlertContent = (ipAddress: string, location: string, timestamp: string) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">🔐</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">New Login Detected</h2>
-    </div>
-    
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Hello,</p>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">We detected a new login to your TradeBotX account. If this was you, you can ignore this email. If you don't recognize this activity, please secure your account immediately.</p>
-    
-    <div style="background: rgba(45, 27, 78, 0.5); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">Login Details</h3>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 35%;">Time:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${timestamp}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Location:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${location}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">IP Address:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${ipAddress}</td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 15px 20px; border-radius: 8px; margin: 30px 0;">
-      <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.6;">
-        ⚠️ <strong>Wasn't you?</strong> Change your password immediately and enable two-factor authentication. Contact our security team at <a href="mailto:security@tradebotx.com" style="color: #fca5a5; text-decoration: underline;">security@tradebotx.com</a>
-      </p>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Stay secure,<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Security Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">🔐</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Security Alert</h1>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #f59e0b; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">New Login Detected</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            A new login was detected on your TradeBotX trading account. If this was you, no action is required. If you don't recognize this activity, secure your account immediately.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(217, 119, 6, 0.08) 100%); border-left: 4px solid #f59e0b; border-radius: 12px;">
+          <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: #f59e0b;">Login Details</h3>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; width: 35%; font-weight: 600;">Timestamp:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${timestamp}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Location:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${location}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">IP Address:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 500;">${ipAddress}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top: 32px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: rgba(239, 68, 68, 0.08); border-left: 4px solid #ef4444; border-radius: 8px;">
+            <tr>
+              <td style="padding: 20px 24px;">
+                <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.7;">
+                  <strong style="display: block; margin-bottom: 8px; color: #ef4444;">⚠️ Unrecognized Login?</strong>
+                  Change your password immediately and enable two-factor authentication. Contact security@tradebotx.com for assistance.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const botStartAlertContent = (strategyName: string, accountSize: number, riskPerTrade: number) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">🤖</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">Trading Bot Started</h2>
-    </div>
-    
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Great news!</p>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your automated trading bot has been successfully started and is now actively monitoring the markets for opportunities.</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(34, 197, 94, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #22c55e;">Bot Configuration</h3>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Strategy:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${strategyName}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Account Size:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">$${accountSize.toLocaleString()}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Risk per Trade:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${riskPerTrade}%</td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">View Live Dashboard</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Happy Trading!<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">🤖</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Bot Activated</h1>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #10b981; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">Now Trading Live</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Your automated trading bot has been successfully activated and is now monitoring markets for high-probability trading opportunities.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%); border-left: 4px solid #10b981; border-radius: 12px;">
+          <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: #10b981;">Configuration Summary</h3>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; width: 40%; font-weight: 600;">Strategy:</td>
+              <td style="padding: 12px 0; color: #ffffff; font-size: 14px; font-weight: 700;">${strategyName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Account Size:</td>
+              <td style="padding: 12px 0; color: #10b981; font-size: 16px; font-weight: 700;">$${accountSize.toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Risk per Trade:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 700;">${riskPerTrade}%</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 40px 0 0 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">Monitor Live</a>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const forgotPasswordContent = (resetLink: string) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">🔑</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">Password Reset Request</h2>
-    </div>
-    
-    <p style="margin: 0 0 20px 0; font-size: 16px; color: #e5e7eb; line-height: 1.6;">Hello,</p>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">We received a request to reset the password for your TradeBotX account. Click the button below to create a new password:</p>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="${resetLink}" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">Reset Password</a>
-    </div>
-    
-    <p style="margin: 30px 0; font-size: 14px; color: #9ca3af; line-height: 1.6; text-align: center;">Or copy this link: <span style="color: #4F46E5; word-break: break-all;">${resetLink}</span></p>
-    
-    <div style="background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 15px 20px; border-radius: 8px; margin: 30px 0;">
-      <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.6;">
-        ⚠️ This link will expire in 1 hour. If you didn't request a password reset, please ignore this email or contact support if you have concerns.
-      </p>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Best regards,<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">🔑</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Password Reset</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            We received a request to reset your TradeBotX account password. Click the button below to create a new secure password.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 40px 0;">
+          <a href="${resetLink}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">Reset Password</a>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 13px; color: #9ca3af; line-height: 1.6;">Or copy this link: <span style="color: #10b981; word-break: break-all;">${resetLink}</span></p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: rgba(239, 68, 68, 0.08); border-left: 4px solid #ef4444; border-radius: 8px;">
+            <tr>
+              <td style="padding: 20px 24px;">
+                <p style="margin: 0; font-size: 14px; color: #fca5a5; line-height: 1.7;">
+                  <strong style="display: block; margin-bottom: 8px; color: #ef4444;">⏱️ Link Expires in 1 Hour</strong>
+                  If you didn't request this, please ignore this email or contact support if you have concerns.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const tradeOpenedContent = (symbol: string, tradeType: string, entryPrice: number, stopLoss: number, takeProfit: number, lotSize: number) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">📈</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">New Trade Opened</h2>
-    </div>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your bot has opened a new <strong style="color: #4F46E5;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong>.</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">Trade Details</h3>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Symbol:</td>
-          <td style="padding: 10px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${symbol}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Type:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${tradeType.toUpperCase()}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Entry Price:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Stop Loss:</td>
-          <td style="padding: 10px 0; color: #ef4444; font-size: 14px; font-weight: 600;">${stopLoss}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Take Profit:</td>
-          <td style="padding: 10px 0; color: #22c55e; font-size: 14px; font-weight: 600;">${takeProfit}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Lot Size:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${lotSize}</td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">View Trade</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 14px; color: #9ca3af; line-height: 1.6; text-align: center;">
-      Monitor this trade in real-time from your dashboard.
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">📈</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Trade Executed</h1>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #10b981; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">${tradeType.toUpperCase()} Position Opened</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Your bot has opened a new <strong style="color: #10b981;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong>.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%); border-left: 4px solid #10b981; border-radius: 12px;">
+          <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: #10b981;">Trade Details</h3>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; width: 40%; font-weight: 600;">Symbol:</td>
+              <td style="padding: 12px 0; color: #ffffff; font-size: 16px; font-weight: 700;">${symbol}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Type:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 700;">${tradeType.toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Entry Price:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Stop Loss:</td>
+              <td style="padding: 12px 0; color: #ef4444; font-size: 14px; font-weight: 700;">${stopLoss}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Take Profit:</td>
+              <td style="padding: 12px 0; color: #10b981; font-size: 14px; font-weight: 700;">${takeProfit}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Position Size:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${lotSize} lots</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 40px 0 0 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">Monitor Position</a>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const tradeClosedContent = (symbol: string, tradeType: string, entryPrice: number, exitPrice: number, profitLoss: number, profitLossPercent: number) => {
   const isProfit = profitLoss > 0;
-  const emoji = isProfit ? '🎉' : '📉';
-  const statusColor = isProfit ? '#22c55e' : '#ef4444';
+  const emoji = isProfit ? '🎯' : '📊';
+  const statusColor = isProfit ? '#10b981' : '#ef4444';
   const bgGradient = isProfit 
-    ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%)'
-    : 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)';
-  const borderColor = isProfit ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+    ? 'linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%)'
+    : 'linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.08) 100%)';
   
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">${emoji}</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">${isProfit ? 'Profitable Trade Closed!' : 'Trade Closed'}</h2>
-    </div>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #4F46E5;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong> has been closed.</p>
-    
-    <div style="background: ${bgGradient}; border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid ${borderColor};">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: ${statusColor};">Trade Summary</h3>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Symbol:</td>
-          <td style="padding: 10px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${symbol}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Type:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${tradeType.toUpperCase()}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Entry Price:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Exit Price:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${exitPrice}</td>
-        </tr>
-        <tr style="border-top: 2px solid ${statusColor};">
-          <td style="padding: 16px 0 8px 0; color: #ffffff; font-size: 16px; font-weight: 700;">Profit/Loss:</td>
-          <td style="padding: 16px 0 8px 0; color: ${statusColor}; font-size: 20px; font-weight: 700; text-align: right;">
-            ${isProfit ? '+' : ''}$${profitLoss.toFixed(2)} (${isProfit ? '+' : ''}${profitLossPercent.toFixed(2)}%)
-          </td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">View Analytics</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      ${isProfit ? 'Congratulations on this winning trade! 🎯' : 'Keep learning and improving your strategy. 📊'}<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">${emoji}</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Trade Closed</h1>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: ${statusColor}; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">${isProfit ? 'Profitable Position' : 'Position Closed'}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Your <strong style="color: #10b981;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong> has been closed.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: ${bgGradient}; border-left: 4px solid ${statusColor}; border-radius: 12px;">
+          <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: ${statusColor};">Trade Summary</h3>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; width: 40%; font-weight: 600;">Symbol:</td>
+              <td style="padding: 12px 0; color: #ffffff; font-size: 16px; font-weight: 700;">${symbol}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Type:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 700;">${tradeType.toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Entry Price:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Exit Price:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${exitPrice}</td>
+            </tr>
+            <tr style="border-top: 2px solid ${statusColor};">
+              <td style="padding: 20px 0 8px 0; color: #ffffff; font-size: 16px; font-weight: 700;">Realized P/L:</td>
+              <td style="padding: 20px 0 8px 0; color: ${statusColor}; font-size: 24px; font-weight: 900; text-align: right;">
+                ${isProfit ? '+' : ''}$${profitLoss.toFixed(2)}<br>
+                <span style="font-size: 16px;">(${isProfit ? '+' : ''}${profitLossPercent.toFixed(2)}%)</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 40px 0 0 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">View Analytics</a>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const botStoppedContent = (strategyName: string, reason: string, totalTrades: number, totalPnL: number) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">⏸️</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">Trading Bot Stopped</h2>
-    </div>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #4F46E5;">${strategyName}</strong> bot has been stopped.</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(251, 191, 36, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(245, 158, 11, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #f59e0b;">Stop Reason</h3>
-      <p style="margin: 0; color: #e5e7eb; font-size: 15px; line-height: 1.6;">${reason}</p>
-    </div>
-    
-    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">Session Summary</h3>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Total Trades:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${totalTrades}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Total P/L:</td>
-          <td style="padding: 10px 0; color: ${totalPnL >= 0 ? '#22c55e' : '#ef4444'}; font-size: 18px; font-weight: 700;">
-            ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}
-          </td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">Go to Dashboard</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 14px; color: #9ca3af; line-height: 1.6; text-align: center;">
-      You can restart your bot anytime from the dashboard.
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">⏸️</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.5px;">Bot Deactivated</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Your <strong style="color: #10b981;">${strategyName}</strong> bot has been stopped.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(217, 119, 6, 0.08) 100%); border-left: 4px solid #f59e0b; border-radius: 12px;">
+          <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 700; color: #f59e0b;">Stop Reason</h3>
+          <p style="margin: 0; color: #fbbf24; font-size: 15px; line-height: 1.6; font-weight: 500;">${reason}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="padding: 32px; background: linear-gradient(135deg, rgba(16, 185, 105, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%); border-left: 4px solid #10b981; border-radius: 12px;">
+            <tr>
+              <td>
+                <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: #10b981;">Session Summary</h3>
+                <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; width: 40%; font-weight: 600;">Total Trades:</td>
+                    <td style="padding: 12px 0; color: #e5e7eb; font-size: 16px; font-weight: 700;">${totalTrades}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 0; color: #9ca3af; font-size: 14px; font-weight: 600;">Session P/L:</td>
+                    <td style="padding: 12px 0; color: ${totalPnL >= 0 ? '#10b981' : '#ef4444'}; font-size: 20px; font-weight: 900;">
+                      ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 24px 0 0 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(16, 185, 105, 0.3); text-transform: uppercase; letter-spacing: 0.5px;">Go to Dashboard</a>
+        </td>
+      </tr>
+    </table>
   `;
 };
 
 export const emergencyStopContent = (strategyName: string, trigger: string, currentLoss: number, maxLoss: number) => {
   return `
-    <div style="text-align: center; margin-bottom: 30px;">
-      <div style="font-size: 48px; margin-bottom: 20px;">🚨</div>
-      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ef4444; line-height: 1.3;">Emergency Stop Triggered</h2>
-    </div>
-    
-    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #ffffff;">${strategyName}</strong> bot has been automatically stopped due to a safety trigger.</p>
-    
-    <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.15) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid rgba(239, 68, 68, 0.5);">
-      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 700; color: #ef4444;">⚠️ Emergency Trigger</h3>
-      <p style="margin: 0 0 20px 0; color: #fca5a5; font-size: 16px; font-weight: 600; line-height: 1.6;">${trigger}</p>
-      <table style="width: 100%; border-collapse: collapse; margin-top: 20px; border-top: 1px solid rgba(239, 68, 68, 0.3); padding-top: 15px;">
-        <tr>
-          <td style="padding: 10px 0; color: #fca5a5; font-size: 14px; width: 40%;">Current Loss:</td>
-          <td style="padding: 10px 0; color: #ef4444; font-size: 18px; font-weight: 700; text-align: right;">-$${currentLoss.toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; color: #fca5a5; font-size: 14px;">Max Loss Limit:</td>
-          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600; text-align: right;">$${maxLoss.toFixed(2)}</td>
-        </tr>
-      </table>
-    </div>
-    
-    <div style="background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 20px 24px; border-radius: 8px; margin: 30px 0;">
-      <p style="margin: 0; font-size: 15px; color: #fca5a5; line-height: 1.7;">
-        <strong style="display: block; margin-bottom: 10px; font-size: 16px;">🛑 Action Required</strong>
-        Review your risk settings and trading performance before restarting. Consider adjusting your risk parameters or strategy configuration.
-      </p>
-    </div>
-    
-    <div style="text-align: center; margin: 35px 0;">
-      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(220, 38, 38, 0.4);">Review Settings</a>
-    </div>
-    
-    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
-      Stay safe,<br>
-      <strong style="color: #e5e7eb;">The TradeBotX Risk Management Team</strong>
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding-bottom: 32px;">
+          <div style="font-size: 56px; line-height: 1; margin-bottom: 16px;">🚨</div>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #ef4444; line-height: 1.2; letter-spacing: -0.5px;">Emergency Stop</h1>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #ef4444; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">Risk Limit Triggered</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom: 32px;">
+          <p style="margin: 0; font-size: 16px; color: #d1d5db; line-height: 1.7;">
+            Your <strong style="color: #ffffff;">${strategyName}</strong> bot has been automatically stopped due to risk management protocols.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px; background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(220, 38, 38, 0.12) 100%); border: 2px solid #ef4444; border-radius: 12px;">
+          <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 700; color: #ef4444;">⚠️ Emergency Trigger</h3>
+          <p style="margin: 0 0 24px 0; color: #fca5a5; font-size: 16px; font-weight: 600; line-height: 1.7;">${trigger}</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid rgba(239, 68, 68, 0.3); padding-top: 20px;">
+            <tr>
+              <td style="padding: 12px 0; color: #fca5a5; font-size: 14px; width: 40%; font-weight: 600;">Current Loss:</td>
+              <td style="padding: 12px 0; color: #ef4444; font-size: 20px; font-weight: 900; text-align: right;">-$${currentLoss.toFixed(2)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 0; color: #fca5a5; font-size: 14px; font-weight: 600;">Max Loss Limit:</td>
+              <td style="padding: 12px 0; color: #e5e7eb; font-size: 16px; font-weight: 700; text-align: right;">$${maxLoss.toFixed(2)}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 32px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: rgba(220, 38, 38, 0.08); border-left: 4px solid #dc2626; border-radius: 8px;">
+            <tr>
+              <td style="padding: 24px;">
+                <p style="margin: 0; font-size: 15px; color: #fca5a5; line-height: 1.7;">
+                  <strong style="display: block; margin-bottom: 12px; color: #ef4444; font-size: 16px;">🛑 Action Required</strong>
+                  Review your risk parameters and trading performance before restarting. Consider adjusting position sizing, stop-loss levels, or strategy configuration.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="padding: 24px 0 0 0;">
+          <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 24px rgba(220, 38, 38, 0.4); text-transform: uppercase; letter-spacing: 0.5px;">Review Settings</a>
+        </td>
+      </tr>
+    </table>
   `;
 };
