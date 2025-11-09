@@ -7,13 +7,17 @@ interface SwipeableCardsProps {
   className?: string;
   showIndicators?: boolean;
   onCardChange?: (index: number) => void;
+  autoplay?: boolean;
+  autoplayInterval?: number;
 }
 
 export const SwipeableCards: React.FC<SwipeableCardsProps> = ({
   children,
   className,
   showIndicators = true,
-  onCardChange
+  onCardChange,
+  autoplay = true,
+  autoplayInterval = 5000
 }) => {
   const {
     currentCard,
@@ -23,14 +27,22 @@ export const SwipeableCards: React.FC<SwipeableCardsProps> = ({
     handleTouchMove,
     handleTouchEnd,
     getTransform,
-    isDragging
+    isDragging,
+    pauseAutoplay,
+    resumeAutoplay
   } = useSwipeableCards({
     totalCards: children.length,
-    onCardChange
+    onCardChange,
+    autoplay,
+    autoplayInterval
   });
 
   return (
-    <div className={cn("relative w-full overflow-hidden", className)}>
+    <div 
+      className={cn("relative w-full overflow-hidden", className)}
+      onMouseEnter={pauseAutoplay}
+      onMouseLeave={resumeAutoplay}
+    >
       {/* Cards Container */}
       <div
         ref={containerRef}

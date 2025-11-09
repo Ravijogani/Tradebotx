@@ -171,8 +171,18 @@ All colors MUST be HSL.
   /* Smooth scroll for anchor links */
   @media (prefers-reduced-motion: no-preference) {
     html {
-      scroll-behavior: smooth;
-    }
+  scroll-behavior: smooth;
+}
+
+/* Hide scrollbar for swipeable components */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
   }
   
   /* Custom scrollbar */

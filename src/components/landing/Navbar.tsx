@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { Sparkles, Menu } from "lucide-react";
-import logo from "@/assets/tradebotx-logo.png";
-import { useState } from "react";
+import logoDark from "@/assets/tradebotx-logo.png";
+import logoWhite from "@/assets/tradebotx-logo-white.png";
+import { useState, useEffect } from "react";
 import {
   Sheet,
   SheetContent,
@@ -13,6 +14,26 @@ import {
 
 export const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    // Check initial theme
+    const checkTheme = () => {
+      const isDark = document.documentElement.classList.contains('dark');
+      setIsDarkMode(isDark);
+    };
+    
+    checkTheme();
+    
+    // Watch for theme changes
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+    
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-2xl border-b border-border/30">
@@ -21,9 +42,9 @@ export const Navbar = () => {
           <div className="relative">
             <div className="absolute inset-0 bg-gradient-to-r from-primary to-accent rounded-lg blur-lg opacity-50 group-hover:opacity-75 transition-opacity"></div>
             <img 
-              src={logo} 
+              src={isDarkMode ? logoWhite : logoDark} 
               alt="TradeBotX" 
-              className="relative h-10 sm:h-12 w-auto object-contain"
+              className="relative h-10 sm:h-12 w-auto object-contain transition-opacity duration-300"
             />
           </div>
           <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 text-accent animate-pulse" />
