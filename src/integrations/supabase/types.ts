@@ -44,6 +44,78 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_analysis_history: {
+        Row: {
+          analysis_type: string
+          created_at: string
+          id: string
+          input_data: Json
+          output_data: Json
+          processing_time_ms: number | null
+          user_id: string | null
+        }
+        Insert: {
+          analysis_type: string
+          created_at?: string
+          id?: string
+          input_data: Json
+          output_data: Json
+          processing_time_ms?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          analysis_type?: string
+          created_at?: string
+          id?: string
+          input_data?: Json
+          output_data?: Json
+          processing_time_ms?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      ai_insights: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          data: Json
+          description: string
+          expires_at: string | null
+          id: string
+          insight_type: string
+          metadata: Json | null
+          status: string
+          title: string
+          user_id: string | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          data?: Json
+          description: string
+          expires_at?: string | null
+          id?: string
+          insight_type: string
+          metadata?: Json | null
+          status?: string
+          title: string
+          user_id?: string | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          data?: Json
+          description?: string
+          expires_at?: string | null
+          id?: string
+          insight_type?: string
+          metadata?: Json | null
+          status?: string
+          title?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       bot_audit_logs: {
         Row: {
           action: string

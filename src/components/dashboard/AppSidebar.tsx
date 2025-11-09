@@ -1,4 +1,4 @@
-import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard } from "lucide-react";
+import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -27,6 +27,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
   const mainNavItems = [
     { id: "dashboard", label: "Overview", icon: LayoutDashboard },
     { id: "strategies", label: "Strategies", icon: Layers },
+    { id: "ai-insights", label: "AI Insights", icon: Brain },
     { id: "activity", label: "Activity", icon: Activity },
     { id: "calculator", label: "Risk Calculator", icon: Calculator },
     { id: "support", label: "Support", icon: MessageSquare },

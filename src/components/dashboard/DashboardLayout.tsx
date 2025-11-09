@@ -28,6 +28,7 @@ import { BotHealthIndicator } from "./BotHealthIndicator";
 import { BotStatusSync } from "./BotStatusSync";
 import { ActiveBotsCounter } from "./ActiveBotsCounter";
 import { StrategyPerformance } from "./StrategyPerformance";
+import { AIInsightsDashboard } from "./AIInsightsDashboard";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -210,6 +211,12 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                     <p className="text-muted-foreground">Get help from our support team</p>
                   </div>
                   <UserSupport />
+                </div>
+              )}
+
+              {activeTab === "ai-insights" && (
+                <div className="animate-fade-in">
+                  <AIInsightsDashboard />
                 </div>
               )}
 
