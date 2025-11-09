@@ -7,14 +7,15 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, Clock } from "lucide-react";
 
 interface OTPVerificationProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   email: string;
-  otpType: 'signup' | 'login';
+  otpType: 'signup' | 'login' | 'admin_login';
   onVerified: () => void;
+  onResend?: () => Promise<void>;
 }
 
-export const OTPVerification = ({ open, onOpenChange, email, otpType, onVerified }: OTPVerificationProps) => {
+export const OTPVerification = ({ open = true, onOpenChange, email, otpType, onVerified, onResend }: OTPVerificationProps) => {
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
@@ -79,14 +80,18 @@ export const OTPVerification = ({ open, onOpenChange, email, otpType, onVerified
     setResending(true);
 
     try {
-      const { error } = await supabase.functions.invoke('send-otp', {
-        body: {
-          email,
-          otpType
-        }
-      });
+      if (onResend) {
+        await onResend();
+      } else {
+        const { error } = await supabase.functions.invoke('send-otp', {
+          body: {
+            email,
+            otpType
+          }
+        });
 
-      if (error) throw error;
+        if (error) throw error;
+      }
 
       setTimeLeft(120); // Reset timer
       setOtp(""); // Clear OTP input
@@ -105,6 +110,74 @@ export const OTPVerification = ({ open, onOpenChange, email, otpType, onVerified
       setResending(false);
     }
   };
+
+  // For admin_login, render without Dialog wrapper
+  if (otpType === 'admin_login') {
+    return (
+      <div className="w-full max-w-md p-8 space-y-6 relative z-10 border border-border/50 bg-card/80 backdrop-blur-xl shadow-2xl rounded-lg">
+        <div className="text-center space-y-2">
+          <h2 className="text-2xl font-bold">Verify Your Identity</h2>
+          <p className="text-muted-foreground">
+            Enter the 6-digit code sent to {email}
+          </p>
+        </div>
+
+        <form onSubmit={handleVerify} className="space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium">Verification Code</label>
+              <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <Clock className="w-4 h-4" />
+                {formatTime(timeLeft)}
+              </div>
+            </div>
+            <Input
+              type="text"
+              placeholder="000000"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              className="text-center text-2xl tracking-widest"
+              maxLength={6}
+              autoFocus
+            />
+          </div>
+
+          <Button type="submit" className="w-full bg-gradient-hero shadow-glow" disabled={loading || timeLeft === 0}>
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Verifying...
+              </>
+            ) : (
+              "Verify OTP"
+            )}
+          </Button>
+
+          <div className="text-center">
+            <p className="text-sm text-muted-foreground mb-2">
+              Didn't receive the code?
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleResend}
+              disabled={resending || timeLeft > 0}
+            >
+              {resending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Resending...
+                </>
+              ) : (
+                "Resend OTP"
+              )}
+            </Button>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
