@@ -29,6 +29,8 @@ import { BotStatusSync } from "./BotStatusSync";
 import { ActiveBotsCounter } from "./ActiveBotsCounter";
 import { StrategyPerformance } from "./StrategyPerformance";
 import { AIInsightsDashboard } from "./AIInsightsDashboard";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { RefreshCw } from "lucide-react";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -37,6 +39,18 @@ export const DashboardLayout = ({ user }: { user: any }) => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { theme } = useTheme();
+  
+  // Pull to refresh handler
+  const handleRefresh = async () => {
+    // Simulate refresh - reload current data
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    window.location.reload();
+  };
+  
+  const pullToRefresh = usePullToRefresh({
+    onRefresh: handleRefresh,
+    threshold: 80
+  });
   
   // Update effective theme when theme setting changes or system preference changes
   useEffect(() => {
@@ -129,8 +143,32 @@ export const DashboardLayout = ({ user }: { user: any }) => {
             </div>
           </header>
 
+          {/* Pull to Refresh Indicator */}
+          {pullToRefresh.pullDistance > 0 && (
+            <div 
+              className="absolute top-14 sm:top-16 left-0 right-0 flex justify-center items-center z-50 transition-all duration-200"
+              style={{ 
+                height: `${Math.min(pullToRefresh.pullDistance, 60)}px`,
+                opacity: pullToRefresh.pullProgress 
+              }}
+            >
+              <div className="flex items-center gap-2 text-primary">
+                <RefreshCw 
+                  className={`w-5 h-5 ${pullToRefresh.isRefreshing ? 'animate-spin' : ''}`}
+                  style={{ 
+                    transform: `rotate(${pullToRefresh.pullProgress * 360}deg)` 
+                  }}
+                />
+                {pullToRefresh.isRefreshing && <span className="text-sm">Refreshing...</span>}
+              </div>
+            </div>
+          )}
+
           {/* Main Content */}
-          <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-auto">
+          <main 
+            ref={pullToRefresh.ref as any}
+            className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-auto"
+          >
             <div className="max-w-7xl mx-auto">
               {activeTab === "dashboard" && (
                 <div className="space-y-4 sm:space-y-6 animate-fade-in">

@@ -7,8 +7,15 @@ import { PricingSection } from "@/components/landing/PricingSection";
 import { FAQ } from "@/components/landing/FAQ";
 import { Footer } from "@/components/landing/Footer";
 import { SEOHead } from "@/components/SEOHead";
+import { useScrollAnimation } from "@/hooks/useScrollAnimation";
+import { ScrollProgress } from "@/components/ui/scroll-progress";
 
 const Landing = () => {
+  const featuresAnimation = useScrollAnimation({ threshold: 0.2 });
+  const howItWorksAnimation = useScrollAnimation({ threshold: 0.2 });
+  const statsAnimation = useScrollAnimation({ threshold: 0.3 });
+  const pricingAnimation = useScrollAnimation({ threshold: 0.2 });
+  const faqAnimation = useScrollAnimation({ threshold: 0.2 });
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
@@ -47,6 +54,7 @@ const Landing = () => {
 
   return (
     <div className="min-h-screen">
+      <ScrollProgress />
       <SEOHead
         title="TradeBotX - AI-Powered Algorithmic Trading Platform for Forex & Crypto"
         description="Automate your trading with TradeBotX's advanced AI algorithms. Execute winning trades 24/7 on Forex and Crypto markets with proper risk management and real-time analytics."
@@ -55,11 +63,21 @@ const Landing = () => {
       />
       <Navbar />
       <Hero />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <PricingSection />
-      <FAQ />
+      <section ref={statsAnimation.ref as any} className={`scroll-animate ${statsAnimation.isVisible ? 'visible' : ''}`}>
+        <Stats />
+      </section>
+      <section ref={featuresAnimation.ref as any} className={`scroll-animate ${featuresAnimation.isVisible ? 'visible' : ''}`}>
+        <Features />
+      </section>
+      <section ref={howItWorksAnimation.ref as any} className={`scroll-animate ${howItWorksAnimation.isVisible ? 'visible' : ''}`}>
+        <HowItWorks />
+      </section>
+      <section ref={pricingAnimation.ref as any} className={`scroll-animate ${pricingAnimation.isVisible ? 'visible' : ''}`}>
+        <PricingSection />
+      </section>
+      <section ref={faqAnimation.ref as any} className={`scroll-animate ${faqAnimation.isVisible ? 'visible' : ''}`}>
+        <FAQ />
+      </section>
       <Footer />
     </div>
   );
