@@ -57,38 +57,59 @@ def start_bot():
     try:
         config = request.json
         user_id = config.get('user_id')
+        strategy_id = config.get('strategy_id')
         
-        if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+        if not user_id or not strategy_id:
+            return jsonify({'error': 'user_id and strategy_id required'}), 400
         
-        if user_id in running_bots:
+        bot_key = f"{user_id}_{strategy_id}"
+        
+        if bot_key in running_bots:
             return jsonify({
                 'success': False,
-                'message': 'Bot already running for this user'
+                'message': 'Bot already running for this user and strategy'
             }), 400
         
-        # Prepare config JSON
-        config_json = json.dumps(config)
+        # Validate required fields
+        required_fields = [
+            'mt5_account', 'mt5_password', 'mt5_server',
+            'account_size', 'risk_per_trade', 'supabase_url', 'supabase_service_key'
+        ]
         
-        # Get bot directory
+        for field in required_fields:
+            if field not in config:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Build command line arguments
         bot_dir = Path(__file__).parent
         bot_script = bot_dir / 'bot_wrapper.py'
         
+        cmd = [
+            sys.executable,
+            str(bot_script)
+        ]
+        
+        # Prepare config JSON
+        config_json = json.dumps(config)
+        cmd.append(config_json)
+        
         # Start bot process
         process = subprocess.Popen(
-            [sys.executable, str(bot_script), config_json],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(bot_dir)
         )
         
-        running_bots[user_id] = {
+        running_bots[bot_key] = {
             'process': process,
             'config': config,
-            'pid': process.pid
+            'pid': process.pid,
+            'user_id': user_id,
+            'strategy_id': strategy_id
         }
         
-        logger.info(f"✅ Started bot for user {user_id} (PID: {process.pid})")
+        logger.info(f"✅ Started bot for user {user_id}, strategy {strategy_id} (PID: {process.pid})")
         
         return jsonify({
             'success': True,
@@ -107,17 +128,20 @@ def stop_bot():
     try:
         config = request.json
         user_id = config.get('user_id')
+        strategy_id = config.get('strategy_id')
         
-        if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+        if not user_id or not strategy_id:
+            return jsonify({'error': 'user_id and strategy_id required'}), 400
         
-        if user_id not in running_bots:
+        bot_key = f"{user_id}_{strategy_id}"
+        
+        if bot_key not in running_bots:
             return jsonify({
                 'success': False,
-                'message': 'No bot running for this user'
+                'message': 'No bot running for this user and strategy'
             }), 400
         
-        bot_info = running_bots[user_id]
+        bot_info = running_bots[bot_key]
         process = bot_info['process']
         
         # Graceful shutdown
@@ -129,8 +153,8 @@ def stop_bot():
             process.kill()
             process.wait()
         
-        del running_bots[user_id]
-        logger.info(f"✅ Stopped bot for user {user_id}")
+        del running_bots[bot_key]
+        logger.info(f"✅ Stopped bot for user {user_id}, strategy {strategy_id}")
         
         return jsonify({
             'success': True,
@@ -146,14 +170,27 @@ def stop_bot():
 def bot_status():
     """Get status of all running bots"""
     status = {}
+    dead_bots = []
     
-    for user_id, bot_info in running_bots.items():
+    for bot_key, bot_info in running_bots.items():
         process = bot_info['process']
-        status[user_id] = {
+        is_running = process.poll() is None
+        
+        status[bot_key] = {
             'pid': bot_info['pid'],
-            'running': process.poll() is None,
-            'strategy_id': bot_info['config'].get('strategy_id')
+            'running': is_running,
+            'user_id': bot_info.get('user_id'),
+            'strategy_id': bot_info.get('strategy_id')
         }
+        
+        # Mark dead processes for cleanup
+        if not is_running:
+            dead_bots.append(bot_key)
+    
+    # Clean up dead processes
+    for bot_key in dead_bots:
+        del running_bots[bot_key]
+        logger.info(f"Cleaned up dead bot process: {bot_key}")
     
     return jsonify({
         'active_bots': len(running_bots),
