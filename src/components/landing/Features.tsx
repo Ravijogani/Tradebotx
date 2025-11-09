@@ -53,17 +53,17 @@ const features = [
 
 export const Features = () => {
   return (
-    <section id="features" className="py-32 relative overflow-hidden">
+    <section id="features" className="py-16 sm:py-24 md:py-32 relative overflow-hidden">
       {/* Background effects */}
       <div className="absolute inset-0 bg-gradient-mesh opacity-30"></div>
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-3xl"></div>
       
-      <div className="container mx-auto px-4 relative z-10">
-        <div className="text-center mb-20 animate-fade-in-up">
-          <div className="inline-block px-4 py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-6">
-            <span className="text-sm font-medium text-primary">POWERFUL FEATURES</span>
+      <div className="container mx-auto px-4 sm:px-6 relative z-10">
+        <div className="text-center mb-12 sm:mb-16 md:mb-20 animate-fade-in-up">
+          <div className="inline-block px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-4 sm:mb-6">
+            <span className="text-xs sm:text-sm font-medium text-primary">POWERFUL FEATURES</span>
           </div>
-          <h2 className="font-display text-5xl md:text-6xl font-bold mb-6">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-4 sm:mb-6 px-4">
             <span className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">
               Built for
             </span>{" "}
@@ -71,12 +71,12 @@ export const Features = () => {
               Professional Traders
             </span>
           </h2>
-          <p className="text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+          <p className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed px-4">
             Enterprise-grade tools and AI technology designed to give you an unfair advantage in the markets
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {features.map((feature, index) => (
             <div
               key={index}
@@ -108,11 +108,11 @@ export const Features = () => {
         </div>
 
         {/* Bottom CTA */}
-        <div className="text-center mt-16 animate-fade-in" style={{ animationDelay: '0.8s' }}>
-          <p className="text-muted-foreground mb-4">And many more features to supercharge your trading</p>
-          <div className="flex justify-center gap-2">
+        <div className="text-center mt-12 sm:mt-16 animate-fade-in px-4" style={{ animationDelay: '0.8s' }}>
+          <p className="text-sm sm:text-base text-muted-foreground mb-3 sm:mb-4">And many more features to supercharge your trading</p>
+          <div className="flex justify-center gap-1.5 sm:gap-2">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="w-2 h-2 rounded-full bg-primary/30"></div>
+              <div key={i} className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-primary/30"></div>
             ))}
           </div>
         </div>

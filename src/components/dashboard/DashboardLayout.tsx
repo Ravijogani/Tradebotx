@@ -92,7 +92,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
   };
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider defaultOpen={false}>
       {/* Background component to sync bot status */}
       <BotStatusSync />
       
@@ -107,20 +107,20 @@ export const DashboardLayout = ({ user }: { user: any }) => {
         <div className="flex-1 flex flex-col relative">
           {/* Header */}
           <header className="border-b border-border/50 bg-card/30 backdrop-blur-xl sticky top-0 z-40 shadow-sm">
-            <div className="container mx-auto px-4 lg:px-8">
-              <div className="flex items-center justify-between h-16">
+            <div className="container mx-auto px-3 sm:px-4 lg:px-8">
+              <div className="flex items-center justify-between h-14 sm:h-16">
                 {/* Left Side: Sidebar Trigger + Logo */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3">
                   <SidebarTrigger className="-ml-1" />
                   <img 
                     src={currentLogo} 
                     alt="TradeBotX" 
-                    className="h-8 w-auto object-contain"
+                    className="h-6 sm:h-8 w-auto object-contain"
                   />
                 </div>
 
                 {/* Right Side: Notifications + Theme + Profile */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 sm:gap-2">
                   <NotificationCenter />
                   <ThemeToggle />
                   <UserProfileDropdown user={user} onSettingsClick={() => handleTabChange("settings")} />
@@ -130,15 +130,15 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           </header>
 
           {/* Main Content */}
-          <main className="flex-1 p-4 lg:p-8 overflow-auto">
+          <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-auto">
             <div className="max-w-7xl mx-auto">
               {activeTab === "dashboard" && (
-                <div className="space-y-6 animate-fade-in">
+                <div className="space-y-4 sm:space-y-6 animate-fade-in">
                   <div>
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1 sm:mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Dashboard Overview
                     </h1>
-                    <p className="text-muted-foreground">Monitor your trading performance and activity</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Monitor your trading performance and activity</p>
                   </div>
                   
                   {/* Stats Overview */}
@@ -148,7 +148,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <ActiveBotsCounter />
                   
                   {/* Bot Health & Open Positions */}
-                  <div className="grid lg:grid-cols-3 gap-6">
+                  <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
                     <BotHealthIndicator />
                     <div className="lg:col-span-2">
                       <OpenPositions />
@@ -165,7 +165,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <TradesListEnhanced />
                   
                   {/* Two Column Layout */}
-                  <div className="grid lg:grid-cols-2 gap-6">
+                  <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
                     <ActivityTimeline />
                   </div>
                   
