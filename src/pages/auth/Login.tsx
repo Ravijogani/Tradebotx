@@ -6,8 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, TrendingUp } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { OTPVerification } from "@/components/auth/OTPVerification";
+import logo from "@/assets/tradebotx-logo.png";
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
@@ -116,12 +117,14 @@ const Login = () => {
       <Card className="w-full max-w-md shadow-premium">
         <CardHeader className="space-y-4 text-center">
           <Link to="/" className="flex items-center gap-2 justify-center">
-            <div className="w-12 h-12 rounded-lg bg-gradient-hero flex items-center justify-center shadow-glow">
-              <TrendingUp className="w-7 h-7 text-primary-foreground" />
-            </div>
+            <img 
+              src={logo} 
+              alt="TradeBotX" 
+              className="h-16 w-auto object-contain"
+            />
           </Link>
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
-          <CardDescription>Sign in to your AlgoTradeX account</CardDescription>
+          <CardDescription>Sign in to your TradeBotX account</CardDescription>
         </CardHeader>
 
         <CardContent>

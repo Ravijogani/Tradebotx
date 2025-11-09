@@ -16,7 +16,7 @@ const Terms = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">1. Acceptance of Terms</h2>
               <p className="text-muted-foreground">
-                By accessing and using AlgoTradeX ("the Service"), you accept and agree to be bound by the terms 
+                By accessing and using TradeBotX ("the Service"), you accept and agree to be bound by the terms 
                 and provision of this agreement. If you do not agree to these terms, please do not use the Service.
               </p>
             </section>
@@ -24,7 +24,7 @@ const Terms = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">2. Service Description</h2>
               <p className="text-muted-foreground">
-                AlgoTradeX provides automated trading software and algorithms for forex and cryptocurrency markets. 
+                TradeBotX provides automated trading software and algorithms for forex and cryptocurrency markets. 
                 The Service includes access to trading strategies, market analysis tools, and automated execution capabilities.
               </p>
             </section>
@@ -45,7 +45,7 @@ const Terms = () => {
               <p className="text-muted-foreground">
                 Trading financial instruments involves substantial risk and may not be suitable for all investors. 
                 You acknowledge that automated trading systems can result in significant losses. Past performance 
-                does not guarantee future results. You agree that AlgoTradeX is not responsible for any trading losses.
+                does not guarantee future results. You agree that TradeBotX is not responsible for any trading losses.
               </p>
             </section>
 
@@ -62,7 +62,7 @@ const Terms = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">6. Intellectual Property</h2>
               <p className="text-muted-foreground">
-                All content, features, and functionality of the Service are owned by AlgoTradeX and are protected 
+                All content, features, and functionality of the Service are owned by TradeBotX and are protected 
                 by international copyright, trademark, and other intellectual property laws.
               </p>
             </section>
@@ -70,7 +70,7 @@ const Terms = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">7. Limitation of Liability</h2>
               <p className="text-muted-foreground">
-                AlgoTradeX shall not be liable for any direct, indirect, incidental, special, consequential, or 
+                TradeBotX shall not be liable for any direct, indirect, incidental, special, consequential, or 
                 exemplary damages resulting from your use of the Service, including but not limited to trading losses, 
                 loss of profits, or data loss.
               </p>
@@ -95,7 +95,7 @@ const Terms = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">10. Contact Information</h2>
               <p className="text-muted-foreground">
-                For questions about these Terms of Service, please contact us at legal@algotradex.com
+                For questions about these Terms of Service, please contact us at legal@tradebotx.com
               </p>
             </section>
           </CardContent>

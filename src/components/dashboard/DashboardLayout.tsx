@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
-import { TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import logo from "@/assets/tradebotx-logo.png";
+import logoWhite from "@/assets/tradebotx-logo-white.png";
+import { useTheme } from "@/components/theme-provider";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -32,6 +34,10 @@ export const DashboardLayout = ({ user }: { user: any }) => {
   const [accountSize, setAccountSize] = useState(10000);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { theme } = useTheme();
+  
+  // Determine which logo to use based on theme
+  const currentLogo = theme === "light" ? logo : logoWhite;
 
   useEffect(() => {
     // Load account size from user_setup if available
@@ -78,14 +84,11 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                 {/* Left Side: Sidebar Trigger + Logo */}
                 <div className="flex items-center gap-3">
                   <SidebarTrigger className="-ml-1" />
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-primary flex items-center justify-center shadow-glow">
-                      <TrendingUp className="w-6 h-6 text-primary-foreground" />
-                    </div>
-                    <span className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-                      TradeBotX
-                    </span>
-                  </div>
+                  <img 
+                    src={currentLogo} 
+                    alt="TradeBotX" 
+                    className="h-8 w-auto object-contain"
+                  />
                 </div>
 
                 {/* Right Side: Notifications + Theme + Profile */}

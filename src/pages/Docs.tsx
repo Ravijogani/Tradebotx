@@ -62,7 +62,7 @@ const Docs = () => {
               Documentation
             </h1>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Everything you need to know to get started with AlgoTradeX automated trading
+              Everything you need to know to get started with TradeBotX automated trading
             </p>
           </div>
 
@@ -103,7 +103,7 @@ const Docs = () => {
               <div>
                 <h3 className="text-xl font-semibold mb-3">Step 1: Create Your Account</h3>
                 <p className="text-muted-foreground">
-                  Sign up for AlgoTradeX by choosing a pricing plan that fits your needs. Start with our free trial 
+                  Sign up for TradeBotX by choosing a pricing plan that fits your needs. Start with our free trial 
                   to explore the platform risk-free.
                 </p>
               </div>
@@ -148,9 +148,9 @@ const Docs = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <h4 className="font-semibold mb-2">What is AlgoTradeX?</h4>
+                <h4 className="font-semibold mb-2">What is TradeBotX?</h4>
                 <p className="text-muted-foreground">
-                  AlgoTradeX is an automated trading platform that uses AI and machine learning algorithms to execute 
+                  TradeBotX is an automated trading platform that uses AI and machine learning algorithms to execute
                   trades on your behalf in forex and cryptocurrency markets.
                 </p>
               </div>
@@ -158,7 +158,7 @@ const Docs = () => {
               <div>
                 <h4 className="font-semibold mb-2">Do I need trading experience?</h4>
                 <p className="text-muted-foreground">
-                  While trading experience is helpful, AlgoTradeX is designed to be user-friendly for traders of all 
+                  While trading experience is helpful, TradeBotX is designed to be user-friendly for traders of all 
                   levels. However, we recommend understanding basic trading concepts and risks.
                 </p>
               </div>
@@ -181,7 +181,7 @@ const Docs = () => {
               <div>
                 <h4 className="font-semibold mb-2">What if I need help?</h4>
                 <p className="text-muted-foreground">
-                  Our support team is available 24/7 via email at support@algotradex.com. We also have extensive 
+                  Our support team is available 24/7 via email at support@tradebotx.com. We also have extensive 
                   documentation and video tutorials available.
                 </p>
               </div>
@@ -197,7 +197,7 @@ const Docs = () => {
               </p>
               <div className="flex justify-center gap-4">
                 <a
-                  href="mailto:support@algotradex.com"
+                  href="mailto:support@tradebotx.com"
                   className="px-6 py-3 bg-gradient-to-r from-primary to-accent text-white rounded-lg font-semibold hover:shadow-glow transition-all"
                 >
                   Contact Support

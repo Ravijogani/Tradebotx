@@ -41,7 +41,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">2. Automated Trading Risks</h2>
               <p className="text-muted-foreground mb-4">
-                Using automated trading systems like AlgoTradeX introduces additional risks:
+                Using automated trading systems like TradeBotX introduces additional risks:
               </p>
               <ul className="list-disc pl-6 text-muted-foreground space-y-2">
                 <li><strong>Algorithm Performance:</strong> Algorithms may not perform as expected in all market conditions</li>
@@ -55,7 +55,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">3. No Guaranteed Returns</h2>
               <p className="text-muted-foreground">
-                AlgoTradeX does not guarantee any specific returns or profits. All trading results are dependent on 
+                TradeBotX does not guarantee any specific returns or profits. All trading results are dependent on 
                 market conditions, your trading setup, and the strategies you choose to deploy. Performance metrics 
                 shown on our platform are historical and for informational purposes only.
               </p>
@@ -64,7 +64,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">4. Not Financial Advice</h2>
               <p className="text-muted-foreground">
-                The information provided by AlgoTradeX is for educational and informational purposes only. It should 
+                The information provided by TradeBotX is for educational and informational purposes only. It should 
                 not be considered financial advice or a recommendation to buy or sell any financial instrument. You 
                 should consult with a qualified financial advisor before making any investment decisions.
               </p>
@@ -73,7 +73,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">5. Regulatory Compliance</h2>
               <p className="text-muted-foreground">
-                You are responsible for ensuring that your use of AlgoTradeX complies with all applicable laws and 
+                You are responsible for ensuring that your use of TradeBotX complies with all applicable laws and 
                 regulations in your jurisdiction. Some countries may restrict or prohibit the use of automated 
                 trading systems.
               </p>
@@ -82,7 +82,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">6. Broker Relationship</h2>
               <p className="text-muted-foreground">
-                AlgoTradeX is not a broker or financial institution. You must maintain your own trading account with 
+                TradeBotX is not a broker or financial institution. You must maintain your own trading account with 
                 a licensed broker. We are not responsible for any issues with your broker, including execution quality, 
                 spreads, or account management.
               </p>
@@ -102,7 +102,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">8. Third-Party Services</h2>
               <p className="text-muted-foreground">
-                AlgoTradeX integrates with third-party services (brokers, data providers, etc.). We are not 
+                TradeBotX integrates with third-party services (brokers, data providers, etc.). We are not 
                 responsible for the availability, accuracy, or reliability of these third-party services.
               </p>
             </section>
@@ -110,7 +110,7 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">9. Limitation of Liability</h2>
               <p className="text-muted-foreground">
-                By using AlgoTradeX, you acknowledge and accept all risks associated with trading. We shall not be 
+                By using TradeBotX, you acknowledge and accept all risks associated with trading. We shall not be 
                 liable for any losses, damages, or claims arising from your use of our service, including but not 
                 limited to trading losses, system failures, or data inaccuracies.
               </p>
@@ -119,7 +119,7 @@ const Disclaimer = () => {
             <section className="bg-destructive/10 border border-destructive/30 rounded-lg p-6">
               <h3 className="text-xl font-semibold text-destructive mb-3">⚠️ Risk Acknowledgment</h3>
               <p className="text-muted-foreground">
-                By using AlgoTradeX, you confirm that you understand and accept these risks. You acknowledge that 
+                By using TradeBotX, you confirm that you understand and accept these risks. You acknowledge that 
                 you could lose all of your invested capital and that you are financially able to bear such losses. 
                 You should only trade with money you can afford to lose.
               </p>
@@ -128,8 +128,8 @@ const Disclaimer = () => {
             <section>
               <h2 className="text-2xl font-semibold mb-4">10. Questions?</h2>
               <p className="text-muted-foreground">
-                If you have questions about the risks involved in using AlgoTradeX, please contact us at 
-                risk@algotradex.com or consult with a qualified financial advisor.
+                If you have questions about the risks involved in using TradeBotX, please contact us at 
+                risk@tradebotx.com or consult with a qualified financial advisor.
               </p>
             </section>
           </CardContent>

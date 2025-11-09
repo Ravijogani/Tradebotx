@@ -69,7 +69,7 @@ const Status = () => {
                 System Status
               </CardTitle>
               <CardDescription>
-                Real-time status of all AlgoTradeX services
+                Real-time status of all TradeBotX services
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -158,7 +158,7 @@ const Status = () => {
           </Card>
 
           <div className="text-center text-sm text-muted-foreground">
-            <p>For real-time updates and support, contact us at status@algotradex.com</p>
+            <p>For real-time updates and support, contact us at status@tradebotx.com</p>
             <p className="mt-2">Page last updated: {new Date().toLocaleString()}</p>
           </div>
         </div>
