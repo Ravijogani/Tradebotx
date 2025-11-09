@@ -56,6 +56,41 @@ serve(async (req) => {
 
     console.log(`Password encrypted and saved for user ${user.id}`);
 
+    // Send admin alert about setup completion
+    try {
+      const { data: profileData } = await supabaseClient
+        .from('profiles')
+        .select('email, full_name')
+        .eq('id', user.id)
+        .single();
+
+      const { data: subscriptionData } = await supabaseClient
+        .from('user_subscriptions')
+        .select('plans(plan_type)')
+        .eq('user_id', user.id)
+        .single();
+
+      if (profileData) {
+        const planType = (subscriptionData?.plans as any)?.plan_type || 'free';
+        
+        await supabaseClient.functions.invoke('send-setup-completion-alert', {
+          body: {
+            userEmail: profileData.email,
+            userName: profileData.full_name || 'User',
+            setupDetails: {
+              brokerName: setupData.broker_name,
+              mt5Account: setupData.mt5_account,
+              accountSize: setupData.account_size,
+              planType: planType
+            }
+          }
+        });
+      }
+    } catch (alertError) {
+      console.error('Failed to send setup completion alert:', alertError);
+      // Don't fail the setup if alert fails
+    }
+
     return new Response(
       JSON.stringify({
         success: true,

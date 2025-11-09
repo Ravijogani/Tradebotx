@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ExternalLink, Info, CheckCircle2, AlertCircle, Loader2, TrendingUp } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { z } from "zod";
+import { OnboardingAssistant } from "./OnboardingAssistant";
 
 interface SetupDialogProps {
   open: boolean;
@@ -211,8 +212,15 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
   };
 
   return (
-    <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onInteractOutside={(e) => e.preventDefault()}>
+    <>
+      <OnboardingAssistant 
+        context={{
+          currentStep: `Step ${step} of ${totalSteps}`,
+          fieldName: step === 1 ? 'Broker Selection' : step === 2 ? 'MT5 Configuration' : 'Trading Preferences'
+        }}
+      />
+      <Dialog open={open} onOpenChange={() => {}}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <div className="flex items-center gap-2 mb-2">
             <div className="w-10 h-10 rounded-lg bg-gradient-hero flex items-center justify-center shadow-glow">
@@ -492,7 +500,8 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
             </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
