@@ -289,3 +289,190 @@ export const forgotPasswordContent = (resetLink: string) => {
     </p>
   `;
 };
+
+export const tradeOpenedContent = (symbol: string, tradeType: string, entryPrice: number, stopLoss: number, takeProfit: number, lotSize: number) => {
+  return `
+    <div style="text-align: center; margin-bottom: 30px;">
+      <div style="font-size: 48px; margin-bottom: 20px;">📈</div>
+      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">New Trade Opened</h2>
+    </div>
+    
+    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your bot has opened a new <strong style="color: #4F46E5;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong>.</p>
+    
+    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
+      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">Trade Details</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Symbol:</td>
+          <td style="padding: 10px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${symbol}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Type:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${tradeType.toUpperCase()}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Entry Price:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Stop Loss:</td>
+          <td style="padding: 10px 0; color: #ef4444; font-size: 14px; font-weight: 600;">${stopLoss}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Take Profit:</td>
+          <td style="padding: 10px 0; color: #22c55e; font-size: 14px; font-weight: 600;">${takeProfit}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Lot Size:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${lotSize}</td>
+        </tr>
+      </table>
+    </div>
+    
+    <div style="text-align: center; margin: 35px 0;">
+      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">View Trade</a>
+    </div>
+    
+    <p style="margin: 30px 0 0 0; font-size: 14px; color: #9ca3af; line-height: 1.6; text-align: center;">
+      Monitor this trade in real-time from your dashboard.
+    </p>
+  `;
+};
+
+export const tradeClosedContent = (symbol: string, tradeType: string, entryPrice: number, exitPrice: number, profitLoss: number, profitLossPercent: number) => {
+  const isProfit = profitLoss > 0;
+  const emoji = isProfit ? '🎉' : '📉';
+  const statusColor = isProfit ? '#22c55e' : '#ef4444';
+  const bgGradient = isProfit 
+    ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%)'
+    : 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)';
+  const borderColor = isProfit ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+  
+  return `
+    <div style="text-align: center; margin-bottom: 30px;">
+      <div style="font-size: 48px; margin-bottom: 20px;">${emoji}</div>
+      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">${isProfit ? 'Profitable Trade Closed!' : 'Trade Closed'}</h2>
+    </div>
+    
+    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #4F46E5;">${tradeType.toUpperCase()}</strong> position on <strong style="color: #ffffff;">${symbol}</strong> has been closed.</p>
+    
+    <div style="background: ${bgGradient}; border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid ${borderColor};">
+      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: ${statusColor};">Trade Summary</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Symbol:</td>
+          <td style="padding: 10px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${symbol}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Type:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${tradeType.toUpperCase()}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Entry Price:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${entryPrice}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Exit Price:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${exitPrice}</td>
+        </tr>
+        <tr style="border-top: 2px solid ${statusColor};">
+          <td style="padding: 16px 0 8px 0; color: #ffffff; font-size: 16px; font-weight: 700;">Profit/Loss:</td>
+          <td style="padding: 16px 0 8px 0; color: ${statusColor}; font-size: 20px; font-weight: 700; text-align: right;">
+            ${isProfit ? '+' : ''}$${profitLoss.toFixed(2)} (${isProfit ? '+' : ''}${profitLossPercent.toFixed(2)}%)
+          </td>
+        </tr>
+      </table>
+    </div>
+    
+    <div style="text-align: center; margin: 35px 0;">
+      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">View Analytics</a>
+    </div>
+    
+    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
+      ${isProfit ? 'Congratulations on this winning trade! 🎯' : 'Keep learning and improving your strategy. 📊'}<br>
+      <strong style="color: #e5e7eb;">The TradeBotX Team</strong>
+    </p>
+  `;
+};
+
+export const botStoppedContent = (strategyName: string, reason: string, totalTrades: number, totalPnL: number) => {
+  return `
+    <div style="text-align: center; margin-bottom: 30px;">
+      <div style="font-size: 48px; margin-bottom: 20px;">⏸️</div>
+      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; line-height: 1.3;">Trading Bot Stopped</h2>
+    </div>
+    
+    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #4F46E5;">${strategyName}</strong> bot has been stopped.</p>
+    
+    <div style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(251, 191, 36, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(245, 158, 11, 0.3);">
+      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #f59e0b;">Stop Reason</h3>
+      <p style="margin: 0; color: #e5e7eb; font-size: 15px; line-height: 1.6;">${reason}</p>
+    </div>
+    
+    <div style="background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 1px solid rgba(79, 70, 229, 0.3);">
+      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600; color: #4F46E5;">Session Summary</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px; width: 40%;">Total Trades:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600;">${totalTrades}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #9ca3af; font-size: 14px;">Total P/L:</td>
+          <td style="padding: 10px 0; color: ${totalPnL >= 0 ? '#22c55e' : '#ef4444'}; font-size: 18px; font-weight: 700;">
+            ${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}
+          </td>
+        </tr>
+      </table>
+    </div>
+    
+    <div style="text-align: center; margin: 35px 0;">
+      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);">Go to Dashboard</a>
+    </div>
+    
+    <p style="margin: 30px 0 0 0; font-size: 14px; color: #9ca3af; line-height: 1.6; text-align: center;">
+      You can restart your bot anytime from the dashboard.
+    </p>
+  `;
+};
+
+export const emergencyStopContent = (strategyName: string, trigger: string, currentLoss: number, maxLoss: number) => {
+  return `
+    <div style="text-align: center; margin-bottom: 30px;">
+      <div style="font-size: 48px; margin-bottom: 20px;">🚨</div>
+      <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #ef4444; line-height: 1.3;">Emergency Stop Triggered</h2>
+    </div>
+    
+    <p style="margin: 0 0 30px 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">Your <strong style="color: #ffffff;">${strategyName}</strong> bot has been automatically stopped due to a safety trigger.</p>
+    
+    <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.15) 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid rgba(239, 68, 68, 0.5);">
+      <h3 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 700; color: #ef4444;">⚠️ Emergency Trigger</h3>
+      <p style="margin: 0 0 20px 0; color: #fca5a5; font-size: 16px; font-weight: 600; line-height: 1.6;">${trigger}</p>
+      <table style="width: 100%; border-collapse: collapse; margin-top: 20px; border-top: 1px solid rgba(239, 68, 68, 0.3); padding-top: 15px;">
+        <tr>
+          <td style="padding: 10px 0; color: #fca5a5; font-size: 14px; width: 40%;">Current Loss:</td>
+          <td style="padding: 10px 0; color: #ef4444; font-size: 18px; font-weight: 700; text-align: right;">-$${currentLoss.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #fca5a5; font-size: 14px;">Max Loss Limit:</td>
+          <td style="padding: 10px 0; color: #e5e7eb; font-size: 14px; font-weight: 600; text-align: right;">$${maxLoss.toFixed(2)}</td>
+        </tr>
+      </table>
+    </div>
+    
+    <div style="background: rgba(220, 38, 38, 0.1); border-left: 4px solid #dc2626; padding: 20px 24px; border-radius: 8px; margin: 30px 0;">
+      <p style="margin: 0; font-size: 15px; color: #fca5a5; line-height: 1.7;">
+        <strong style="display: block; margin-bottom: 10px; font-size: 16px;">🛑 Action Required</strong>
+        Review your risk settings and trading performance before restarting. Consider adjusting your risk parameters or strategy configuration.
+      </p>
+    </div>
+    
+    <div style="text-align: center; margin: 35px 0;">
+      <a href="https://tradebotx.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(220, 38, 38, 0.4);">Review Settings</a>
+    </div>
+    
+    <p style="margin: 30px 0 0 0; font-size: 16px; color: #d1d5db; line-height: 1.6;">
+      Stay safe,<br>
+      <strong style="color: #e5e7eb;">The TradeBotX Risk Management Team</strong>
+    </p>
+  `;
+};
