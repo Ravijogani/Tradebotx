@@ -9,6 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { OTPVerification } from "@/components/auth/OTPVerification";
 import logo from "@/assets/tradebotx-logo.png";
+import logoWhite from "@/assets/tradebotx-logo-white.png";
+import { useTheme } from "@/components/theme-provider";
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
@@ -20,6 +22,19 @@ const Login = () => {
   });
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { theme } = useTheme();
+
+  // Determine which logo to use based on theme
+  const getEffectiveTheme = () => {
+    if (theme === "light") return "light";
+    if (theme === "dark") return "dark";
+    if (theme === "system") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "dark";
+  };
+
+  const currentLogo = getEffectiveTheme() === "light" ? logo : logoWhite;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +133,7 @@ const Login = () => {
         <CardHeader className="space-y-4 text-center">
           <Link to="/" className="flex items-center gap-2 justify-center">
             <img 
-              src={logo} 
+              src={currentLogo} 
               alt="TradeBotX" 
               className="h-16 w-auto object-contain"
             />
