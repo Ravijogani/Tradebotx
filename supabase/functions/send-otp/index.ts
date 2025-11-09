@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { getEmailTemplate, otpEmailContent } from "../_shared/email-templates.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,15 +15,57 @@ serve(async (req) => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
     const { email, otpType = 'signup' } = await req.json();
+
+    // Rate limiting: 5 OTP requests per 60 seconds per IP
+    const clientIp = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
+    const rateLimitKey = `otp:${clientIp}`;
+    
+    const { data: rateLimitCheck, error: rateLimitError } = await supabase
+      .rpc('check_rate_limit', {
+        p_key: rateLimitKey,
+        p_max_requests: 5,
+        p_window_seconds: 60
+      });
+
+    if (rateLimitError) {
+      console.error('Rate limit check failed:', rateLimitError);
+    } else if (rateLimitCheck && rateLimitCheck.length > 0 && !rateLimitCheck[0].allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Too many requests. Please try again later.' }),
+        {
+          status: 429,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    // Email-based rate limiting: 3 OTPs per email per hour
+    const emailRateLimitKey = `otp:email:${email}`;
+    const { data: emailRateLimitCheck } = await supabase
+      .rpc('check_rate_limit', {
+        p_key: emailRateLimitKey,
+        p_max_requests: 3,
+        p_window_seconds: 3600
+      });
+
+    if (emailRateLimitCheck && emailRateLimitCheck.length > 0 && !emailRateLimitCheck[0].allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Too many OTP requests for this email. Please try again later.' }),
+        {
+          status: 429,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
 
     if (!email) {
       throw new Error('Email is required');
     }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Generate OTP
     const { data: otpData, error: otpError } = await supabase
@@ -111,10 +154,6 @@ serve(async (req) => {
       }
     );
   } catch (error: any) {
-    console.error('Error sending OTP email:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return handleError(error, corsHeaders);
   }
 });

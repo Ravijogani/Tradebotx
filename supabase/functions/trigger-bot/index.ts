@@ -55,13 +55,23 @@ serve(async (req) => {
       throw new Error('Failed to decrypt MT5 credentials. Please update your setup.');
     }
 
-    // Prepare bot configuration with decrypted password
+    // SECURITY FIX: Use user token instead of service role key
+    // Extract user's current session token from request
+    const authHeader = req.headers.get('Authorization');
+    const userToken = authHeader?.replace('Bearer ', '');
+    
+    if (!userToken) {
+      throw new Error('Authentication token required');
+    }
+
+    // Prepare bot configuration with user-scoped authentication
+    // This replaces the previous service role key which bypassed RLS
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
       strategy_name: strategyName,
       mt5_account: setup.mt5_account,
-      mt5_password: decryptedPassword, // Plain text password (in memory only)
+      mt5_password: decryptedPassword,
       mt5_server: setup.mt5_server,
       account_size: setup.account_size,
       risk_per_trade: setup.risk_per_trade,
@@ -69,13 +79,13 @@ serve(async (req) => {
       telegram_chat_id: setup.telegram_chat_id,
       telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
-      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+      supabase_anon_key: Deno.env.get('SUPABASE_ANON_KEY'),
+      supabase_user_token: userToken, // User's session token (respects RLS)
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
-      action: action // 'start' or 'stop'
+      action: action
     };
 
     // Send command to AWS Lightsail bot manager
-    // Option 1: HTTP endpoint on your Lightsail instance
     const LIGHTSAIL_BOT_MANAGER_URL = Deno.env.get('LIGHTSAIL_BOT_MANAGER_URL');
     
     if (LIGHTSAIL_BOT_MANAGER_URL) {

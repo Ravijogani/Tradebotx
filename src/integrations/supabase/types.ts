@@ -491,6 +491,30 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limit_log: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          request_count: number
+          window_start: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          request_count?: number
+          window_start?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          request_count?: number
+          window_start?: string
+        }
+        Relationships: []
+      }
       referral_codes: {
         Row: {
           code: string
@@ -1102,6 +1126,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_rate_limit: {
+        Args: {
+          p_key: string
+          p_max_requests?: number
+          p_window_seconds?: number
+        }
+        Returns: {
+          allowed: boolean
+          remaining: number
+        }[]
+      }
       cleanup_expired_otps: { Args: never; Returns: undefined }
       create_admin_account: {
         Args: {

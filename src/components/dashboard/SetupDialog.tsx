@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ExternalLink, Info, CheckCircle2, AlertCircle, Loader2, TrendingUp } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { z } from "zod";
 
 interface SetupDialogProps {
   open: boolean;
@@ -40,6 +41,35 @@ const BROKERS: BrokerOption[] = [
     description: "Award-winning platform with excellent support"
   }
 ];
+
+// Zod validation schema for secure input validation
+const setupSchema = z.object({
+  mt5Account: z.string()
+    .regex(/^\d{5,20}$/, 'MT5 account must be 5-20 digits'),
+  mt5Password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(100, 'Password too long'),
+  mt5Server: z.string()
+    .regex(/^[a-zA-Z0-9.-]+$/, 'Invalid server format (alphanumeric, dots, and hyphens only)')
+    .min(3, 'Server name too short')
+    .max(100, 'Server name too long'),
+  brokerAccountId: z.string()
+    .regex(/^[a-zA-Z0-9-]+$/, 'Invalid account ID format (alphanumeric and hyphens only)')
+    .min(3, 'Account ID too short')
+    .max(50, 'Account ID too long')
+    .optional(),
+  accountSize: z.number()
+    .min(100, 'Account size must be at least $100')
+    .max(10000000, 'Account size too large'),
+  riskPerTrade: z.number()
+    .min(0.1, 'Risk must be at least 0.1%')
+    .max(10, 'Risk cannot exceed 10%'),
+  maxPositions: z.number()
+    .int('Must be a whole number')
+    .min(1, 'At least 1 position required')
+    .max(20, 'Maximum 20 positions allowed'),
+  telegramChatId: z.string().optional()
+});
 
 export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
   const [loading, setLoading] = useState(false);
@@ -111,19 +141,27 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
       return;
     }
 
-    // Validate MT5 credentials format
-    if (formData.mt5Account.length < 5 || formData.mt5Account.length > 20) {
-      toast.error("Invalid MT5 account number format");
-      return;
-    }
+    // Validate all inputs using zod schema
+    try {
+      const validationData = {
+        mt5Account: formData.mt5Account.trim(),
+        mt5Password: formData.mt5Password,
+        mt5Server: formData.mt5Server.trim(),
+        brokerAccountId: planType === 'free' ? formData.brokerAccountId.trim() : undefined,
+        accountSize: parseFloat(formData.accountSize),
+        riskPerTrade: parseFloat(formData.riskPerTrade),
+        maxPositions: parseInt(formData.maxPositions),
+        telegramChatId: formData.telegramChatId.trim() || undefined
+      };
 
-    if (formData.mt5Password.length < 4) {
-      toast.error("MT5 password must be at least 4 characters");
-      return;
-    }
-
-    if (formData.mt5Server.length < 3 || formData.mt5Server.length > 100) {
-      toast.error("Invalid MT5 server format");
+      setupSchema.parse(validationData);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const firstError = error.issues[0];
+        toast.error(firstError.message);
+        return;
+      }
+      toast.error("Invalid input. Please check your data.");
       return;
     }
 

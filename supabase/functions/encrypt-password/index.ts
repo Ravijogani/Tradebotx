@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { encrypt } from "../_shared/crypto-utils.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -67,16 +68,6 @@ serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error('Error encrypting password:', error);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message || 'Failed to save setup',
-      }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return handleError(error, corsHeaders);
   }
 });
