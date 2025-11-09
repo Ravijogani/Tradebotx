@@ -1,4 +1,5 @@
 import { UserPlus, Settings, Play, TrendingUp } from "lucide-react";
+import { SwipeableCards } from "@/components/ui/swipeable-cards";
 
 const steps = [
   {
@@ -36,7 +37,8 @@ export const HowItWorks = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-8">
+        {/* Desktop Grid - Hidden on mobile */}
+        <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-8">
           {steps.map((step, index) => (
             <div key={index} className="relative">
               <div className="text-center">
@@ -52,6 +54,33 @@ export const HowItWorks = () => {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Mobile Swipeable Cards */}
+        <div className="sm:hidden">
+          <SwipeableCards showIndicators>
+            {steps.map((step, index) => (
+              <div key={index} className="relative">
+                <div className="text-center">
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary/20">
+                    <step.icon className="w-10 h-10 text-primary-foreground" />
+                  </div>
+                  <div className="bg-background/80 backdrop-blur-sm rounded-lg p-6 border border-border/50 min-h-[240px]">
+                    <div className="inline-block px-3 py-1 rounded-full bg-primary/10 text-xs font-bold text-primary mb-3">
+                      STEP {index + 1} OF {steps.length}
+                    </div>
+                    <h3 className="text-xl font-semibold mb-3">{step.title}</h3>
+                    <p className="text-base text-muted-foreground leading-relaxed">{step.description}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </SwipeableCards>
+          
+          {/* Swipe hint */}
+          <p className="text-center text-xs text-muted-foreground/60 mt-4">
+            👆 Swipe to see all steps
+          </p>
         </div>
       </div>
     </section>

@@ -1,4 +1,5 @@
 import { Bot, TrendingUp, Shield, Zap, LineChart, Clock, Brain, Lock } from "lucide-react";
+import { SwipeableCards } from "@/components/ui/swipeable-cards";
 
 const features = [
   {
@@ -76,7 +77,8 @@ export const Features = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        {/* Desktop Grid - Hidden on mobile */}
+        <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {features.map((feature, index) => (
             <div
               key={index}
@@ -105,6 +107,46 @@ export const Features = () => {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Mobile Swipeable Cards */}
+        <div className="sm:hidden">
+          <SwipeableCards showIndicators>
+            {features.map((feature, index) => (
+              <div
+                key={index}
+                className="group relative"
+              >
+                {/* Glassmorphism card */}
+                <div className="relative h-full p-6 rounded-2xl bg-gradient-surface backdrop-blur-xl border border-border/50 min-h-[280px]">
+                  {/* Gradient icon container */}
+                  <div className={`relative w-14 h-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-0.5 mb-5`}>
+                    <div className="w-full h-full rounded-xl bg-card flex items-center justify-center">
+                      <feature.icon className="w-7 h-7 text-foreground" />
+                    </div>
+                  </div>
+
+                  {/* Content */}
+                  <h3 className="font-display text-xl font-semibold mb-3 text-primary">
+                    {feature.title}
+                  </h3>
+                  <p className="text-muted-foreground leading-relaxed text-sm">
+                    {feature.description}
+                  </p>
+
+                  {/* Card number indicator */}
+                  <div className="absolute top-4 right-4 text-xs text-muted-foreground/50 font-medium">
+                    {index + 1}/{features.length}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </SwipeableCards>
+          
+          {/* Swipe hint */}
+          <p className="text-center text-xs text-muted-foreground/60 mt-4">
+            👆 Swipe to explore all features
+          </p>
         </div>
 
         {/* Bottom CTA */}

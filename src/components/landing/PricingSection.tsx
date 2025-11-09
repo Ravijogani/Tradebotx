@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Check } from "lucide-react";
 import { Link } from "react-router-dom";
+import { SwipeableCards } from "@/components/ui/swipeable-cards";
 
 const plans = [
   {
@@ -82,7 +83,8 @@ export const PricingSection = () => {
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8 max-w-7xl mx-auto">
+        {/* Desktop Grid - Hidden on mobile */}
+        <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8 max-w-7xl mx-auto">
           {plans.map((plan) => (
             <Card
               key={plan.name}
@@ -136,6 +138,70 @@ export const PricingSection = () => {
               </div>
             </Card>
           ))}
+        </div>
+
+        {/* Mobile Swipeable Cards */}
+        <div className="sm:hidden max-w-sm mx-auto">
+          <SwipeableCards showIndicators>
+            {plans.map((plan) => (
+              <Card
+                key={plan.name}
+                className={`relative p-6 ${
+                  plan.popular
+                    ? "border-accent shadow-glow"
+                    : "border-border"
+                }`}
+              >
+                {plan.popular && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
+                    <span className="bg-accent text-accent-foreground px-3 py-1 rounded-full text-xs font-semibold">
+                      Most Popular
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-bold mb-1">{plan.name}</h3>
+                    <p className="text-muted-foreground text-xs">{plan.description}</p>
+                  </div>
+
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-4xl font-bold">${plan.price}</span>
+                    <span className="text-muted-foreground text-sm">/{plan.period}</span>
+                  </div>
+
+                  <Link to={`/pricing?plan=${plan.name.toLowerCase().replace(' ', '-')}`}>
+                    <Button
+                      className={`w-full ${
+                        plan.popular
+                          ? "bg-gradient-hero shadow-glow"
+                          : ""
+                      }`}
+                      variant={plan.popular ? "default" : "outline"}
+                      size="default"
+                    >
+                      {plan.cta}
+                    </Button>
+                  </Link>
+
+                  <div className="space-y-2 pt-4 max-h-[240px] overflow-y-auto">
+                    {plan.features.map((feature) => (
+                      <div key={feature} className="flex items-start gap-2">
+                        <Check className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />
+                        <span className="text-xs leading-relaxed">{feature}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </SwipeableCards>
+          
+          {/* Swipe hint */}
+          <p className="text-center text-xs text-muted-foreground/60 mt-4">
+            👆 Swipe to compare plans
+          </p>
         </div>
       </div>
     </section>
