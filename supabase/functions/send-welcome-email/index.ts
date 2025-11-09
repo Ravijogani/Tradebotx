@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { getEmailTemplate, welcomeEmailContent } from "../_shared/email-templates.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -67,20 +68,21 @@ serve(async (req) => {
       
       // Send admin alert about new user signup (don't block welcome email on failure)
       try {
-        const adminSmtpClient = new SMTPClient({
-          connection: {
-            hostname: smtpHost,
-            port: smtpPort,
-            tls: true,
-            auth: {
-              username: smtpUser,
-              password: smtpPass,
+        const adminEmail = Deno.env.get('ADMIN_EMAIL');
+        if (adminEmail) {
+          const adminSmtpClient = new SMTPClient({
+            connection: {
+              hostname: smtpHost,
+              port: smtpPort,
+              tls: true,
+              auth: {
+                username: smtpUser,
+                password: smtpPass,
+              },
             },
-          },
-        });
-        
-        const adminEmail = Deno.env.get('ADMIN_EMAIL') || 'admin@tradebotx.pro';
-        const timestamp = new Date().toLocaleString('en-US', { 
+          });
+          
+          const timestamp = new Date().toLocaleString('en-US', {
           dateStyle: 'full', 
           timeStyle: 'long' 
         });
@@ -138,8 +140,11 @@ serve(async (req) => {
           html: adminEmailBody,
         });
         
-        await adminSmtpClient.close();
-        console.log('New user alert sent to admin');
+          await adminSmtpClient.close();
+          console.log('New user alert sent to admin');
+        } else {
+          console.log('ADMIN_EMAIL not configured, skipping admin alert');
+        }
       } catch (adminAlertError) {
         console.error('Failed to send admin alert (non-blocking):', adminAlertError);
       }
@@ -160,10 +165,6 @@ serve(async (req) => {
       }
     );
   } catch (error: any) {
-    console.error('Error sending welcome email:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return handleError(error, corsHeaders);
   }
 });

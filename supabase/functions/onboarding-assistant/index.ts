@@ -1,18 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface OnboardingRequest {
-  question: string;
-  context?: {
-    currentStep?: string;
-    fieldName?: string;
-    userInput?: string;
-  };
-}
+const onboardingRequestSchema = z.object({
+  question: z.string().min(1).max(1000),
+  context: z.object({
+    currentStep: z.string().max(100).optional(),
+    fieldName: z.string().max(100).optional(),
+    userInput: z.string().max(500).optional()
+  }).optional()
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -20,7 +22,8 @@ serve(async (req) => {
   }
 
   try {
-    const { question, context }: OnboardingRequest = await req.json();
+    const requestBody = await req.json();
+    const { question, context } = onboardingRequestSchema.parse(requestBody);
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -111,15 +114,6 @@ Be concise, friendly, and helpful. If users ask about trading strategies or fina
     );
 
   } catch (error: any) {
-    console.error('Onboarding assistant error:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: error.message || 'Failed to process request' 
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return handleError(error, corsHeaders);
   }
 });

@@ -1,16 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface NewUserAlertRequest {
-  userEmail: string;
-  userName: string;
-  signupTimestamp: string;
-}
+const newUserAlertSchema = z.object({
+  userEmail: z.string().email().max(255),
+  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-\.]+$/, 'Invalid characters in name'),
+  signupTimestamp: z.string()
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -18,16 +20,17 @@ serve(async (req) => {
   }
 
   try {
-    const { userEmail, userName, signupTimestamp }: NewUserAlertRequest = await req.json();
+    const requestBody = await req.json();
+    const { userEmail, userName, signupTimestamp } = newUserAlertSchema.parse(requestBody);
 
     const smtpHost = Deno.env.get('SMTP_HOST');
     const smtpPort = Deno.env.get('SMTP_PORT');
     const smtpUser = Deno.env.get('SMTP_USER');
     const smtpPass = Deno.env.get('SMTP_PASS');
     const smtpFrom = Deno.env.get('SMTP_FROM');
-    const adminEmail = Deno.env.get('ADMIN_EMAIL') || 'admin@tradebotx.pro';
+    const adminEmail = Deno.env.get('ADMIN_EMAIL');
 
-    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom || !adminEmail) {
       throw new Error('SMTP configuration is missing');
     }
 
@@ -106,7 +109,7 @@ serve(async (req) => {
 
     await client.close();
 
-    console.log('New user alert sent to admin:', adminEmail);
+    console.log('New user alert sent to admin');
 
     return new Response(
       JSON.stringify({ success: true, message: 'Admin alert sent' }),
@@ -117,13 +120,6 @@ serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error('Error sending new user alert:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { 
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    );
+    return handleError(error, corsHeaders);
   }
 });
