@@ -97,7 +97,7 @@ export const QuickStrategyControl = () => {
     }
   };
 
-  const handleStartStop = async (userStrategyId: string, isRunning: boolean) => {
+  const handleStartStop = async (userStrategyId: string, strategyId: string, isRunning: boolean) => {
     setActionLoading(userStrategyId);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -116,9 +116,9 @@ export const QuickStrategyControl = () => {
           description: "Trading bot has been stopped successfully",
         });
       } else {
-        // Start the bot
+        // Start the bot - pass strategyId as expected by the edge function
         const { error } = await supabase.functions.invoke("start-trading-bot", {
-          body: { userStrategyId },
+          body: { strategyId },
         });
 
         if (error) throw error;
@@ -230,7 +230,7 @@ export const QuickStrategyControl = () => {
             </div>
 
             <Button
-              onClick={() => handleStartStop(userStrategy.id, userStrategy.is_running)}
+              onClick={() => handleStartStop(userStrategy.id, userStrategy.strategy_id, userStrategy.is_running)}
               disabled={actionLoading === userStrategy.id}
               variant={userStrategy.is_running ? "destructive" : "default"}
               size="sm"
