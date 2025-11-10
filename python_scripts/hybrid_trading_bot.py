@@ -1107,16 +1107,19 @@ Respond ONLY with valid JSON:
     
     return {'approved': True, 'confidence_adjustment': 0.0, 'reason': 'AI filter failed, defaulting to approve'}
 
-def ai_calculate_risk_percent(local_signal: Dict, account_equity: float) -> float:
+# === COPY AND REPLACE THIS FUNCTION ===
+
+def ai_calculate_risk_percent(local_signal: Dict, account_equity: float, current_daily_pnl: float) -> float:
     """
     AI determines optimal risk percentage for this trade.
+    V11.1 - Now includes 'house money' logic based on current_daily_pnl.
     """
     if not config.ENABLE_AI_RISK_MANAGEMENT:
         return state.current_risk_percent
     
     logger.info(f"🤖 AI calculating optimal risk percent...")
     
-    # === MODIFIED: Reads from Supabase via trade_db ===
+    # Get recent performance from DB
     recent_trades = trade_db.get_recent_trades(20)
     wins = sum(1 for t in recent_trades if t.get('win') == 1)
     win_rate = (wins / len(recent_trades)) * 100 if recent_trades else 50.0
@@ -1127,31 +1130,63 @@ def ai_calculate_risk_percent(local_signal: Dict, account_equity: float) -> floa
         else: 
             break
     
-    system_prompt = f"""You are a risk management expert. Determine the optimal risk percentage (between {config.MIN_RISK_PERCENT} and {config.MAX_RISK_PERCENT}) for this trade.
-Base your decision on:
-1. Signal quality and AI-adjusted confidence.
-2. Recent trading performance (win rate, consecutive losses).
-Respond ONLY with valid JSON: {{ "risk_percent": 0.25_to_2.0, "reasoning": "brief explanation" }}
+    # === NEW: House Money Logic ===
+    house_money_prompt = "You are trading on base risk."
+    if current_daily_pnl > 0:
+        house_money_prompt = f"""
+You are currently IN PROFIT by ${current_daily_pnl:.2f} for the day.
+You have 'house money' to use.
+If this is a high-confidence signal, you are authorized to risk up to 50% of the *gained profit*
+(e.g., up to ${current_daily_pnl * 0.5:.2f}) on this single trade to target a larger gain.
+Calculate a risk percentage that is aggressive but prudent.
 """
+    
+    system_prompt = f"""You are a risk management expert for a scalping bot. Determine the
+optimal risk percentage (between {config.MIN_RISK_PERCENT} and {config.MAX_RISK_PERCENT}) for this trade.
+
+Your Base Risk is {state.current_risk_percent:.2f}%.
+{house_money_prompt}
+
+Base your final decision on:
+1. Signal quality and confidence.
+2. Recent trading performance (win rate, consecutive losses).
+3. The 'house money' rule (if applicable).
+
+Respond ONLY with valid JSON: {{ "risk_percent": 0.3_to_5.0, "reasoning": "brief explanation" }}
+"""
+    # Note: I increased max risk in the JSON prompt to 5.0 to allow for the house money rule.
+    # The config.MAX_RISK_PERCENT will still be the *default* cap.
+    
     prompt = f"""Calculate optimal risk percent:
 Signal Details:
 - Symbol: {local_signal['symbol']}
 - Direction: {local_signal['direction']}
 - Confidence: {local_signal.get('confidence', 0.7):.0%}
+Intraday Performance:
+- Current Daily P&L: ${current_daily_pnl:.2f}
 Recent Performance:
-- Win Rate: {win_rate:.0f}%
+- Win Rate (Last 20): {win_rate:.0f}%
 - Consecutive Losses: {consec_losses}
 Account:
 - Equity: ${account_equity:.2f}
-- Current Base Risk: {state.current_risk_percent:.2f}%
 What risk percentage should be used?"""
     
     try:
-        response = ai_provider.call_ai(prompt, system_prompt, temperature=0.2, max_tokens=200, json_mode=True)
+        response = ai_provider.call_ai(prompt, system_prompt, temperature=0.4, max_tokens=200, json_mode=True)
         if response:
             result = json.loads(response)
             risk_percent = float(result['risk_percent'])
-            risk_percent = max(config.MIN_RISK_PERCENT, min(config.MAX_RISK_PERCENT, risk_percent))
+            
+            # Apply safety caps
+            if current_daily_pnl <= 0:
+                # If not in profit, cap at normal max risk
+                risk_percent = max(config.MIN_RISK_PERCENT, min(config.MAX_RISK_PERCENT, risk_percent))
+            else:
+                # If in profit, allow a higher cap (e.g., 5% or 50% of profit)
+                profit_risk_cap = (current_daily_pnl * 0.5) / account_equity * 100
+                final_cap = max(config.MAX_RISK_PERCENT, profit_risk_cap)
+                risk_percent = max(config.MIN_RISK_PERCENT, min(final_cap, risk_percent))
+            
             logger.info(f"🤖 AI Risk Decision: {risk_percent:.2f}% | Reasoning: {result['reasoning']}")
             return risk_percent
     except Exception as e:
@@ -1443,40 +1478,38 @@ def update_closed_trades():
         logger.error(f"Error in update_closed_trades: {e}", exc_info=True)
 
 
+# === COPY AND REPLACE THIS FUNCTION ===
+
 def check_emergency_conditions(account_info) -> bool:
     """
     Emergency circuit breaker to stop trading in dangerous conditions
+    Returns True if trading should stop
     """
+    # 1. Daily Loss Limit (Fixed)
     if state.daily_start_equity == 0:
         state.daily_start_equity = account_info.equity
     
-    peak_equity = max(state.daily_start_equity, account_info.equity)
-    current_dd = ((peak_equity - account_info.equity) / peak_equity) * 100 if peak_equity > 0 else 0
+    if state.daily_start_equity > 0:
+        daily_loss_percent = ((account_info.equity - state.daily_start_equity) / state.daily_start_equity) * 100
+        if daily_loss_percent <= -config.MAX_DAILY_LOSS_PERCENT:
+            logger.critical(f"🚨 EMERGENCY STOP: Daily loss limit of {config.MAX_DAILY_LOSS_PERCENT}% reached. (Loss: {daily_loss_percent:.2f}%)")
+            send_telegram_notification(f"🚨 <b>EMERGENCY STOP</b> 🚨\n\nDaily loss limit of {config.MAX_DAILY_LOSS_PERCENT}% has been hit. Bot is halting for the day.")
+            return True
     
-    if current_dd >= 10:
-        logger.critical(f"🚨 EMERGENCY STOP: {current_dd:.1f}% drawdown from peak")
-        send_telegram_notification(f"🚨 EMERGENCY STOP: {current_dd:.1f}% drawdown from peak. Bot is halting.")
-        return True
-    
-    # === MODIFIED: Reads from Supabase via trade_db ===
+    # 2. Consecutive Losses (Performance-Based)
+    # This check now works because our 'win' data is accurate
     recent_trades = trade_db.get_recent_trades(10)
     if len(recent_trades) >= 10:
         if all(t.get('win') == 0 for t in recent_trades):
             logger.critical("🚨 EMERGENCY STOP: 10 consecutive losses")
-            send_telegram_notification("🚨 EMERGENCY STOP: 10 consecutive losses. Bot is halting.")
+            send_telegram_notification("🚨 <b>EMERGENCY STOP</b> 🚨\n\nBot has 10 consecutive losses. Halting to prevent further issues.")
             return True
     
-    if account_info.margin_level < 200 and account_info.margin_level > 0:
+    # 3. Margin Level Check (Broker-Based)
+    if account_info.margin_level < 200 and account_info.margin_level > 0:  # Below 200%
         logger.critical(f"🚨 EMERGENCY STOP: Low margin level {account_info.margin_level:.0f}%")
-        send_telegram_notification(f"🚨 EMERGENCY STOP: Low margin level {account_info.margin_level:.0f}%. Bot is halting.")
+        send_telegram_notification(f"🚨 <b>EMERGENCY STOP</b> 🚨\n\nAccount margin level is critically low ({account_info.margin_level:.0f}%). Bot is halting.")
         return True
-    
-    if hasattr(config, 'MAX_DAILY_LOSS_PERCENT') and state.daily_start_equity > 0:
-        daily_loss_percent = ((account_info.equity - state.daily_start_equity) / state.daily_start_equity) * 100
-        if daily_loss_percent <= -config.MAX_DAILY_LOSS_PERCENT:
-            logger.critical(f"🚨 EMERGENCY STOP: Daily loss limit reached {daily_loss_percent:.2f}%")
-            send_telegram_notification(f"🚨 EMERGENCY STOP: Daily loss limit reached {daily_loss_percent:.2f}%. Bot is halting.")
-            return True
     
     return False
 
@@ -1522,7 +1555,7 @@ def validate_lot_size(symbol: str, lot_size: float) -> float:
         logger.error(f"Error validating lot size: {e}")
         return 0.01
 
-def place_ai_trade(local_signal: Dict, account_equity: float) -> bool:
+def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl: float) -> bool:
     """
     Execute trade with DYNAMIC lot size, SL, and TP,
     and log everything to Supabase for learning.
@@ -1539,7 +1572,7 @@ def place_ai_trade(local_signal: Dict, account_equity: float) -> bool:
             logger.error(f"Could not calculate dynamic params for {symbol}")
             return False
         
-        risk_percent = ai_calculate_risk_percent(local_signal, account_equity)
+        risk_percent = ai_calculate_risk_percent(local_signal, account_equity, current_daily_pnl)
         lot_size = calculate_dynamic_lot_size(
             symbol, account_equity, risk_percent, params['sl_distance']
         )
@@ -1685,7 +1718,9 @@ def ai_trading_session():
                     if ai_validation['approved']:
                         local_signal['confidence'] += ai_validation.get('confidence_adjustment', 0.0)
                         
-                        if place_ai_trade(local_signal, account_info.equity):
+                        # C. AI RISK & EXECUTION (1 API call)
+                        # <-- Pass in state.daily_pnl -->
+                        if place_ai_trade(local_signal, account_info.equity, state.daily_pnl):
                             time.sleep(5)
                         
                         open_positions = mt5.positions_get()
@@ -1737,4 +1772,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-}
