@@ -29,6 +29,7 @@ import { BotStatusSync } from "./BotStatusSync";
 import { ActiveBotsCounter } from "./ActiveBotsCounter";
 import { StrategyPerformance } from "./StrategyPerformance";
 import { AIInsightsDashboard } from "./AIInsightsDashboard";
+import { QuickStrategyControl } from "./QuickStrategyControl";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
 
@@ -184,6 +185,9 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   
                   {/* Active Bots Counter */}
                   <ActiveBotsCounter />
+                  
+                  {/* Quick Strategy Controls */}
+                  <QuickStrategyControl />
                   
                   {/* Bot Health & Open Positions */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 w-full">
