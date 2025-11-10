@@ -215,6 +215,7 @@ export type Database = {
           last_heartbeat: string
           metadata: Json | null
           mt5_connected: boolean
+          pid: number | null
           status: string
           strategy_id: string
           updated_at: string
@@ -227,6 +228,7 @@ export type Database = {
           last_heartbeat?: string
           metadata?: Json | null
           mt5_connected?: boolean
+          pid?: number | null
           status?: string
           strategy_id: string
           updated_at?: string
@@ -239,6 +241,7 @@ export type Database = {
           last_heartbeat?: string
           metadata?: Json | null
           mt5_connected?: boolean
+          pid?: number | null
           status?: string
           strategy_id?: string
           updated_at?: string
@@ -1079,28 +1082,34 @@ export type Database = {
       }
       user_strategies: {
         Row: {
+          bot_pid: number | null
           created_at: string
           id: string
           is_running: boolean
           started_at: string | null
+          status: string | null
           stopped_at: string | null
           strategy_id: string
           user_id: string
         }
         Insert: {
+          bot_pid?: number | null
           created_at?: string
           id?: string
           is_running?: boolean
           started_at?: string | null
+          status?: string | null
           stopped_at?: string | null
           strategy_id: string
           user_id: string
         }
         Update: {
+          bot_pid?: number | null
           created_at?: string
           id?: string
           is_running?: boolean
           started_at?: string | null
+          status?: string | null
           stopped_at?: string | null
           strategy_id?: string
           user_id?: string

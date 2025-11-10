@@ -10,33 +10,72 @@ export const BotStatusSync = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    const checkBotHealth = async () => {
+    const syncBotStatus = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Get all user's running strategies
-      const { data: runningStrategies } = await supabase
+      // Get all user's strategies that are starting or running
+      const { data: activeStrategies } = await supabase
         .from("user_strategies")
-        .select("id, strategy_id, user_id")
+        .select("id, strategy_id, user_id, status, is_running")
         .eq("user_id", user.id)
-        .eq("is_running", true);
+        .in("status", ["starting", "running"]);
 
-      if (!runningStrategies || runningStrategies.length === 0) return;
+      if (!activeStrategies || activeStrategies.length === 0) return;
 
-      // Check heartbeat for each running strategy
-      for (const strategy of runningStrategies) {
+      // Check heartbeat for each active strategy
+      for (const strategy of activeStrategies) {
         const { data: heartbeat } = await supabase
           .from("bot_heartbeats")
-          .select("last_heartbeat, status")
+          .select("last_heartbeat, status, pid")
           .eq("user_id", strategy.user_id)
           .eq("strategy_id", strategy.strategy_id)
           .maybeSingle();
+
+        // If no heartbeat exists yet and status is 'starting', wait for bot to start
+        if (!heartbeat && strategy.status === 'starting') {
+          continue; // Bot is still starting up
+        }
+
+        // If no heartbeat but status is 'running', something is wrong
+        if (!heartbeat && strategy.status === 'running') {
+          console.log(`No heartbeat for running strategy ${strategy.strategy_id}, marking as crashed`);
+          await supabase
+            .from("user_strategies")
+            .update({
+              is_running: false,
+              status: 'crashed',
+              stopped_at: new Date().toISOString(),
+              bot_pid: null
+            })
+            .eq("id", strategy.id);
+          continue;
+        }
 
         if (!heartbeat) continue;
 
         const lastBeat = new Date(heartbeat.last_heartbeat).getTime();
         const now = Date.now();
         const diffSeconds = (now - lastBeat) / 1000;
+
+        // If heartbeat shows 'running' and bot was 'starting', update to running
+        if (heartbeat.status === 'running' && strategy.status === 'starting') {
+          console.log(`Bot confirmed running for strategy ${strategy.strategy_id}, PID: ${heartbeat.pid}`);
+          await supabase
+            .from("user_strategies")
+            .update({
+              is_running: true,
+              status: 'running',
+              bot_pid: heartbeat.pid
+            })
+            .eq("id", strategy.id);
+          
+          toast({
+            title: "✅ Bot Started",
+            description: "Trading bot is now running with live market data.",
+          });
+          continue;
+        }
 
         // If heartbeat is stale (>60s) or status is crashed/stopped
         const isStale = diffSeconds > 60;
@@ -50,12 +89,14 @@ export const BotStatusSync = () => {
             .from("user_strategies")
             .update({
               is_running: false,
-              stopped_at: new Date().toISOString()
+              status: isCrashed ? 'crashed' : 'stopped',
+              stopped_at: new Date().toISOString(),
+              bot_pid: null
             })
             .eq("id", strategy.id);
 
-          // Show notification only once
-          if (isCrashed && heartbeat.status === 'crashed') {
+          // Show notification
+          if (isCrashed) {
             toast({
               title: "⚠️ Bot Stopped",
               description: "Bot crashed and has been stopped. You can restart it.",
@@ -67,25 +108,24 @@ export const BotStatusSync = () => {
     };
 
     // Check immediately on mount
-    checkBotHealth();
+    syncBotStatus();
 
-    // Check every 30 seconds
-    const interval = setInterval(checkBotHealth, 30000);
+    // Check every 10 seconds for faster feedback
+    const interval = setInterval(syncBotStatus, 10000);
 
-    // Also listen for heartbeat changes
+    // Also listen for heartbeat changes in real-time
     const channel = supabase
-      .channel('bot-health-sync')
+      .channel('bot-status-sync')
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'bot_heartbeats'
         },
         (payload) => {
-          if (payload.new.status === 'crashed' || payload.new.status === 'stopped') {
-            checkBotHealth();
-          }
+          console.log('Heartbeat changed:', payload);
+          syncBotStatus(); // Sync immediately when heartbeat changes
         }
       )
       .subscribe();
@@ -94,7 +134,7 @@ export const BotStatusSync = () => {
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [toast]);
 
   return null; // This is a background component with no UI
 };

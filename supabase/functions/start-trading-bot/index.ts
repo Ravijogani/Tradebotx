@@ -81,15 +81,18 @@ serve(async (req) => {
       throw new Error('This strategy is already running');
     }
 
-    // Create or update user_strategy record
+    // Create or update user_strategy record - set status to 'starting', NOT is_running=true
+    // Bot will confirm when it actually starts and gets a PID
     const { data: userStrategy, error: userStrategyError } = await supabaseClient
       .from('user_strategies')
       .upsert({
         user_id: user.id,
         strategy_id: strategyId,
-        is_running: true,
+        is_running: false, // Don't set to true until bot confirms it started
+        status: 'starting', // Indicates bot start command was sent
         started_at: new Date().toISOString(),
         stopped_at: null,
+        bot_pid: null, // Will be set by bot when it starts
       }, {
         onConflict: 'user_id,strategy_id'
       })

@@ -12,6 +12,8 @@ interface UserStrategyWithDetails {
   strategy_id: string;
   is_running: boolean;
   started_at: string | null;
+  status?: string;
+  bot_pid?: number | null;
   strategy: {
     name: string;
     description: string;
@@ -65,6 +67,8 @@ export const QuickStrategyControl = () => {
           strategy_id,
           is_running,
           started_at,
+          status,
+          bot_pid,
           strategies:strategy_id (
             name,
             description
@@ -81,6 +85,8 @@ export const QuickStrategyControl = () => {
         strategy_id: item.strategy_id,
         is_running: item.is_running,
         started_at: item.started_at,
+        status: item.status,
+        bot_pid: item.bot_pid,
         strategy: Array.isArray(item.strategies) ? item.strategies[0] : item.strategies
       })).filter(item => item.strategy); // Filter out any without strategy details
 
@@ -124,8 +130,8 @@ export const QuickStrategyControl = () => {
         if (error) throw error;
 
         toast({
-          title: "Bot Started",
-          description: "Trading bot is now running",
+          title: "Bot Starting",
+          description: "Bot start command sent. Waiting for confirmation...",
         });
       }
 
@@ -157,6 +163,47 @@ export const QuickStrategyControl = () => {
       return `${diffHours}h ${diffMins}m`;
     } else {
       return `${diffMins}m`;
+    }
+  };
+
+  const getStatusBadge = (status?: string, isRunning?: boolean) => {
+    switch (status) {
+      case 'running':
+        return (
+          <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20 text-xs">
+            <span className="relative flex h-2 w-2 mr-1">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+            </span>
+            Live
+          </Badge>
+        );
+      case 'starting':
+        return (
+          <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
+            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            Starting...
+          </Badge>
+        );
+      case 'stopping':
+        return (
+          <Badge variant="outline" className="bg-orange-500/10 text-orange-500 border-orange-500/20 text-xs">
+            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            Stopping...
+          </Badge>
+        );
+      case 'crashed':
+        return (
+          <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20 text-xs">
+            ⚠ Crashed
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="outline" className="text-xs">
+            ○ Stopped
+          </Badge>
+        );
     }
   };
 
@@ -211,30 +258,29 @@ export const QuickStrategyControl = () => {
                 <h4 className="font-semibold text-sm sm:text-base truncate">
                   {userStrategy.strategy.name}
                 </h4>
-                {userStrategy.is_running && (
-                  <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20 text-xs">
-                    <span className="relative flex h-2 w-2 mr-1">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    Live
-                  </Badge>
-                )}
+                {getStatusBadge(userStrategy.status, userStrategy.is_running)}
               </div>
               {userStrategy.is_running && userStrategy.started_at && (
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Clock className="w-3 h-3" />
                   Running for {formatRunningTime(userStrategy.started_at)}
+                  {userStrategy.bot_pid && ` • PID: ${userStrategy.bot_pid}`}
+                </div>
+              )}
+              {userStrategy.status === 'starting' && (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  Waiting for bot process to start...
                 </div>
               )}
             </div>
 
             <Button
               onClick={() => handleStartStop(userStrategy.id, userStrategy.strategy_id, userStrategy.is_running)}
-              disabled={actionLoading === userStrategy.id}
+              disabled={actionLoading === userStrategy.id || userStrategy.status === 'starting' || userStrategy.status === 'stopping'}
               variant={userStrategy.is_running ? "destructive" : "default"}
               size="sm"
-              className={`min-w-[100px] ${!userStrategy.is_running ? 'bg-gradient-hero shadow-glow' : ''}`}
+              className={`min-w-[100px] ${!userStrategy.is_running && userStrategy.status !== 'starting' ? 'bg-gradient-hero shadow-glow' : ''}`}
             >
               {actionLoading === userStrategy.id ? (
                 <>
