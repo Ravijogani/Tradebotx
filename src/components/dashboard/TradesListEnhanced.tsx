@@ -173,35 +173,36 @@ export const TradesListEnhanced = () => {
   const hasActiveFilters = dateRange.from || dateRange.to || symbolFilter || (statusFilter && statusFilter !== "all");
 
   return (
-    <Card className="p-6 border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader className="px-0 pt-0">
-        <div className="flex items-center justify-between">
+    <Card className="p-3 sm:p-4 md:p-6 border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="px-0 pt-0 pb-3 sm:pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <CardTitle className="text-xl font-semibold">Trade History</CardTitle>
-            <CardDescription className="mt-1">
+            <CardTitle className="text-lg sm:text-xl font-semibold">Trade History</CardTitle>
+            <CardDescription className="mt-1 text-xs sm:text-sm">
               {filteredTrades.length} {filteredTrades.length === 1 ? "trade" : "trades"} found
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant={showFilters ? "default" : "outline"}
               size="sm"
               onClick={() => setShowFilters(!showFilters)}
+              className="text-xs sm:text-sm"
             >
-              <Filter className="w-4 h-4 mr-2" />
+              <Filter className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
               Filters
               {hasActiveFilters && (
-                <Badge variant="secondary" className="ml-2 px-1 min-w-[20px]">
+                <Badge variant="secondary" className="ml-1 sm:ml-2 px-1 min-w-[20px] text-xs">
                   {[dateRange.from, dateRange.to, symbolFilter, statusFilter !== "all"].filter(Boolean).length}
                 </Badge>
               )}
             </Button>
-            <Button variant="outline" size="sm" onClick={exportToCSV}>
-              <FileText className="w-4 h-4 mr-2" />
+            <Button variant="outline" size="sm" onClick={exportToCSV} className="text-xs sm:text-sm">
+              <FileText className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
               CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={exportToPDF}>
-              <Download className="w-4 h-4 mr-2" />
+            <Button variant="outline" size="sm" onClick={exportToPDF} className="text-xs sm:text-sm">
+              <Download className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
               PDF
             </Button>
           </div>
@@ -209,8 +210,8 @@ export const TradesListEnhanced = () => {
 
         {/* Filters Panel */}
         {showFilters && (
-          <div className="mt-4 p-4 rounded-lg border border-border/50 bg-muted/20 space-y-4 animate-fade-in">
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="mt-3 sm:mt-4 p-3 sm:p-4 rounded-lg border border-border/50 bg-muted/20 space-y-3 sm:space-y-4 animate-fade-in">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               {/* Date Range */}
               <div className="space-y-2">
                 <Label>Date Range</Label>
@@ -300,49 +301,49 @@ export const TradesListEnhanced = () => {
 
       <CardContent className="px-0 pb-0">
         {filteredTrades.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-4">
-              <ArrowUpRight className="w-8 h-8 text-muted-foreground" />
+          <div className="text-center py-8 sm:py-12">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+              <ArrowUpRight className="w-6 h-6 sm:w-8 sm:h-8 text-muted-foreground" />
             </div>
-            <p className="text-muted-foreground">
+            <p className="text-sm sm:text-base text-muted-foreground px-4">
               {hasActiveFilters ? "No trades match your filters" : "No trades yet. Start a strategy to begin trading."}
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 overflow-x-auto">
             {filteredTrades.map((trade) => (
               <div
                 key={trade.id}
-                className="flex items-center justify-between p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group"
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group gap-2 sm:gap-4 min-w-0"
               >
-                <div className="flex items-center gap-4 flex-1">
+                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
                   {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
-                    <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors">
-                      <ArrowUpRight className="w-5 h-5 text-success" />
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors flex-shrink-0">
+                      <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-success" />
                     </div>
                   ) : (
-                    <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors">
-                      <ArrowDownRight className="w-5 h-5 text-destructive" />
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors flex-shrink-0">
+                      <ArrowDownRight className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
                     </div>
                   )}
 
-                  <div className="flex-1">
-                    <div className="font-semibold text-foreground group-hover:text-primary transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm sm:text-base text-foreground group-hover:text-primary transition-colors truncate">
                       {trade.symbol}
                     </div>
-                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                    <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 sm:gap-2 flex-wrap">
                       <span className="font-medium">{trade.trade_type}</span>
-                      <span>•</span>
-                      <span>{new Date(trade.opened_at).toLocaleDateString()}</span>
+                      <span className="hidden sm:inline">•</span>
+                      <span className="text-xs">{new Date(trade.opened_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
+                <div className="flex sm:flex-row items-center justify-between sm:justify-end gap-2 sm:gap-3 border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-3">
+                  <div className="flex-1 sm:flex-initial sm:text-right">
                     {trade.profit_loss && (
                       <div
-                        className={`text-lg font-bold ${
+                        className={`text-base sm:text-lg font-bold ${
                           parseFloat(trade.profit_loss) >= 0
                             ? "text-success"
                             : "text-destructive"
@@ -354,7 +355,7 @@ export const TradesListEnhanced = () => {
                     )}
                     <Badge
                       variant={trade.status === "executed" ? "default" : "secondary"}
-                      className="min-w-[80px] justify-center"
+                      className="min-w-[60px] sm:min-w-[80px] justify-center text-xs mt-1"
                     >
                       {trade.status}
                     </Badge>

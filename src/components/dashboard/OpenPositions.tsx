@@ -75,36 +75,38 @@ export const OpenPositions = () => {
   };
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Open Positions
-            </CardTitle>
-            <CardDescription className="mt-1">
-              {positions.length} active {positions.length === 1 ? 'position' : 'positions'}
-            </CardDescription>
-          </div>
-          <div className="text-right">
-            <div className="text-sm text-muted-foreground">Total P&L</div>
-            <div className={`text-2xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
-              {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="p-3 sm:p-4 md:p-6">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Activity className="h-4 w-4 sm:h-5 sm:w-5" />
+                Open Positions
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs sm:text-sm">
+                {positions.length} active {positions.length === 1 ? 'position' : 'positions'}
+              </CardDescription>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-muted-foreground">Total P&L</div>
+              <div className={`text-lg sm:text-2xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
+                {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+              </div>
             </div>
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-3 sm:p-4 md:p-6 pt-0">
         {positions.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-4">
-              <Activity className="w-8 h-8 text-muted-foreground" />
+          <div className="text-center py-8 sm:py-12">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+              <Activity className="w-6 h-6 sm:w-8 sm:h-8 text-muted-foreground" />
             </div>
-            <p className="text-muted-foreground">No open positions</p>
+            <p className="text-sm sm:text-base text-muted-foreground">No open positions</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2 sm:space-y-3">
             {positions.map((position) => {
               const metadata = typeof position.metadata === 'object' && position.metadata !== null
                 ? position.metadata as any
@@ -115,42 +117,42 @@ export const OpenPositions = () => {
               return (
                 <div
                   key={position.id}
-                  className="flex items-center justify-between p-4 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/30 transition-all"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 p-3 sm:p-4 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/30 transition-all"
                 >
-                  <div className="flex items-center gap-4 flex-1">
+                  <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
                     {currentProfit >= 0 ? (
-                      <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
-                        <TrendingUp className="w-5 h-5 text-success" />
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
+                        <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-success" />
                       </div>
                     ) : (
-                      <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center">
-                        <TrendingDown className="w-5 h-5 text-destructive" />
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-destructive/10 flex items-center justify-center flex-shrink-0">
+                        <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
                       </div>
                     )}
                     
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-foreground">{position.symbol}</span>
-                        <Badge variant={position.trade_type === 'BUY' ? 'default' : 'secondary'}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="font-semibold text-sm sm:text-base text-foreground">{position.symbol}</span>
+                        <Badge variant={position.trade_type === 'BUY' ? 'default' : 'secondary'} className="text-xs">
                           {position.trade_type}
                         </Badge>
                       </div>
-                      <div className="text-sm text-muted-foreground space-x-3">
-                        <span>Entry: ${parseFloat(position.entry_price).toFixed(5)}</span>
-                        <span>•</span>
-                        <span>Current: ${parseFloat(currentPrice).toFixed(5)}</span>
-                        <span>•</span>
-                        <span>Qty: {position.quantity}</span>
+                      <div className="text-xs sm:text-sm text-muted-foreground flex flex-wrap gap-1 sm:gap-3">
+                        <span className="whitespace-nowrap">Entry: ${parseFloat(position.entry_price).toFixed(5)}</span>
+                        <span className="hidden sm:inline">•</span>
+                        <span className="whitespace-nowrap">Current: ${parseFloat(currentPrice).toFixed(5)}</span>
+                        <span className="hidden sm:inline">•</span>
+                        <span className="whitespace-nowrap">Qty: {position.quantity}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="text-right">
-                    <div className={`text-xl font-bold ${currentProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:text-right border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-4">
+                    <div className={`text-lg sm:text-xl font-bold ${currentProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
                       {currentProfit >= 0 ? '+' : ''}${currentProfit.toFixed(2)}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {new Date(position.opened_at).toLocaleTimeString()}
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(position.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
                 </div>

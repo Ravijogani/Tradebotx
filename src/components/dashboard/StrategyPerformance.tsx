@@ -93,22 +93,24 @@ export const StrategyPerformance = () => {
   }
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Target className="w-5 h-5 text-primary" />
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="p-3 sm:p-4 md:p-6">
+        <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+          <Target className="w-4 h-4 sm:w-5 sm:w-5 text-primary" />
           Strategy Performance
         </CardTitle>
-        <CardDescription>Detailed metrics for each trading strategy</CardDescription>
+        <CardDescription className="text-xs sm:text-sm">
+          Detailed performance metrics for each strategy
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="p-3 sm:p-4 md:p-6 pt-0 space-y-4 sm:space-y-6">
         {performances.map((perf, idx) => (
-          <div key={idx} className="p-6 border border-border/50 rounded-xl bg-gradient-to-br from-card to-card/50 hover:shadow-lg transition-all">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-lg">{perf.strategy_name}</h3>
+          <div key={idx} className="p-3 sm:p-4 md:p-6 border border-border/50 rounded-xl bg-gradient-to-br from-card to-card/50 hover:shadow-lg transition-all">
+            <div className="flex items-center justify-between mb-3 sm:mb-4 flex-wrap gap-2">
+              <h3 className="font-semibold text-sm sm:text-base md:text-lg">{perf.strategy_name}</h3>
               <Badge 
                 variant={perf.total_profit_loss >= 0 ? "default" : "destructive"}
-                className="text-sm"
+                className="text-xs sm:text-sm"
               >
                 {perf.total_profit_loss >= 0 ? (
                   <TrendingUp className="w-3 h-3 mr-1" />
@@ -120,8 +122,8 @@ export const StrategyPerformance = () => {
             </div>
 
             {/* Balance Progress */}
-            <div className="mb-4">
-              <div className="flex justify-between text-sm mb-2">
+            <div className="mb-3 sm:mb-4">
+              <div className="flex flex-col sm:flex-row justify-between text-xs sm:text-sm mb-2 gap-1">
                 <span className="text-muted-foreground">Initial: ${perf.initial_balance.toLocaleString()}</span>
                 <span className="font-semibold">Current: ${perf.current_balance.toLocaleString()}</span>
               </div>
@@ -132,46 +134,46 @@ export const StrategyPerformance = () => {
             </div>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Total Trades</p>
-                <p className="text-lg font-bold">{perf.total_trades}</p>
+                <p className="text-base sm:text-lg font-bold">{perf.total_trades}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Win Rate</p>
-                <p className="text-lg font-bold text-green-500">{perf.win_rate.toFixed(1)}%</p>
+                <p className="text-base sm:text-lg font-bold text-green-500">{perf.win_rate.toFixed(1)}%</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Winning</p>
-                <p className="text-lg font-bold text-green-500">{perf.winning_trades}</p>
+                <p className="text-base sm:text-lg font-bold text-green-500">{perf.winning_trades}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Losing</p>
-                <p className="text-lg font-bold text-red-500">{perf.losing_trades}</p>
+                <p className="text-base sm:text-lg font-bold text-red-500">{perf.losing_trades}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Best Trade</p>
-                <p className="text-lg font-bold text-green-500">${perf.best_trade.toFixed(2)}</p>
+                <p className="text-base sm:text-lg font-bold text-green-500">${perf.best_trade.toFixed(2)}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Worst Trade</p>
-                <p className="text-lg font-bold text-red-500">${perf.worst_trade.toFixed(2)}</p>
+                <p className="text-base sm:text-lg font-bold text-red-500">${perf.worst_trade.toFixed(2)}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Avg Win</p>
-                <p className="text-lg font-bold text-green-500">${perf.avg_win.toFixed(2)}</p>
+                <p className="text-base sm:text-lg font-bold text-green-500">${perf.avg_win.toFixed(2)}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Avg Loss</p>
-                <p className="text-lg font-bold text-red-500">${perf.avg_loss.toFixed(2)}</p>
+                <p className="text-base sm:text-lg font-bold text-red-500">${perf.avg_loss.toFixed(2)}</p>
               </div>
             </div>
 
             {/* ROI Calculation */}
-            <div className="mt-4 pt-4 border-t border-border/50">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Return on Investment</span>
-                <span className={`text-lg font-bold ${
+            <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-border/50">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs sm:text-sm text-muted-foreground">Return on Investment</span>
+                <span className={`text-base sm:text-lg font-bold ${
                   perf.total_profit_loss >= 0 ? 'text-green-500' : 'text-red-500'
                 }`}>
                   {((perf.total_profit_loss / perf.initial_balance) * 100).toFixed(2)}%

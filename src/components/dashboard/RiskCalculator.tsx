@@ -56,8 +56,8 @@ export function RiskCalculator({ accountSize, onLotSizeChange }: RiskCalculatorP
           Calculate optimal lot size based on your risk parameters
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+      <CardContent className="space-y-3 sm:space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div className="space-y-2">
             <Label htmlFor="accountSize">Account Size ($)</Label>
             <Input
@@ -85,7 +85,7 @@ export function RiskCalculator({ accountSize, onLotSizeChange }: RiskCalculatorP
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div className="space-y-2">
             <Label htmlFor="stopLossPips">Stop Loss (Pips)</Label>
             <Input

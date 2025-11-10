@@ -143,39 +143,39 @@ export const BotHealthIndicator = () => {
   const Icon = statusInfo.icon;
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="pb-3 p-3 sm:p-4 md:p-6">
+        <CardTitle className="text-sm sm:text-base flex items-center gap-2">
           Bot Status
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-lg ${statusInfo.bgColor} flex items-center justify-center`}>
-              <Icon className={`w-5 h-5 ${statusInfo.color}`} />
+      <CardContent className="p-3 sm:p-4 md:p-6 pt-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg ${statusInfo.bgColor} flex items-center justify-center flex-shrink-0`}>
+              <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${statusInfo.color}`} />
             </div>
-            <div>
-              <Badge variant={statusInfo.variant} className="mb-1">
+            <div className="min-w-0">
+              <Badge variant={statusInfo.variant} className="mb-1 text-xs">
                 {statusInfo.label}
               </Badge>
-              <div className="text-xs text-muted-foreground">
+              <div className="text-xs text-muted-foreground truncate">
                 {isStale ? 'No heartbeat' : `MT5: ${health.mt5_connected ? 'Connected' : 'Disconnected'}`}
               </div>
             </div>
           </div>
           
-          <div className="text-right">
+          <div className="text-left sm:text-right border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-3">
             <div className="text-xs text-muted-foreground">Last update</div>
-            <div className="text-sm font-medium">
-              {new Date(health.last_heartbeat).toLocaleTimeString()}
+            <div className="text-xs sm:text-sm font-medium">
+              {new Date(health.last_heartbeat).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
           </div>
         </div>
         
         {health.error_message && (
           <div className="mt-3 p-2 rounded bg-destructive/10 border border-destructive/20">
-            <p className="text-xs text-destructive">{health.error_message}</p>
+            <p className="text-xs text-destructive break-words">{health.error_message}</p>
           </div>
         )}
       </CardContent>
