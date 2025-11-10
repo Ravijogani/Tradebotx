@@ -181,7 +181,7 @@ const Docs = () => {
               <div>
                 <h4 className="font-semibold mb-2">What if I need help?</h4>
                 <p className="text-muted-foreground">
-                  Our support team is available 24/7 via email at support@tradebotx.com. We also have extensive 
+                  Our support team is available 24/7 via Telegram at <a href="https://t.me/tradebotxsupport" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">@tradebotxsupport</a>. We also have extensive 
                   documentation and video tutorials available.
                 </p>
               </div>
@@ -197,7 +197,9 @@ const Docs = () => {
               </p>
               <div className="flex justify-center gap-4">
                 <a
-                  href="mailto:support@tradebotx.com"
+                  href="https://t.me/tradebotxsupport"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="px-6 py-3 bg-gradient-to-r from-primary to-accent text-white rounded-lg font-semibold hover:shadow-glow transition-all"
                 >
                   Contact Support

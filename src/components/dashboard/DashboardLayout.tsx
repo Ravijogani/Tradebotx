@@ -167,13 +167,13 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           {/* Main Content */}
           <main 
             ref={pullToRefresh.ref as any}
-            className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-auto"
+            className="flex-1 p-4 sm:p-6 md:p-8 overflow-auto"
           >
-            <div className="max-w-7xl mx-auto">
+            <div className="max-w-7xl mx-auto space-y-6">
               {activeTab === "dashboard" && (
-                <div className="space-y-4 sm:space-y-6 animate-fade-in">
-                  <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1 sm:mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="space-y-6 animate-fade-in">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Dashboard Overview
                     </h1>
                     <p className="text-sm sm:text-base text-muted-foreground">Monitor your trading performance and activity</p>
@@ -186,8 +186,10 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <ActiveBotsCounter />
                   
                   {/* Bot Health & Open Positions */}
-                  <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
-                    <BotHealthIndicator />
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-1">
+                      <BotHealthIndicator />
+                    </div>
                     <div className="lg:col-span-2">
                       <OpenPositions />
                     </div>
@@ -203,7 +205,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <TradesListEnhanced />
                   
                   {/* Two Column Layout */}
-                  <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <ActivityTimeline />
                   </div>
                   
@@ -213,26 +215,26 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "strategies" && (
-                <div className="animate-fade-in">
-                  <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="animate-fade-in space-y-6">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Trading Strategies
                     </h1>
-                    <p className="text-muted-foreground">Select and manage your automated trading strategies</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Select and manage your automated trading strategies</p>
                   </div>
                   <StrategySelection />
                 </div>
               )}
 
               {activeTab === "activity" && (
-                <div className="animate-fade-in">
-                  <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="animate-fade-in space-y-6">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Activity Feed
                     </h1>
-                    <p className="text-muted-foreground">Live feed of all your trading actions</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Live feed of all your trading actions</p>
                   </div>
-                  <div className="grid lg:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <ActivityTimeline />
                     <div className="space-y-6">
                       <PerformanceChart />
@@ -243,12 +245,12 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "calculator" && (
-                <div className="animate-fade-in">
-                  <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="animate-fade-in space-y-6">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Risk Calculator
                     </h1>
-                    <p className="text-muted-foreground">Calculate optimal position sizes and manage risk</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Calculate optimal position sizes and manage risk</p>
                   </div>
                   <div className="max-w-4xl mx-auto">
                     <RiskCalculator 
@@ -268,12 +270,12 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "support" && (
-                <div className="animate-fade-in">
-                  <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="animate-fade-in space-y-6">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Support Center
                     </h1>
-                    <p className="text-muted-foreground">Get help from our support team</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Get help from our support team</p>
                   </div>
                   <UserSupport />
                 </div>
@@ -286,12 +288,12 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "subscription" && (
-                <div className="animate-fade-in">
-                  <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight mb-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                <div className="animate-fade-in space-y-6">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Subscription Management
                     </h1>
-                    <p className="text-muted-foreground">Manage your plan and billing</p>
+                    <p className="text-sm sm:text-base text-muted-foreground">Manage your plan and billing</p>
                   </div>
                   <SubscriptionManager />
                 </div>

@@ -102,7 +102,7 @@ export function TrialExpiredModal() {
         </div>
 
         <p className="text-xs text-center text-muted-foreground">
-          Questions? Contact us at support@tradebotx.com
+          Questions? Contact us on Telegram: <a href="https://t.me/tradebotxsupport" className="text-primary hover:underline">@tradebotxsupport</a>
         </p>
       </DialogContent>
     </Dialog>

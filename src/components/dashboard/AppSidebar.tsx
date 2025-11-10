@@ -48,8 +48,8 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
     <Sidebar collapsible="icon" className="border-r border-border/50">
       <SidebarContent className="bg-sidebar/50 backdrop-blur-xl">
         <SidebarGroup>
-          <SidebarGroupLabel className={isCollapsed ? "justify-center" : ""}>
-            {!isCollapsed && "Navigation"}
+          <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>
+            {!isCollapsed ? "Navigation" : "Nav"}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
@@ -59,10 +59,10 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                     onClick={() => onTabChange(item.id)}
                     isActive={activeTab === item.id}
                     tooltip={isCollapsed ? item.label : undefined}
-                    className="transition-all duration-200 hover:bg-sidebar-accent"
+                    className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
                   >
-                    <item.icon className="w-5 h-5" />
-                    {!isCollapsed && <span>{item.label}</span>}
+                    <item.icon className="w-5 h-5 flex-shrink-0" />
+                    {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -73,8 +73,8 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
         <SidebarSeparator className="my-2" />
 
         <SidebarGroup>
-          <SidebarGroupLabel className={isCollapsed ? "justify-center" : ""}>
-            {!isCollapsed && "Quick Access"}
+          <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>
+            {!isCollapsed ? "Quick Access" : "Quick"}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
@@ -83,10 +83,10 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                   <SidebarMenuButton
                     onClick={() => handleQuickAccessClick(item.path)}
                     tooltip={isCollapsed ? item.label : undefined}
-                    className="transition-all duration-200 hover:bg-sidebar-accent"
+                    className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
                   >
-                    <item.icon className="w-5 h-5" />
-                    {!isCollapsed && <span>{item.label}</span>}
+                    <item.icon className="w-5 h-5 flex-shrink-0" />
+                    {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -104,10 +104,10 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                   onClick={() => onTabChange("settings")}
                   isActive={activeTab === "settings"}
                   tooltip={isCollapsed ? "Settings" : undefined}
-                  className="transition-all duration-200 hover:bg-sidebar-accent"
+                  className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
                 >
-                  <Settings className="w-5 h-5" />
-                  {!isCollapsed && <span>Settings</span>}
+                  <Settings className="w-5 h-5 flex-shrink-0" />
+                  {!isCollapsed && <span className="text-sm font-medium">Settings</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
