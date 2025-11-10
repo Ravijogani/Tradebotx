@@ -46,13 +46,26 @@ serve(async (req) => {
     }
 
     // CRITICAL: Decrypt MT5 password before sending to bot
+    // Handle both encrypted and plain text passwords for backwards compatibility
     let decryptedPassword: string;
     try {
       decryptedPassword = await decrypt(setup.mt5_password);
       console.log('MT5 password decrypted successfully');
     } catch (decryptError) {
-      console.error('Failed to decrypt MT5 password:', decryptError);
-      throw new Error('Failed to decrypt MT5 credentials. Please update your setup.');
+      // If decryption fails, it might be a plain text password (legacy)
+      console.warn('Failed to decrypt MT5 password, assuming plain text:', decryptError);
+      
+      // Check if it looks like encrypted data (base64 format with sufficient length)
+      const isLikelyEncrypted = setup.mt5_password.length > 40 && /^[A-Za-z0-9+/=]+$/.test(setup.mt5_password);
+      
+      if (isLikelyEncrypted) {
+        // If it looks encrypted but failed to decrypt, throw error
+        throw new Error('Failed to decrypt MT5 credentials. Please update your setup with new credentials.');
+      }
+      
+      // Use plain text password (legacy support)
+      decryptedPassword = setup.mt5_password;
+      console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
     }
 
     // SECURITY FIX: Use user token instead of service role key
@@ -89,48 +102,70 @@ serve(async (req) => {
     const LIGHTSAIL_BOT_MANAGER_URL = Deno.env.get('LIGHTSAIL_BOT_MANAGER_URL');
     
     if (LIGHTSAIL_BOT_MANAGER_URL) {
-      const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('BOT_MANAGER_SECRET')}` // Shared secret
-        },
-        body: JSON.stringify(botConfig)
-      });
+      try {
+        const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('BOT_MANAGER_SECRET')}` // Shared secret
+          },
+          body: JSON.stringify(botConfig)
+        });
 
-      if (!response.ok) {
-        throw new Error(`Bot manager error: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: `Bot ${action} command sent successfully`,
-          data: result
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.warn(`Bot manager HTTP error (${response.status}): ${errorText}`);
+          throw new Error(`Bot manager returned ${response.status}`);
         }
-      );
+
+        const result = await response.json();
+        console.log('Bot command sent via HTTP successfully:', result);
+        
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Bot ${action} command sent successfully`,
+            method: 'http',
+            data: result
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      } catch (httpError: any) {
+        console.warn(`Failed to reach bot manager via HTTP: ${httpError.message}. Falling back to database queue...`);
+        // Continue to database fallback below
+      }
     }
 
-    // Option 2: Database-based queue (if no direct HTTP connection)
+    // Fallback: Database-based queue (if no direct HTTP connection or HTTP failed)
     // Store command in database for bot manager to poll
-    await supabaseClient.from('bot_commands').insert({
-      user_id: user.id,
-      strategy_id: strategyId,
-      action: action,
-      config: botConfig,
-      status: 'pending'
-    });
+    console.log(`Queueing bot ${action} command in database for user ${user.id}`);
+    
+    const { data: queuedCommand, error: queueError } = await supabaseClient
+      .from('bot_commands')
+      .insert({
+        user_id: user.id,
+        strategy_id: strategyId,
+        action: action,
+        config: botConfig,
+        status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (queueError) {
+      console.error('Failed to queue command:', queueError);
+      throw new Error('Failed to queue bot command. Please try again.');
+    }
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Bot ${action} command queued`,
+        message: `Bot ${action} command queued successfully. It will be processed shortly.`,
+        method: 'database_queue',
+        command_id: queuedCommand.id
       }),
       {
         status: 200,

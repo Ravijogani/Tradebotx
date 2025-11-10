@@ -160,6 +160,53 @@ export type Database = {
           },
         ]
       }
+      bot_commands: {
+        Row: {
+          action: string
+          completed_at: string | null
+          config: Json
+          created_at: string | null
+          error_message: string | null
+          id: string
+          processed_at: string | null
+          status: string
+          strategy_id: string
+          user_id: string
+        }
+        Insert: {
+          action: string
+          completed_at?: string | null
+          config: Json
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processed_at?: string | null
+          status?: string
+          strategy_id: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          completed_at?: string | null
+          config?: Json
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processed_at?: string | null
+          status?: string
+          strategy_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_commands_strategy_id_fkey"
+            columns: ["strategy_id"]
+            isOneToOne: false
+            referencedRelation: "strategies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_heartbeats: {
         Row: {
           created_at: string
