@@ -56,9 +56,10 @@ export const PerformanceChart = () => {
   };
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader>
-        <div className="flex items-center justify-between">
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+
           <div>
             <CardTitle className="flex items-center gap-2">
               <Calendar className="w-5 h-5 text-primary" />
@@ -68,13 +69,14 @@ export const PerformanceChart = () => {
               Cumulative profit/loss over time
             </CardDescription>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-1 sm:gap-2 flex-wrap">
             {(["7d", "30d", "90d", "1y"] as TimeRange[]).map((range) => (
               <Button
                 key={range}
                 variant={timeRange === range ? "default" : "outline"}
                 size="sm"
                 onClick={() => setTimeRange(range)}
+                className="text-xs px-2 sm:px-3"
               >
                 {range}
               </Button>
@@ -82,17 +84,19 @@ export const PerformanceChart = () => {
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-3 sm:p-6 pt-0">
         {loading ? (
-          <div className="h-[300px] flex items-center justify-center">
+          <div className="h-[250px] sm:h-[300px] flex items-center justify-center">
             <div className="animate-pulse text-muted-foreground">Loading chart...</div>
           </div>
         ) : data.length === 0 ? (
-          <div className="h-[300px] flex items-center justify-center">
-            <p className="text-muted-foreground">No trading data available for this period</p>
+          <div className="h-[250px] sm:h-[300px] flex items-center justify-center">
+            <p className="text-muted-foreground text-sm sm:text-base text-center px-4">No trading data available for this period</p>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
+          <div className="w-full overflow-x-auto -mx-3 sm:mx-0">
+            <div className="min-w-[300px]">
+              <ResponsiveContainer width="100%" height={250}>
             <AreaChart data={data}>
               <defs>
                 <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
@@ -104,12 +108,16 @@ export const PerformanceChart = () => {
               <XAxis 
                 dataKey="date" 
                 stroke="hsl(var(--muted-foreground))"
-                fontSize={12}
+                fontSize={10}
+                angle={-45}
+                textAnchor="end"
+                height={60}
               />
               <YAxis 
                 stroke="hsl(var(--muted-foreground))"
-                fontSize={12}
+                fontSize={10}
                 tickFormatter={(value) => `$${value.toFixed(0)}`}
+                width={50}
               />
               <Tooltip
                 contentStyle={{
@@ -130,6 +138,8 @@ export const PerformanceChart = () => {
               />
             </AreaChart>
           </ResponsiveContainer>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

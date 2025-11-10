@@ -71,20 +71,20 @@ export const StatsOverview = () => {
   ];
 
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 w-full">
       {statCards.map((stat, idx) => (
         <Card 
           key={idx} 
-          className="p-6 border-border/50 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all duration-300 group"
+          className="p-4 sm:p-6 border-border/50 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all duration-300 group min-w-0"
         >
           <div className="flex items-start justify-between mb-4">
             <div className={`w-12 h-12 rounded-xl bg-gradient-to-br from-${stat.color.replace('text-', '')}/20 to-${stat.color.replace('text-', '')}/5 flex items-center justify-center group-hover:scale-110 transition-transform`}>
               <stat.icon className={`w-6 h-6 ${stat.color}`} />
             </div>
           </div>
-          <div>
-            <p className="text-sm text-muted-foreground mb-2 font-medium">{stat.title}</p>
-            <p className={`text-3xl font-bold ${stat.color} tracking-tight`}>{stat.value}</p>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-1 sm:mb-2 font-medium truncate">{stat.title}</p>
+            <p className={`text-2xl sm:text-3xl font-bold ${stat.color} tracking-tight break-all`}>{stat.value}</p>
           </div>
         </Card>
       ))}

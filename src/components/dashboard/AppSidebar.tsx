@@ -13,6 +13,8 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { useNavigate } from "react-router-dom";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 interface AppSidebarProps {
   activeTab: string;
@@ -21,7 +23,8 @@ interface AppSidebarProps {
 
 export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
   const { state } = useSidebar();
-  const isCollapsed = state === "collapsed";
+  const isMobile = useIsMobile();
+  const isCollapsed = state === "collapsed" && !isMobile;
   const navigate = useNavigate();
 
   const mainNavItems = [
@@ -45,7 +48,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-border/50">
+    <Sidebar collapsible="icon" className={cn("border-r border-border/50", isMobile && "w-full")}>
       <SidebarContent className="bg-sidebar/50 backdrop-blur-xl">
         <SidebarGroup>
           <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>

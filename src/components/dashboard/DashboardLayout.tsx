@@ -110,7 +110,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
       {/* Background component to sync bot status */}
       <BotStatusSync />
       
-      <div className="min-h-screen flex w-full bg-background relative">
+      <div className="min-h-screen flex w-full bg-background relative overflow-x-hidden">
         {/* Animated Background Mesh */}
         <div className="fixed inset-0 bg-gradient-mesh opacity-40 pointer-events-none" />
         
@@ -118,10 +118,10 @@ export const DashboardLayout = ({ user }: { user: any }) => {
         <AppSidebar activeTab={activeTab} onTabChange={handleTabChange} />
         
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col relative">
+        <div className="flex-1 flex flex-col relative min-w-0">
           {/* Header */}
           <header className="border-b border-border/50 bg-card/30 backdrop-blur-xl sticky top-0 z-40 shadow-sm">
-            <div className="container mx-auto px-3 sm:px-4 lg:px-8">
+            <div className="w-full px-3 sm:px-4 lg:px-8">
               <div className="flex items-center justify-between h-14 sm:h-16">
                 {/* Left Side: Sidebar Trigger + Logo */}
                 <div className="flex items-center gap-2 sm:gap-3">
@@ -167,11 +167,11 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           {/* Main Content */}
           <main 
             ref={pullToRefresh.ref as any}
-            className="flex-1 p-4 sm:p-6 md:p-8 overflow-auto"
+            className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-x-hidden overflow-y-auto"
           >
-            <div className="max-w-7xl mx-auto space-y-6">
+            <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6">
               {activeTab === "dashboard" && (
-                <div className="space-y-6 animate-fade-in">
+                <div className="space-y-4 sm:space-y-6 animate-fade-in w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Dashboard Overview
@@ -186,7 +186,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <ActiveBotsCounter />
                   
                   {/* Bot Health & Open Positions */}
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 w-full">
                     <div className="lg:col-span-1">
                       <BotHealthIndicator />
                     </div>
@@ -205,7 +205,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   <TradesListEnhanced />
                   
                   {/* Two Column Layout */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 w-full">
                     <ActivityTimeline />
                   </div>
                   
@@ -215,7 +215,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "strategies" && (
-                <div className="animate-fade-in space-y-6">
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Trading Strategies
@@ -227,16 +227,16 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "activity" && (
-                <div className="animate-fade-in space-y-6">
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Activity Feed
                     </h1>
                     <p className="text-sm sm:text-base text-muted-foreground">Live feed of all your trading actions</p>
                   </div>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 w-full">
                     <ActivityTimeline />
-                    <div className="space-y-6">
+                    <div className="space-y-4 sm:space-y-6">
                       <PerformanceChart />
                       <AccountHealth />
                     </div>
@@ -245,7 +245,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "calculator" && (
-                <div className="animate-fade-in space-y-6">
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Risk Calculator
@@ -270,7 +270,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "support" && (
-                <div className="animate-fade-in space-y-6">
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Support Center
@@ -288,7 +288,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
               )}
 
               {activeTab === "subscription" && (
-                <div className="animate-fade-in space-y-6">
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
                   <div className="space-y-2">
                     <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                       Subscription Management
