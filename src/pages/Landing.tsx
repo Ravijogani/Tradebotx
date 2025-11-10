@@ -19,46 +19,68 @@ const Landing = () => {
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "name": "TradeBotX",
+    "name": "TradeBotX - Best AI Algorithmic Trading Bot",
     "applicationCategory": "FinanceApplication",
-    "operatingSystem": "Web",
-    "description": "Advanced AI-powered algorithmic trading platform with 24/7 automated execution for Forex and Crypto markets",
+    "operatingSystem": "Web, Windows, Mac, Linux",
+    "description": "TradeBotX is the #1 AI-powered algorithmic trading platform for Forex and Crypto. Trusted by 10,000+ traders with 98.7% uptime, proven strategies, 24/7 automated execution, and advanced risk management.",
+    "url": "https://tradebotx.com",
+    "screenshot": "https://tradebotx.com/dashboard-preview.jpg",
+    "keywords": "best algorithmic trading bot, automated forex trading, crypto trading bot, AI trading platform, MetaTrader 5 bot, best trading bot, algo trading software",
     "offers": [
       {
         "@type": "Offer",
-        "name": "Free Plan",
+        "name": "Free Trial Plan",
+        "description": "Get started with basic algorithmic trading features",
         "price": "0",
-        "priceCurrency": "INR"
+        "priceCurrency": "INR",
+        "availability": "https://schema.org/InStock"
       },
       {
         "@type": "Offer",
         "name": "Pro Plan",
+        "description": "Professional trading with unlimited strategies and advanced AI",
         "price": "9999",
-        "priceCurrency": "INR"
+        "priceCurrency": "INR",
+        "availability": "https://schema.org/InStock"
       },
       {
         "@type": "Offer",
         "name": "Enterprise Plan",
+        "description": "Premium features with dedicated support and custom strategies",
         "price": "49999",
-        "priceCurrency": "INR"
+        "priceCurrency": "INR",
+        "availability": "https://schema.org/InStock"
       }
     ],
     "aggregateRating": {
       "@type": "AggregateRating",
       "ratingValue": "4.8",
       "reviewCount": "127",
+      "ratingCount": "127",
       "bestRating": "5",
       "worstRating": "1"
-    }
+    },
+    "featureList": [
+      "AI-Powered Trading Algorithms",
+      "24/7 Automated Execution",
+      "Real-Time Market Analysis",
+      "Advanced Risk Management",
+      "Multi-Strategy Support",
+      "MetaTrader 5 Integration",
+      "Forex & Crypto Trading",
+      "Professional Analytics Dashboard",
+      "Telegram Notifications",
+      "Bank-Grade Security"
+    ]
   };
 
   return (
     <div className="min-h-screen">
       <ScrollProgress />
       <SEOHead
-        title="TradeBotX - AI-Powered Algorithmic Trading Platform for Forex & Crypto"
-        description="Automate your trading with TradeBotX's advanced AI algorithms. Execute winning trades 24/7 on Forex and Crypto markets with proper risk management and real-time analytics."
-        keywords="algorithmic trading, forex bot, crypto trading bot, automated trading, AI trading platform, MetaTrader 5, MT5 bot, forex automation, crypto automation, trading algorithms"
+        title="TradeBotX - Best AI Algorithmic Trading Bot for Forex & Crypto | #1 Automated Trading Platform"
+        description="TradeBotX is the #1 AI-powered algorithmic trading bot with 98.7% uptime. Automate Forex & Crypto trading with proven strategies, 24/7 execution, real-time analytics, and MetaTrader 5 integration. Trusted by 10,000+ traders worldwide. Start free trial today!"
+        keywords="best trading bot, algorithmic trading bot, automated forex trading, crypto trading bot, AI trading platform, MetaTrader 5 bot, forex robot, crypto automation, trading algorithm, algo trading software, best algo trading platform, automated trading system, forex EA, expert advisor, trading bot software, best forex bot, best crypto bot, cryptocurrency trading bot, automated crypto trading, trading automation platform"
         structuredData={structuredData}
       />
       <Navbar />

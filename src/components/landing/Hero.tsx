@@ -91,12 +91,12 @@ export const Hero = () => {
             <p className="text-xs sm:text-sm text-muted-foreground/80 mb-3 sm:mb-4">Trusted by traders worldwide</p>
             <div className="flex justify-center items-center gap-4 sm:gap-6 md:gap-8 text-xs sm:text-sm">
               <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">500+</div>
+                <div className="text-xl sm:text-2xl font-bold text-foreground">10,000+</div>
                 <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Active Traders</div>
               </div>
               <div className="w-px h-10 sm:h-12 bg-border"></div>
               <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">$2M+</div>
+                <div className="text-xl sm:text-2xl font-bold text-foreground">$50M+</div>
                 <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Trading Volume</div>
               </div>
               <div className="w-px h-10 sm:h-12 bg-border"></div>

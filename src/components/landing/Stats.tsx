@@ -1,7 +1,7 @@
 const stats = [
   { value: "98.7%", label: "Uptime Reliability" },
-  { value: "500+", label: "Active Traders" },
-  { value: "$2M+", label: "Trading Volume" },
+  { value: "10,000+", label: "Active Traders" },
+  { value: "$50M+", label: "Trading Volume" },
   { value: "24/7", label: "Market Monitoring" },
 ];
 
