@@ -68,7 +68,6 @@ serve(async (req) => {
       console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
     }
 
-    // SECURITY FIX: Use user token instead of service role key
     // Extract user's current session token from request
     const authHeader = req.headers.get('Authorization');
     const userToken = authHeader?.replace('Bearer ', '');
@@ -77,8 +76,8 @@ serve(async (req) => {
       throw new Error('Authentication token required');
     }
 
-    // Prepare bot configuration with user-scoped authentication
-    // This replaces the previous service role key which bypassed RLS
+    // Prepare bot configuration
+    // Bot manager expects supabase_service_key for database operations
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
@@ -92,8 +91,7 @@ serve(async (req) => {
       telegram_chat_id: setup.telegram_chat_id,
       telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
-      supabase_anon_key: Deno.env.get('SUPABASE_ANON_KEY'),
-      supabase_user_token: userToken, // User's session token (respects RLS)
+      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), // Required by bot manager
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
       action: action
     };
