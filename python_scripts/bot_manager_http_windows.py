@@ -38,12 +38,18 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
+            logger.warning('Missing or invalid Authorization header')
             return jsonify({'error': 'Unauthorized'}), 401
         
         token = auth_header.split(' ')[1]
+        logger.info(f'Received token length: {len(token)}, First 4 chars: {token[:4]}...')
+        logger.info(f'Expected secret length: {len(BOT_MANAGER_SECRET)}, First 4 chars: {BOT_MANAGER_SECRET[:4]}...')
+        
         if token != BOT_MANAGER_SECRET:
+            logger.warning('Token mismatch!')
             return jsonify({'error': 'Invalid token'}), 401
         
+        logger.info('Token validated successfully')
         return f(*args, **kwargs)
     return decorated
 

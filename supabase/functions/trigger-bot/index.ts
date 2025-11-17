@@ -98,14 +98,18 @@ serve(async (req) => {
 
     // Send command to AWS Lightsail bot manager
     const LIGHTSAIL_BOT_MANAGER_URL = Deno.env.get('LIGHTSAIL_BOT_MANAGER_URL');
+    const BOT_MANAGER_SECRET = Deno.env.get('BOT_MANAGER_SECRET');
     
     if (LIGHTSAIL_BOT_MANAGER_URL) {
       try {
+        console.log(`Attempting HTTP to ${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`);
+        console.log(`Secret length: ${BOT_MANAGER_SECRET?.length || 0}, First 4 chars: ${BOT_MANAGER_SECRET?.substring(0, 4) || 'N/A'}...`);
+        
         const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${Deno.env.get('BOT_MANAGER_SECRET')}` // Shared secret
+            'Authorization': `Bearer ${BOT_MANAGER_SECRET}` // Shared secret
           },
           body: JSON.stringify(botConfig)
         });
