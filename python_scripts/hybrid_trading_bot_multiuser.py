@@ -81,7 +81,7 @@ class AITradingConfig:
     # AI API Configuration
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-1.5-pro"  # Stable production model
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
