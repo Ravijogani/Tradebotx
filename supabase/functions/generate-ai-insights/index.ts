@@ -41,38 +41,168 @@ serve(async (req) => {
 
     const { data: strategies } = await supabaseClient
       .from('user_strategies')
-      .select('*')
+      .select('*, strategies(name, description)')
       .eq('user_id', user.id);
+
+    // Check if user has enough data for analysis
+    if (!trades || trades.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Insufficient data',
+          message: 'You need at least one trade to generate AI insights. Start trading to unlock AI-powered analysis.'
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    // Calculate performance metrics
+    const closedTrades = trades.filter(t => t.status === 'closed');
+    const totalPnL = closedTrades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
+    const winningTrades = closedTrades.filter(t => (t.profit_loss || 0) > 0);
+    const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length * 100).toFixed(1) : 0;
 
     // Prepare context for AI
     const context = {
       trades: trades || [],
       strategies: strategies || [],
+      metrics: {
+        totalTrades: closedTrades.length,
+        totalPnL: totalPnL.toFixed(2),
+        winRate,
+        winningTrades: winningTrades.length,
+        losingTrades: closedTrades.length - winningTrades.length
+      },
       ...contextData
     };
 
     let systemPrompt = '';
-    let userPrompt = '';
+    let tools: any[] = [];
+    let toolChoice: any = undefined;
 
     switch (analysisType) {
       case 'trade_recommendation':
-        systemPrompt = `You are an expert forex/crypto trading advisor. Analyze the user's trading history and current market conditions to provide actionable trade recommendations. Focus on risk management and realistic profit targets.`;
-        userPrompt = `Based on this trading history: ${JSON.stringify(context.trades.slice(0, 10))}, provide 3 specific trade recommendations with entry points, stop loss, and take profit levels. Format as JSON with structure: { recommendations: [{ symbol, direction, entry, stopLoss, takeProfit, reasoning, confidence }] }`;
+        systemPrompt = `You are an expert forex/crypto trading advisor. Analyze the user's trading history and provide actionable trade recommendations. Focus on risk management and realistic profit targets based on their past performance.`;
+        tools = [{
+          type: "function",
+          function: {
+            name: "provide_trade_recommendations",
+            description: "Provide specific trade recommendations with entry, stop loss, and take profit levels",
+            parameters: {
+              type: "object",
+              properties: {
+                recommendations: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      symbol: { type: "string", description: "Trading pair like EURUSD, GBPUSD" },
+                      direction: { type: "string", enum: ["BUY", "SELL"] },
+                      entry: { type: "number", description: "Entry price" },
+                      stopLoss: { type: "number", description: "Stop loss price" },
+                      takeProfit: { type: "number", description: "Take profit price" },
+                      reasoning: { type: "string", description: "Why this trade is recommended" },
+                      confidence: { type: "number", description: "Confidence score 0-1" }
+                    },
+                    required: ["symbol", "direction", "entry", "stopLoss", "takeProfit", "reasoning", "confidence"]
+                  },
+                  minItems: 2,
+                  maxItems: 5
+                }
+              },
+              required: ["recommendations"]
+            }
+          }
+        }];
+        toolChoice = { type: "function", function: { name: "provide_trade_recommendations" } };
         break;
 
       case 'sentiment_analysis':
-        systemPrompt = `You are a market sentiment analyst. Analyze trading patterns and market data to determine overall market sentiment and trader psychology.`;
-        userPrompt = `Analyze these recent trades: ${JSON.stringify(context.trades.slice(0, 20))}. Provide sentiment analysis including: overall market sentiment (bullish/bearish/neutral), risk appetite level, and key psychological factors. Format as JSON: { sentiment: string, riskAppetite: string, confidence: number, factors: string[] }`;
+        systemPrompt = `You are a market sentiment analyst. Analyze trading patterns to determine overall market sentiment and trader psychology.`;
+        tools = [{
+          type: "function",
+          function: {
+            name: "analyze_sentiment",
+            description: "Analyze market sentiment based on trading patterns",
+            parameters: {
+              type: "object",
+              properties: {
+                sentiment: { type: "string", enum: ["bullish", "bearish", "neutral"], description: "Overall market sentiment" },
+                riskAppetite: { type: "string", enum: ["high", "moderate", "low"], description: "Risk appetite level" },
+                confidence: { type: "number", description: "Confidence score 0-1" },
+                factors: { type: "array", items: { type: "string" }, description: "Key psychological factors" },
+                recommendation: { type: "string", description: "What the trader should do based on sentiment" }
+              },
+              required: ["sentiment", "riskAppetite", "confidence", "factors", "recommendation"]
+            }
+          }
+        }];
+        toolChoice = { type: "function", function: { name: "analyze_sentiment" } };
         break;
 
       case 'predictive_analytics':
-        systemPrompt = `You are a quantitative analyst specializing in predictive trading analytics. Use historical data to forecast potential outcomes and identify patterns.`;
-        userPrompt = `Based on this trading performance data: ${JSON.stringify(context.trades.slice(0, 30))}, predict: 1) Expected win rate for next month, 2) Optimal position sizing, 3) Best trading times, 4) Risk of drawdown. Format as JSON: { predictions: { winRate: number, optimalSize: number, bestTimes: string[], drawdownRisk: string }, confidence: number }`;
+        systemPrompt = `You are a quantitative analyst specializing in predictive trading analytics. Use historical data to forecast potential outcomes.`;
+        tools = [{
+          type: "function",
+          function: {
+            name: "predict_performance",
+            description: "Predict future trading performance based on historical data",
+            parameters: {
+              type: "object",
+              properties: {
+                predictions: {
+                  type: "object",
+                  properties: {
+                    expectedWinRate: { type: "number", description: "Expected win rate percentage for next month" },
+                    optimalPositionSize: { type: "number", description: "Optimal position size as % of account" },
+                    bestTradingTimes: { type: "array", items: { type: "string" }, description: "Best times to trade" },
+                    drawdownRisk: { type: "string", enum: ["low", "moderate", "high"], description: "Risk of drawdown" }
+                  },
+                  required: ["expectedWinRate", "optimalPositionSize", "bestTradingTimes", "drawdownRisk"]
+                },
+                confidence: { type: "number", description: "Confidence score 0-1" },
+                reasoning: { type: "string", description: "Reasoning behind predictions" }
+              },
+              required: ["predictions", "confidence", "reasoning"]
+            }
+          }
+        }];
+        toolChoice = { type: "function", function: { name: "predict_performance" } };
         break;
 
       case 'strategy_optimization':
-        systemPrompt = `You are a trading strategy optimization expert. Analyze strategy performance and suggest specific parameter improvements.`;
-        userPrompt = `Review these strategies: ${JSON.stringify(context.strategies)} and recent performance: ${JSON.stringify(context.trades.slice(0, 15))}. Suggest specific parameter optimizations for each strategy including: risk percentage, lot size adjustments, and timing improvements. Format as JSON: { optimizations: [{ strategyName, currentParams, suggestedParams, expectedImprovement, reasoning }] }`;
+        systemPrompt = `You are a trading strategy optimization expert. Analyze strategy performance and suggest specific improvements.`;
+        tools = [{
+          type: "function",
+          function: {
+            name: "optimize_strategies",
+            description: "Provide specific parameter optimizations for trading strategies",
+            parameters: {
+              type: "object",
+              properties: {
+                optimizations: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      strategyName: { type: "string", description: "Name of the strategy" },
+                      currentPerformance: { type: "string", description: "Current performance summary" },
+                      suggestedChanges: { type: "array", items: { type: "string" }, description: "Specific changes to make" },
+                      expectedImprovement: { type: "string", description: "Expected improvement percentage" },
+                      reasoning: { type: "string", description: "Why these changes will help" }
+                    },
+                    required: ["strategyName", "currentPerformance", "suggestedChanges", "expectedImprovement", "reasoning"]
+                  }
+                }
+              },
+              required: ["optimizations"]
+            }
+          }
+        }];
+        toolChoice = { type: "function", function: { name: "optimize_strategies" } };
         break;
 
       default:
@@ -85,6 +215,8 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    console.log(`Generating ${analysisType} for user ${user.id} with ${trades.length} trades`);
+
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -94,10 +226,17 @@ serve(async (req) => {
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { 
+            role: 'system', 
+            content: systemPrompt 
+          },
+          { 
+            role: 'user', 
+            content: `Analyze this trading data and provide insights:\n\nMetrics: ${JSON.stringify(context.metrics, null, 2)}\n\nRecent Trades (${context.trades.length}): ${JSON.stringify(context.trades.slice(0, 20), null, 2)}\n\nStrategies: ${JSON.stringify(context.strategies, null, 2)}`
+          }
         ],
-        temperature: 0.7,
+        tools,
+        tool_choice: toolChoice
       }),
     });
 
@@ -115,19 +254,34 @@ serve(async (req) => {
     }
 
     const aiData = await aiResponse.json();
-    const aiContent = aiData.choices[0].message.content;
+    console.log('AI response received:', JSON.stringify(aiData, null, 2));
     
-    // Parse AI response
+    // Parse AI response from tool call
     let parsedData;
-    try {
-      // Extract JSON from response (handle markdown code blocks)
-      const jsonMatch = aiContent.match(/```json\s*([\s\S]*?)\s*```/) || 
-                       aiContent.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : aiContent;
-      parsedData = JSON.parse(jsonStr);
-    } catch (e) {
-      console.error('Failed to parse AI response:', aiContent);
-      parsedData = { rawResponse: aiContent };
+    const choice = aiData.choices[0];
+    
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+      // Extract structured data from tool call
+      const toolCall = choice.message.tool_calls[0];
+      try {
+        parsedData = JSON.parse(toolCall.function.arguments);
+        console.log('Parsed tool call data:', JSON.stringify(parsedData, null, 2));
+      } catch (e) {
+        console.error('Failed to parse tool call arguments:', toolCall.function.arguments);
+        throw new Error('Failed to parse AI response');
+      }
+    } else {
+      // Fallback to content parsing
+      const aiContent = choice.message.content;
+      try {
+        const jsonMatch = aiContent.match(/```json\s*([\s\S]*?)\s*```/) || 
+                         aiContent.match(/\{[\s\S]*\}/);
+        const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : aiContent;
+        parsedData = JSON.parse(jsonStr);
+      } catch (e) {
+        console.error('Failed to parse AI response:', aiContent);
+        throw new Error('AI did not return structured data. Please try again.');
+      }
     }
 
     const processingTime = Date.now() - startTime;
