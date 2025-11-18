@@ -27,12 +27,23 @@ export const AccountHealth = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Get setup data for account balance
+    // Get live balance and equity from bot_heartbeats
+    const { data: heartbeat } = await supabase
+      .from("bot_heartbeats")
+      .select("balance, equity")
+      .eq("user_id", user.id)
+      .order("last_heartbeat", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Fallback to user_setup if no heartbeat data
     const { data: setup } = await supabase
       .from("user_setup")
       .select("account_size")
       .eq("user_id", user.id)
       .single();
+
+    const accountBalance = heartbeat?.balance || setup?.account_size || 10000;
 
     // Get today's trades for daily P&L
     const today = new Date();
@@ -40,22 +51,29 @@ export const AccountHealth = () => {
 
     const { data: todayTrades } = await supabase
       .from("trades")
-      .select("profit_loss")
+      .select("profit_loss, metadata, status")
       .eq("user_id", user.id)
       .gte("opened_at", today.toISOString());
+
+    // Calculate daily P&L including running profits from open trades
+    let dailyPL = 0;
+    if (todayTrades) {
+      dailyPL = todayTrades.reduce((sum, trade) => {
+        // For open trades, use running_profit from metadata
+        if (trade.status === 'open') {
+          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          return sum + (metadata.running_profit || 0);
+        }
+        // For closed trades, use final profit_loss
+        return sum + parseFloat(String(trade.profit_loss || 0));
+      }, 0);
+    }
 
     // Get all trades for risk calculation
     const { data: allTrades } = await supabase
       .from("trades")
       .select("profit_loss, entry_price, quantity")
       .eq("user_id", user.id);
-
-    let dailyPL = 0;
-    if (todayTrades) {
-      dailyPL = todayTrades.reduce((sum, trade) => 
-        sum + parseFloat(String(trade.profit_loss || 0)), 0
-      );
-    }
 
     // Calculate risk exposure (open positions value / account size)
     const { data: openTrades } = await supabase
@@ -65,11 +83,11 @@ export const AccountHealth = () => {
       .in("status", ["pending", "executed", "open"]);
 
     let riskExposure = 0;
-    if (openTrades && setup) {
+    if (openTrades && accountBalance) {
       const openValue = openTrades.reduce((sum, trade) => 
         sum + (parseFloat(String(trade.entry_price)) * parseFloat(String(trade.quantity))), 0
       );
-      riskExposure = (openValue / (setup.account_size || 10000)) * 100;
+      riskExposure = (openValue / accountBalance) * 100;
     }
 
     // Calculate max drawdown
@@ -87,7 +105,7 @@ export const AccountHealth = () => {
     }
 
     setAccountData({
-      balance: setup?.account_size || 10000,
+      balance: accountBalance,
       dailyPL,
       riskExposure: Math.min(riskExposure, 100),
       maxDrawdown: Math.min(maxDrawdown, 100),
