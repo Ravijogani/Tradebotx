@@ -21,6 +21,30 @@ export const AccountHealth = () => {
 
   useEffect(() => {
     loadAccountHealth();
+
+    // Realtime subscriptions for live balance and trade updates
+    const tradesChannel = supabase
+      .channel('account-health-trades')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => loadAccountHealth()
+      )
+      .subscribe();
+
+    const heartbeatChannel = supabase
+      .channel('account-health-heartbeat')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'bot_heartbeats' },
+        () => loadAccountHealth()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(tradesChannel);
+      supabase.removeChannel(heartbeatChannel);
+    };
   }, []);
 
   const loadAccountHealth = async () => {
@@ -72,34 +96,41 @@ export const AccountHealth = () => {
     // Get all trades for risk calculation
     const { data: allTrades } = await supabase
       .from("trades")
-      .select("profit_loss, entry_price, quantity")
+      .select("profit_loss, entry_price, quantity, status, metadata")
       .eq("user_id", user.id);
 
     // Calculate risk exposure (open positions value / account size)
     const { data: openTrades } = await supabase
       .from("trades")
-      .select("entry_price, quantity")
+      .select("entry_price, quantity, metadata, status")
       .eq("user_id", user.id)
-      .in("status", ["pending", "executed", "open"]);
+      .eq("status", "open");
 
     let riskExposure = 0;
-    if (openTrades && accountBalance) {
+    if (openTrades && accountBalance && openTrades.length > 0) {
       const openValue = openTrades.reduce((sum, trade) => 
         sum + (parseFloat(String(trade.entry_price)) * parseFloat(String(trade.quantity))), 0
       );
       riskExposure = (openValue / accountBalance) * 100;
     }
 
-    // Calculate max drawdown
+    // Calculate max drawdown including current running P&L
     let maxDrawdown = 0;
     if (allTrades && allTrades.length > 0) {
-      let peak = 0;
-      let cumulative = 0;
+      let peak = accountBalance;
+      let cumulative = accountBalance;
       
       allTrades.forEach(trade => {
-        cumulative += parseFloat(String(trade.profit_loss || 0));
+        let pl = 0;
+        if (trade.status === 'open') {
+          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          pl = metadata.running_profit || 0;
+        } else {
+          pl = parseFloat(String(trade.profit_loss || 0));
+        }
+        cumulative += pl;
         peak = Math.max(peak, cumulative);
-        const drawdown = ((peak - cumulative) / peak) * 100;
+        const drawdown = peak > 0 ? ((peak - cumulative) / peak) * 100 : 0;
         maxDrawdown = Math.max(maxDrawdown, drawdown);
       });
     }

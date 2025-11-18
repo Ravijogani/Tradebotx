@@ -14,10 +14,30 @@ export const PerformanceChart = () => {
 
   useEffect(() => {
     loadPerformanceData();
+
+    // Realtime subscription for live chart updates
+    const channel = supabase
+      .channel('performance-chart')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => loadPerformanceData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [timeRange]);
 
   const loadPerformanceData = async () => {
     setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     const daysMap = { "7d": 7, "30d": 30, "90d": 90, "1y": 365 };
     const days = daysMap[timeRange];
     
@@ -27,6 +47,7 @@ export const PerformanceChart = () => {
     const { data: trades } = await supabase
       .from("trades")
       .select("*")
+      .eq("user_id", user.id)
       .gte("opened_at", startDate.toISOString())
       .order("opened_at", { ascending: true });
 
@@ -40,7 +61,16 @@ export const PerformanceChart = () => {
           month: "short",
           day: "numeric",
         });
-        const pl = parseFloat(String(trade.profit_loss || 0));
+        
+        // For open trades, use running_profit from metadata
+        let pl = 0;
+        if (trade.status === 'open' || trade.status === 'OPEN') {
+          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          pl = parseFloat(String(metadata.running_profit || 0));
+        } else {
+          pl = parseFloat(String(trade.profit_loss || 0));
+        }
+        
         cumulativePL += pl;
         dailyData.set(date, cumulativePL);
       });
