@@ -13,20 +13,49 @@ export const StatsOverview = () => {
 
   useEffect(() => {
     loadStats();
+
+    // Realtime subscription for live updates
+    const channel = supabase
+      .channel('stats-overview')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => loadStats()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadStats = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const { data: trades } = await supabase
       .from("trades")
-      .select("*");
+      .select("*")
+      .eq("user_id", user.id);
 
     if (trades) {
-      const totalProfit = trades.reduce((sum, trade) => 
-        sum + parseFloat(String(trade.profit_loss || 0)), 0
-      );
+      // Calculate total P&L including running profit for open trades
+      const totalProfit = trades.reduce((sum, trade) => {
+        if (trade.status === 'open') {
+          // Use running_profit from metadata for open trades
+          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const runningProfit = metadata.running_profit || 0;
+          return sum + parseFloat(String(runningProfit));
+        }
+        return sum + parseFloat(String(trade.profit_loss || 0));
+      }, 0);
 
-      const activeTrades = trades.filter(t => t.status === "pending" || t.status === "executed").length;
+      // Count open trades correctly (status = 'open' or 'OPEN')
+      const activeTrades = trades.filter(t => 
+        t.status?.toLowerCase() === "open"
+      ).length;
 
+      // Calculate win rate from closed trades
       const closedTrades = trades.filter(t => t.status === "closed");
       const winningTrades = closedTrades.filter(t => parseFloat(String(t.profit_loss || 0)) > 0);
       const winRate = closedTrades.length > 0 
