@@ -58,6 +58,8 @@ export const BotStatusSync = () => {
         const now = Date.now();
         const diffSeconds = (now - lastBeat) / 1000;
 
+        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}`);
+
         // If heartbeat shows 'running' and bot was 'starting', update to running
         if (heartbeat.status === 'running' && strategy.status === 'starting') {
           console.log(`Bot confirmed running for strategy ${strategy.strategy_id}, PID: ${heartbeat.pid}`);
@@ -77,9 +79,9 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // If heartbeat is stale (>180s = 3 minutes) or status is crashed/stopped
-        // Increased timeout to avoid false positives when bot is still running
-        const isStale = diffSeconds > 180;
+        // If heartbeat is stale (>5 minutes) or status is crashed/stopped
+        // Increased timeout to 300s (5 min) to avoid false positives
+        const isStale = diffSeconds > 300;
         const isCrashed = heartbeat.status === 'crashed' || heartbeat.status === 'stopped';
 
         if (isStale || isCrashed) {
