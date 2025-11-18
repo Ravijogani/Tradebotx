@@ -80,13 +80,12 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // If heartbeat is stale (>10 minutes) or status is crashed/stopped
-        // Increased timeout to 600s (10 min) to avoid false positives during heavy load
-        const isStale = diffSeconds > 600;
+        // If heartbeat is stale (>40 seconds) or status is crashed/stopped
+        const isStale = diffSeconds > 40;
         const isCrashed = heartbeat.status === 'crashed' || heartbeat.status === 'stopped';
         
         if (isStale) {
-          console.warn(`⚠️ STALE HEARTBEAT DETECTED: Strategy ${strategy.strategy_id} - Last beat: ${diffMinutes}min ago (threshold: 10min)`);
+          console.warn(`⚠️ STALE HEARTBEAT DETECTED: Strategy ${strategy.strategy_id} - Last beat: ${diffSeconds.toFixed(0)}s ago (threshold: 40s)`);
         }
 
         if (isStale || isCrashed) {
