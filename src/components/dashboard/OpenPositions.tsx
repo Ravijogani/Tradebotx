@@ -35,7 +35,10 @@ export const OpenPositions = () => {
             });
           } else if (payload.eventType === 'UPDATE') {
             // Calculate P&L from metadata
-            const profit = payload.new.metadata?.profit || 0;
+            const metadata = typeof payload.new.metadata === 'object' && payload.new.metadata !== null 
+              ? payload.new.metadata as any 
+              : {};
+            const profit = metadata.running_profit || metadata.profit || 0;
             toast({
               title: "Position Updated",
               description: `${payload.new.symbol} - P&L: $${profit.toFixed(2)}`,
@@ -64,12 +67,11 @@ export const OpenPositions = () => {
 
     setPositions(data || []);
     
-    // Calculate total P&L from metadata
+    // Calculate total P&L from running_profit in metadata
     const total = (data || []).reduce((sum, pos) => {
-      const profit = typeof pos.metadata === 'object' && pos.metadata !== null
-        ? (pos.metadata as any).profit || 0
-        : 0;
-      return sum + profit;
+      const metadata = typeof pos.metadata === 'object' && pos.metadata !== null ? pos.metadata as any : {};
+      const runningProfit = metadata.running_profit || pos.profit_loss || 0;
+      return sum + runningProfit;
     }, 0);
     setTotalPnL(total);
   };
@@ -111,7 +113,7 @@ export const OpenPositions = () => {
               const metadata = typeof position.metadata === 'object' && position.metadata !== null
                 ? position.metadata as any
                 : {};
-              const currentProfit = metadata.profit || 0;
+              const currentProfit = metadata.running_profit || metadata.profit || position.profit_loss || 0;
               const currentPrice = metadata.current_price || position.entry_price;
               
               return (

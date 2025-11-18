@@ -209,7 +209,9 @@ export type Database = {
       }
       bot_heartbeats: {
         Row: {
+          balance: number | null
           created_at: string
+          equity: number | null
           error_message: string | null
           id: string
           last_heartbeat: string
@@ -222,7 +224,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          balance?: number | null
           created_at?: string
+          equity?: number | null
           error_message?: string | null
           id?: string
           last_heartbeat?: string
@@ -235,7 +239,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          balance?: number | null
           created_at?: string
+          equity?: number | null
           error_message?: string | null
           id?: string
           last_heartbeat?: string
