@@ -117,6 +117,9 @@ def health_check():
     logger.debug(f"System info: {json.dumps(system_info, indent=2)}")
     return jsonify(system_info)
 
+# =========================================================================
+# === THIS IS THE ONLY FUNCTION THAT WAS REPLACED (Lines 133-216) ===
+# =========================================================================
 @app.route('/bot/start', methods=['POST'])
 @require_auth
 def start_bot():
@@ -149,13 +152,14 @@ def start_bot():
                 'message': 'Bot already running for this user'
             }), 400
         
-        # Prepare config JSON
-        config_json = json.dumps(config)
-        logger.debug(f"Config JSON (length: {len(config_json)} chars)")
-        
-        # Get bot directory
+        # === START OF MODIFICATIONS ===
+
+        # 1. Get bot directory
         bot_dir = Path(__file__).parent
-        bot_script = bot_dir / 'bot_wrapper.py'
+        
+        # 2. === MODIFIED ===
+        # Point DIRECTLY to your V11 script, not the wrapper
+        bot_script = bot_dir / 'hybrid_trading_bot_multiuser.py'
         
         logger.info(f"Bot directory: {bot_dir}")
         logger.info(f"Bot script: {bot_script}")
@@ -164,23 +168,65 @@ def start_bot():
         
         if not bot_script.exists():
             logger.error(f"❌ Bot script not found at {bot_script}")
+            logger.error("   Make sure 'hybrid_trading_bot_multiuser.py' is in the same directory as the manager.")
             return jsonify({'error': f'Bot script not found at {bot_script}'}), 500
-        
+
+        # 3. === NEW ===
+        # Build the command list with NAMED arguments
+        logger.info("Building command list with named arguments...")
+        command = [
+            sys.executable,
+            str(bot_script),
+            '--user-id', str(config.get('user_id')),
+            '--strategy-id', str(config.get('strategy_id')),
+            '--mt5-login', str(config.get('mt5_account')), # Maps 'mt5_account' from config to '--mt5-login'
+            '--mt5-password', str(config.get('mt5_password')),
+            '--mt5-server', str(config.get('mt5_server')),
+            '--supabase-url', str(config.get('supabase_url')),
+            '--supabase-key', str(config.get('supabase_service_key')),
+            '--gemini-api-key', str(config.get('gemini_api_key'))
+        ]
+
+        # 4. === NEW ===
+        # Add optional arguments ONLY if they exist in the config
+        if config.get('telegram_chat_id'):
+            command.extend(['--telegram-chat-id', str(config.get('telegram_chat_id'))])
+    
+        if config.get('telegram_bot_token'):
+            command.extend(['--telegram-bot-token', str(config.get('telegram_bot_token'))])
+        else:
+            logger.warning("⚠️ 'telegram_bot_token' not found in config. Telegram may fail.")
+
+        logger.debug(f"Executing command: {' '.join(command)}")
+
+        # 5. === NEW ===
+        # Create user-specific log directory for startup errors
+        user_log_dir = bot_dir / f"Hybrid_AI_Bot_Logs_{user_id}"
+        user_log_dir.mkdir(exist_ok=True) # Creates the directory
+        stdout_log = user_log_dir / "bot_startup_stdout.log"
+        stderr_log = user_log_dir / "bot_startup_stderr.log"
+
+        # 6. === MODIFIED ===
         # Start bot process (Windows-specific)
-        logger.info("Starting bot subprocess...")
+        logger.info(f"Starting bot subprocess... Startup logs will be in {user_log_dir.name}")
         try:
-            process = subprocess.Popen(
-                [sys.executable, str(bot_script), config_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=str(bot_dir),
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            )
+            # Redirect stdout/stderr to files for debugging startup
+            with open(stdout_log, 'wb') as out, open(stderr_log, 'wb') as err:
+                process = subprocess.Popen(
+                    command,  # Use the new named argument command list
+                    stdout=out,
+                    stderr=err,
+                    cwd=str(bot_dir),
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
             logger.info(f"✅ Subprocess created with PID: {process.pid}")
+            
         except Exception as proc_error:
             logger.error(f"❌ Failed to create subprocess: {proc_error}")
             logger.error(traceback.format_exc())
             return jsonify({'error': f'Failed to start bot: {str(proc_error)}'}), 500
+        
+        # === END OF MODIFICATIONS ===
         
         running_bots[user_id] = {
             'process': process,
@@ -210,6 +256,9 @@ def start_bot():
         logger.error(traceback.format_exc())
         logger.error("="*80)
         return jsonify({'error': str(e)}), 500
+# =========================================================================
+# === END OF REPLACED SECTION ===
+# =========================================================================
 
 @app.route('/bot/stop', methods=['POST'])
 @require_auth
