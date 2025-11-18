@@ -19,7 +19,8 @@ export const TradesList = () => {
       .from("trades")
       .select("*")
       .eq("user_id", user.id)
-      .order("opened_at", { ascending: false })
+      .eq("status", "closed")
+      .order("closed_at", { ascending: false })
       .limit(10);
 
     setTrades(data || []);

@@ -22,7 +22,7 @@ export const OpenPositions = () => {
           event: '*',
           schema: 'public',
           table: 'trades',
-          filter: 'status=eq.OPEN'
+          filter: 'status=eq.open'
         },
         (payload) => {
           console.log('Position change:', payload);
@@ -59,7 +59,7 @@ export const OpenPositions = () => {
       .from("trades")
       .select("*")
       .eq("user_id", user.id)
-      .eq("status", "OPEN" as any)
+      .eq("status", "open" as any)
       .order("opened_at", { ascending: false });
 
     setPositions(data || []);
