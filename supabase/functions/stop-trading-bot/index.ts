@@ -74,7 +74,7 @@ serve(async (req) => {
       try {
         console.log(`Calling bot manager to stop bot: ${botManagerUrl}`);
         
-        const stopResponse = await fetch(`${botManagerUrl}/stop-bot`, {
+        const stopResponse = await fetch(`${botManagerUrl}/bot/stop`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
