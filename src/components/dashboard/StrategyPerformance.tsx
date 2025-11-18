@@ -26,16 +26,39 @@ export const StrategyPerformance = () => {
 
   useEffect(() => {
     loadPerformances();
+
+    // Real-time subscription for live performance updates
+    const channel = supabase
+      .channel('strategy-performance')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'strategy_performance' },
+        () => loadPerformances()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trades' },
+        () => loadPerformances()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadPerformances = async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
       const { data, error } = await supabase
         .from("strategy_performance")
         .select(`
           *,
           strategies (name)
         `)
+        .eq("user_id", user.id)
         .order("total_profit_loss", { ascending: false });
 
       if (error) throw error;
