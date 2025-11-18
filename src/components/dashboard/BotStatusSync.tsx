@@ -59,11 +59,63 @@ export const BotStatusSync = () => {
         const diffSeconds = (now - lastBeat) / 1000;
         const diffMinutes = (diffSeconds / 60).toFixed(1);
 
-        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s (${diffMinutes}min) ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}`);
+        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}`);
 
-        // If heartbeat shows 'running' and bot was 'starting', update to running
+        // 1. If PID is missing, the process is definitely dead
+        if (!heartbeat.pid) {
+          console.log(`🛑 Bot stopped (No PID found) for strategy ${strategy.strategy_id}`);
+          await supabase
+            .from("user_strategies")
+            .update({
+              is_running: false,
+              status: 'stopped',
+              stopped_at: new Date().toISOString(),
+              bot_pid: null
+            })
+            .eq("id", strategy.id);
+          
+          await supabase
+            .from("bot_heartbeats")
+            .update({ pid: null, status: 'stopped' })
+            .eq("user_id", strategy.user_id)
+            .eq("strategy_id", strategy.strategy_id);
+          continue;
+        }
+
+        // 2. If PID exists but heartbeat is stale (>40s), process is frozen/dead
+        const isStale = diffSeconds > 40;
+        if (isStale) {
+          console.warn(`⚠️ STALE HEARTBEAT: Strategy ${strategy.strategy_id} - Last beat: ${diffSeconds.toFixed(0)}s ago (PID: ${heartbeat.pid})`);
+          
+          await supabase
+            .from("user_strategies")
+            .update({
+              is_running: false,
+              status: 'stopped',
+              stopped_at: new Date().toISOString(),
+              bot_pid: null
+            })
+            .eq("id", strategy.id);
+          
+          // Clear PID in heartbeat table
+          await supabase
+            .from("bot_heartbeats")
+            .update({ pid: null, status: 'stopped' })
+            .eq("user_id", strategy.user_id)
+            .eq("strategy_id", strategy.strategy_id);
+
+          toast({
+            title: "⚠️ Bot Stopped",
+            description: "Bot heartbeat stale. Process may have frozen.",
+            variant: "destructive"
+          });
+          continue;
+        }
+
+        // 3. Bot is healthy - PID exists AND heartbeat is fresh
+        // Handle transitions
         if (heartbeat.status === 'running' && strategy.status === 'starting') {
-          console.log(`Bot confirmed running for strategy ${strategy.strategy_id}, PID: ${heartbeat.pid}`);
+          console.log(`✅ Bot confirmed running for strategy ${strategy.strategy_id}, PID: ${heartbeat.pid}`);
           await supabase
             .from("user_strategies")
             .update({
@@ -77,39 +129,19 @@ export const BotStatusSync = () => {
             title: "✅ Bot Started",
             description: "Trading bot is now running with live market data.",
           });
-          continue;
         }
 
-        // If heartbeat is stale (>40 seconds) or status is crashed/stopped
-        const isStale = diffSeconds > 40;
-        const isCrashed = heartbeat.status === 'crashed' || heartbeat.status === 'stopped';
-        
-        if (isStale) {
-          console.warn(`⚠️ STALE HEARTBEAT DETECTED: Strategy ${strategy.strategy_id} - Last beat: ${diffSeconds.toFixed(0)}s ago (threshold: 40s)`);
-        }
-
-        if (isStale || isCrashed) {
-          // Auto-stop the strategy in database
-          console.log(`🛑 Auto-stopping ${isCrashed ? 'crashed' : 'stale'} bot for strategy ${strategy.strategy_id}. Last heartbeat: ${diffMinutes}min ago`);
-          
+        // Edge case: DB says stopped but PID/Heartbeat are active - fix UI
+        if (heartbeat.status === 'running' && !strategy.is_running) {
+          console.log(`🔄 Fixing inconsistent state: Heartbeat active but DB says stopped for strategy ${strategy.strategy_id}`);
           await supabase
             .from("user_strategies")
             .update({
-              is_running: false,
-              status: isCrashed ? 'crashed' : 'stopped',
-              stopped_at: new Date().toISOString(),
-              bot_pid: null
+              is_running: true,
+              status: 'running',
+              bot_pid: heartbeat.pid
             })
             .eq("id", strategy.id);
-
-          // Show notification
-          if (isCrashed) {
-            toast({
-              title: "⚠️ Bot Stopped",
-              description: "Bot crashed and has been stopped. You can restart it.",
-              variant: "destructive"
-            });
-          }
         }
       }
     };
