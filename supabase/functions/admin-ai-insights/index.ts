@@ -27,11 +27,26 @@ serve(async (req) => {
     console.log('Fetching system data...');
 
     // Get pending approvals
-    const { data: pendingApprovals } = await supabase
+    const { data: pendingSetups } = await supabase
       .from('user_setup')
-      .select('*, profiles(email, full_name)')
+      .select('*')
       .eq('is_completed', true)
-      .eq('admin_approved', false);
+      .is('admin_approved', null);
+
+    // Fetch profiles for pending approvals
+    const pendingApprovals = [];
+    if (pendingSetups && pendingSetups.length > 0) {
+      for (const setup of pendingSetups) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email, full_name')
+          .eq('id', setup.user_id)
+          .single();
+        if (profile) {
+          pendingApprovals.push({ ...setup, profiles: profile });
+        }
+      }
+    }
 
     // Get recent support tickets
     const { data: openTickets } = await supabase
@@ -41,12 +56,12 @@ serve(async (req) => {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    // Get bot logs with errors
+    // Get bot heartbeats with errors
     const { data: botErrors } = await supabase
-      .from('bot_logs')
+      .from('bot_heartbeats')
       .select('*')
-      .eq('log_level', 'error')
-      .order('created_at', { ascending: false })
+      .not('error_message', 'is', null)
+      .order('last_heartbeat', { ascending: false })
       .limit(10);
 
     // Get user statistics
