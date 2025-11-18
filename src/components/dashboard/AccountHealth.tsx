@@ -51,10 +51,10 @@ export const AccountHealth = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Get live balance and equity from bot_heartbeats
+    // Get live balance and equity from bot_heartbeats - use equity for real-time balance
     const { data: heartbeat } = await supabase
       .from("bot_heartbeats")
-      .select("balance, equity")
+      .select("balance, equity, metadata")
       .eq("user_id", user.id)
       .order("last_heartbeat", { ascending: false })
       .limit(1)
@@ -67,7 +67,15 @@ export const AccountHealth = () => {
       .eq("user_id", user.id)
       .single();
 
-    const accountBalance = heartbeat?.balance || setup?.account_size || 10000;
+    // Use equity if available (real-time), else balance, else account_size
+    const accountBalance = heartbeat?.equity || heartbeat?.balance || setup?.account_size || 10000;
+
+    console.log('💰 Account Balance Update:', {
+      equity: heartbeat?.equity,
+      balance: heartbeat?.balance,
+      fallback: setup?.account_size,
+      using: accountBalance
+    });
 
     // Get today's trades for daily P&L
     const today = new Date();
