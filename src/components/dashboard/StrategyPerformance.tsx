@@ -52,31 +52,55 @@ export const StrategyPerformance = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      // Fetch performance data
       const { data, error } = await supabase
         .from("strategy_performance")
         .select(`
           *,
-          strategies (name)
+          strategies (name, id)
         `)
         .eq("user_id", user.id)
         .order("total_profit_loss", { ascending: false });
 
       if (error) throw error;
 
-      const formatted = data?.map((p: any) => ({
-        strategy_name: p.strategies?.name || "Unknown",
-        initial_balance: parseFloat(p.initial_balance),
-        current_balance: parseFloat(p.current_balance),
-        total_trades: p.total_trades,
-        winning_trades: p.winning_trades,
-        losing_trades: p.losing_trades,
-        total_profit_loss: parseFloat(p.total_profit_loss),
-        win_rate: parseFloat(p.win_rate),
-        best_trade: parseFloat(p.best_trade),
-        worst_trade: parseFloat(p.worst_trade),
-        avg_win: parseFloat(p.avg_win),
-        avg_loss: parseFloat(p.avg_loss),
-      })) || [];
+      // Get real-time balance from bot_heartbeats
+      const { data: heartbeats } = await supabase
+        .from("bot_heartbeats")
+        .select("equity, balance, strategy_id")
+        .eq("user_id", user.id);
+
+      // Get open trades count
+      const { data: openTrades } = await supabase
+        .from("trades")
+        .select("strategy_id")
+        .eq("user_id", user.id)
+        .eq("status", "open");
+
+      const formatted = data?.map((p: any) => {
+        // Find matching heartbeat for real-time balance
+        const heartbeat = heartbeats?.find(h => h.strategy_id === p.strategy_id);
+        const liveBalance = heartbeat?.equity || heartbeat?.balance || parseFloat(p.current_balance);
+        
+        // Count open trades for this strategy
+        const openTradeCount = openTrades?.filter(t => t.strategy_id === p.strategy_id).length || 0;
+        const totalTradesIncludingOpen = p.total_trades + openTradeCount;
+
+        return {
+          strategy_name: p.strategies?.name || "Unknown",
+          initial_balance: parseFloat(p.initial_balance),
+          current_balance: liveBalance, // Use real-time balance
+          total_trades: totalTradesIncludingOpen, // Include open trades
+          winning_trades: p.winning_trades,
+          losing_trades: p.losing_trades,
+          total_profit_loss: parseFloat(p.total_profit_loss) + (liveBalance - parseFloat(p.current_balance)), // Add unrealized P&L
+          win_rate: parseFloat(p.win_rate),
+          best_trade: parseFloat(p.best_trade),
+          worst_trade: parseFloat(p.worst_trade),
+          avg_win: parseFloat(p.avg_win),
+          avg_loss: parseFloat(p.avg_loss),
+        };
+      }) || [];
 
       setPerformances(formatted);
     } catch (error) {
