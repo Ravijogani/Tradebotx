@@ -857,6 +857,7 @@ export type Database = {
           status: Database["public"]["Enums"]["trade_status"]
           strategy_id: string
           symbol: string
+          ticket: number | null
           trade_type: string
           user_id: string
         }
@@ -872,6 +873,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["trade_status"]
           strategy_id: string
           symbol: string
+          ticket?: number | null
           trade_type: string
           user_id: string
         }
@@ -887,6 +889,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["trade_status"]
           strategy_id?: string
           symbol?: string
+          ticket?: number | null
           trade_type?: string
           user_id?: string
         }
