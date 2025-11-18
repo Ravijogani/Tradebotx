@@ -57,8 +57,9 @@ export const BotStatusSync = () => {
         const lastBeat = new Date(heartbeat.last_heartbeat).getTime();
         const now = Date.now();
         const diffSeconds = (now - lastBeat) / 1000;
+        const diffMinutes = (diffSeconds / 60).toFixed(1);
 
-        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}`);
+        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s (${diffMinutes}min) ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}`);
 
         // If heartbeat shows 'running' and bot was 'starting', update to running
         if (heartbeat.status === 'running' && strategy.status === 'starting') {
@@ -79,14 +80,18 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // If heartbeat is stale (>5 minutes) or status is crashed/stopped
-        // Increased timeout to 300s (5 min) to avoid false positives
-        const isStale = diffSeconds > 300;
+        // If heartbeat is stale (>10 minutes) or status is crashed/stopped
+        // Increased timeout to 600s (10 min) to avoid false positives during heavy load
+        const isStale = diffSeconds > 600;
         const isCrashed = heartbeat.status === 'crashed' || heartbeat.status === 'stopped';
+        
+        if (isStale) {
+          console.warn(`⚠️ STALE HEARTBEAT DETECTED: Strategy ${strategy.strategy_id} - Last beat: ${diffMinutes}min ago (threshold: 10min)`);
+        }
 
         if (isStale || isCrashed) {
           // Auto-stop the strategy in database
-          console.log(`Auto-stopping stale/crashed bot for strategy ${strategy.strategy_id}`);
+          console.log(`🛑 Auto-stopping ${isCrashed ? 'crashed' : 'stale'} bot for strategy ${strategy.strategy_id}. Last heartbeat: ${diffMinutes}min ago`);
           
           await supabase
             .from("user_strategies")
