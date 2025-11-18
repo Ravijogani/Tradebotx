@@ -77,8 +77,9 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // If heartbeat is stale (>60s) or status is crashed/stopped
-        const isStale = diffSeconds > 60;
+        // If heartbeat is stale (>180s = 3 minutes) or status is crashed/stopped
+        // Increased timeout to avoid false positives when bot is still running
+        const isStale = diffSeconds > 180;
         const isCrashed = heartbeat.status === 'crashed' || heartbeat.status === 'stopped';
 
         if (isStale || isCrashed) {
