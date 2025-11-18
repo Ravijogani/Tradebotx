@@ -27,11 +27,7 @@ serve(async (req) => {
     // Get all active trial subscriptions expiring in 7, 3, or 1 days
     const { data: subscriptions, error: subError } = await supabase
       .from("user_subscriptions")
-      .select(`
-        *,
-        profiles!inner(id, email, full_name),
-        plans!inner(id, name, price)
-      `)
+      .select("*")
       .eq("status", "trial")
       .not("trial_ends_at", "is", null);
 
@@ -67,8 +63,24 @@ serve(async (req) => {
           continue;
         }
 
-        const profile = sub.profiles;
-        const plan = sub.plans;
+        // Fetch profile data
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id, email, full_name")
+          .eq("id", sub.user_id)
+          .single();
+
+        // Fetch plan data
+        const { data: plan } = await supabase
+          .from("plans")
+          .select("id, name, price")
+          .eq("id", sub.plan_id)
+          .single();
+
+        if (!profile || !plan) {
+          console.log(`Missing profile or plan data for user ${sub.user_id}`);
+          continue;
+        }
 
         // Create in-app notification
         await supabase
