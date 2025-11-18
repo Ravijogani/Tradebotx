@@ -82,8 +82,9 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // 2. If PID exists but heartbeat is stale (>40s), process is frozen/dead
-        const isStale = diffSeconds > 40;
+        // 2. If PID exists but heartbeat is stale (>60s), process is frozen/dead
+        // Increased threshold to account for network/database latency
+        const isStale = diffSeconds > 60;
         if (isStale) {
           console.warn(`⚠️ STALE HEARTBEAT: Strategy ${strategy.strategy_id} - Last beat: ${diffSeconds.toFixed(0)}s ago (PID: ${heartbeat.pid})`);
           
@@ -104,11 +105,7 @@ export const BotStatusSync = () => {
             .eq("user_id", strategy.user_id)
             .eq("strategy_id", strategy.strategy_id);
 
-          toast({
-            title: "⚠️ Bot Stopped",
-            description: "Bot heartbeat stale. Process may have frozen.",
-            variant: "destructive"
-          });
+          // Don't show aggressive toast - let UI components show status naturally
           continue;
         }
 

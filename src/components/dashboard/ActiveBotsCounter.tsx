@@ -49,7 +49,8 @@ export const ActiveBotsCounter = () => {
 
           if (heartbeat?.pid) {
             const diffSeconds = (Date.now() - new Date(heartbeat.last_heartbeat).getTime()) / 1000;
-            if (diffSeconds <= 40) {
+            // Increased threshold to 60s to account for network/DB latency
+            if (diffSeconds <= 60) {
               activeCount++;
             }
           }
