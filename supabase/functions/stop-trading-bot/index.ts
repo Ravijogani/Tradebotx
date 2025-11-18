@@ -49,22 +49,24 @@ serve(async (req) => {
 
     if (userStrategyError) throw userStrategyError;
 
-    if (!userStrategy.is_running) {
-      throw new Error('This strategy is not currently running');
+    // If already stopped, still try to clean up on remote server but don't throw error
+    const alreadyStopped = !userStrategy.is_running;
+
+    // Update user_strategy record (only if not already stopped)
+    if (!alreadyStopped) {
+      const { error: updateError } = await supabaseClient
+        .from('user_strategies')
+        .update({
+          is_running: false,
+          stopped_at: new Date().toISOString(),
+        })
+        .eq('id', userStrategyId);
+
+      if (updateError) throw updateError;
+      console.log(`User strategy stopped in database: ${userStrategyId}`);
+    } else {
+      console.log(`User strategy was already stopped in database: ${userStrategyId}`);
     }
-
-    // Update user_strategy record
-    const { error: updateError } = await supabaseClient
-      .from('user_strategies')
-      .update({
-        is_running: false,
-        stopped_at: new Date().toISOString(),
-      })
-      .eq('id', userStrategyId);
-
-    if (updateError) throw updateError;
-
-    console.log(`User strategy stopped in database: ${userStrategyId}`);
 
     // Call the Lightsail bot manager to actually stop the Python bot
     const botManagerUrl = Deno.env.get('LIGHTSAIL_BOT_MANAGER_URL');
@@ -147,7 +149,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: 'Trading bot stopped successfully',
+        message: alreadyStopped ? 'Trading bot was already stopped' : 'Trading bot stopped successfully',
+        already_stopped: alreadyStopped,
       }),
       {
         status: 200,
