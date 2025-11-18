@@ -62,7 +62,7 @@ export const AccountHealth = () => {
       .from("trades")
       .select("entry_price, quantity")
       .eq("user_id", user.id)
-      .in("status", ["pending", "executed", "OPEN"]);
+      .in("status", ["pending", "executed", "open"]);
 
     let riskExposure = 0;
     if (openTrades && setup) {
