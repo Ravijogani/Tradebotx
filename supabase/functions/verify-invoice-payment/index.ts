@@ -14,10 +14,27 @@ serve(async (req) => {
   }
 
   try {
+    // Get user JWT from Authorization header
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      throw new Error('Authorization header required');
+    }
+
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: authHeader }
+        }
+      }
     );
+
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+    if (authError || !user) {
+      throw new Error('User not authenticated');
+    }
 
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = await req.json();
 
@@ -37,15 +54,31 @@ serve(async (req) => {
       throw new Error('Invalid payment signature');
     }
 
-    // Find invoice by razorpay_order_id
+    // Find invoice by razorpay_order_id and verify ownership
     const { data: invoice, error: invoiceError } = await supabaseClient
       .from('invoices')
       .select('*')
       .eq('razorpay_order_id', razorpay_order_id)
+      .eq('user_id', user.id)
       .single();
 
     if (invoiceError || !invoice) {
-      throw new Error('Invoice not found');
+      throw new Error('Invoice not found or access denied');
+    }
+
+    // Prevent duplicate payment processing (idempotency check)
+    if (invoice.status === 'paid' && invoice.razorpay_payment_id === razorpay_payment_id) {
+      console.log('Payment already processed:', razorpay_payment_id);
+      return new Response(
+        JSON.stringify({ 
+          success: true,
+          message: 'Payment already verified'
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        }
+      );
     }
 
     // Update invoice status
