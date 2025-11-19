@@ -36,15 +36,11 @@ class SupabaseTradingBot:
         self.telegram_chat_id = config.get('telegram_chat_id')
         self.telegram_bot_token = config.get('telegram_bot_token')
         
-        # Initialize Supabase client with anon key and authenticate with user token
-        supabase_url = config['supabase_url']
-        supabase_anon_key = config['supabase_anon_key']
-        supabase_user_token = config['supabase_user_token']
-        
-        # Create client with anon key
-        self.supabase: Client = create_client(supabase_url, supabase_anon_key)
-        # Authenticate with user token for RLS
-        self.supabase.postgrest.auth(supabase_user_token)
+        # Initialize Supabase client with service key
+        self.supabase: Client = create_client(
+            config['supabase_url'],
+            config['supabase_key']
+        )
         
         # Trading state
         self.is_running = True
