@@ -1722,7 +1722,7 @@ def update_closed_trades():
     Update Supabase with exit information for closed trades
     """
     try:
-        from_date = datetime.now() - timedelta(days=1)
+        from_date = datetime.now() - timedelta(days=7)
         deals = mt5.history_deals_get(from_date, datetime.now())
         if not deals: return
         
