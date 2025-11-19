@@ -133,14 +133,22 @@ def start_bot():
         user_id = config.get('user_id')
         strategy_id = config.get('strategy_id')
         strategy_name = config.get('strategy_name', 'Unknown')
+        supabase_user_token = config.get('supabase_user_token')
         
         logger.info(f"User ID: {user_id}")
         logger.info(f"Strategy ID: {strategy_id}")
         logger.info(f"Strategy Name: {strategy_name}")
+        logger.info(f"Supabase User Token: {'Present' if supabase_user_token else 'MISSING/NONE'}")
+        if supabase_user_token:
+            logger.info(f"Token length: {len(supabase_user_token)}, First 20 chars: {supabase_user_token[:20]}...")
         
         if not user_id:
             logger.error("❌ Missing user_id in request")
             return jsonify({'error': 'user_id required'}), 400
+        
+        if not supabase_user_token:
+            logger.error("❌ Missing supabase_user_token in request")
+            return jsonify({'error': 'supabase_user_token required'}), 400
         
         if user_id in running_bots:
             logger.warning(f"⚠️ Bot already running for user {user_id}")
