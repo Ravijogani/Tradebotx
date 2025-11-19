@@ -23,7 +23,7 @@ const trustFactors = [
   },
   {
     icon: Shield,
-    title: "Bank-Grade Security",
+    title: "Military-Grade Encryption",
     description: "AES-256-GCM encryption, SOC 2 Type II compliance, regular security audits, and 2FA protection.",
     link: "/docs#security"
   },
@@ -35,9 +35,9 @@ const trustFactors = [
   },
   {
     icon: Award,
-    title: "Industry Recognition",
-    description: "Featured in Forbes, Bloomberg, and TradingView. Winner of 2024 Best Automated Trading Platform.",
-    link: "/about"
+    title: "Active Community",
+    description: "Join thousands of traders in our Telegram community. Real users sharing experiences, strategies, and results daily.",
+    link: "https://t.me/tradebotxsupport"
   }
 ];
 
@@ -117,38 +117,6 @@ export const TrustTransparency = () => {
           </Card>
         </div>
 
-        {/* Founder Message */}
-        <div className="max-w-4xl mx-auto">
-          <Card className="p-8 bg-gradient-to-br from-primary/5 to-accent/5 backdrop-blur-sm border-primary/20">
-            <div className="flex flex-col md:flex-row gap-6 items-start">
-              <div className="flex-shrink-0">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-2xl font-bold text-primary-foreground">
-                  RK
-                </div>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-bold mb-2">A Message from Our Founder</h3>
-                <p className="text-muted-foreground mb-4">
-                  "We started TradeBotX after losing money to opaque 'black box' trading systems. We're committed to building a platform where every decision is explainable, every result is verifiable, and every user has full control. Your trust is our most valuable asset."
-                </p>
-                <div>
-                  <p className="font-semibold">Rajesh Kumar</p>
-                  <p className="text-sm text-muted-foreground">Founder & CEO, TradeBotX</p>
-                </div>
-              </div>
-            </div>
-            <div className="mt-6 pt-6 border-t border-border/50 flex flex-col sm:flex-row gap-4">
-              <Button asChild variant="outline" className="flex-1">
-                <a href="/about">About Our Team</a>
-              </Button>
-              <Button asChild variant="outline" className="flex-1">
-                <a href="https://www.linkedin.com/company/tradebotx" target="_blank" rel="noopener noreferrer">
-                  Connect on LinkedIn
-                </a>
-              </Button>
-            </div>
-          </Card>
-        </div>
       </div>
     </section>
   );

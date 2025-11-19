@@ -56,7 +56,7 @@ export const Integrations = () => {
             </span>
           </h2>
           <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
-            Connect any MT5-compatible broker in minutes. No special requirements or complicated setup.
+            Our bot works exclusively with MetaTrader 5. All forex brokers that support MT5 are automatically compatible - no special requirements or complicated setup needed.
           </p>
         </div>
 
