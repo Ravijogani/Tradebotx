@@ -171,19 +171,20 @@ def start_bot():
             logger.error("   Make sure 'hybrid_trading_bot_multiuser.py' is in the same directory as the manager.")
             return jsonify({'error': f'Bot script not found at {bot_script}'}), 500
 
-        # 3. === NEW ===
-        # Build the command list with NAMED arguments
+        # 3. === MODIFIED ===
+        # Build the command list with NAMED arguments - using anon key + user token
         logger.info("Building command list with named arguments...")
         command = [
             sys.executable,
             str(bot_script),
             '--user-id', str(config.get('user_id')),
             '--strategy-id', str(config.get('strategy_id')),
-            '--mt5-login', str(config.get('mt5_account')), # Maps 'mt5_account' from config to '--mt5-login'
+            '--mt5-login', str(config.get('mt5_account')),
             '--mt5-password', str(config.get('mt5_password')),
             '--mt5-server', str(config.get('mt5_server')),
             '--supabase-url', str(config.get('supabase_url')),
-            '--supabase-key', str(config.get('supabase_service_key')),
+            '--supabase-anon-key', str(config.get('supabase_anon_key')),
+            '--supabase-user-token', str(config.get('supabase_user_token')),
             '--gemini-api-key', str(config.get('gemini_api_key'))
         ]
 
