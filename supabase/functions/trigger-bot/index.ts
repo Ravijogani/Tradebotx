@@ -103,7 +103,7 @@ serve(async (req) => {
     if (LIGHTSAIL_BOT_MANAGER_URL) {
       try {
         console.log(`Attempting HTTP to ${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`);
-        console.log(`Secret length: ${BOT_MANAGER_SECRET?.length || 0}, First 4 chars: ${BOT_MANAGER_SECRET?.substring(0, 4) || 'N/A'}...`);
+        console.log(`Bot manager auth: ${BOT_MANAGER_SECRET ? 'configured' : 'missing'}`);
         
         const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
           method: 'POST',
