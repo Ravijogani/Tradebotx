@@ -32,6 +32,7 @@ import { AIInsightsDashboard } from "./AIInsightsDashboard";
 import { QuickStrategyControl } from "./QuickStrategyControl";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
+import { TelegramFAB } from "@/components/TelegramFAB";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -306,6 +307,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
           </main>
         </div>
       </div>
+      <TelegramFAB />
     </SidebarProvider>
   );
 };
