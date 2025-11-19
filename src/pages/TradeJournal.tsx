@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -24,10 +23,18 @@ import {
   BarChart3,
   FileText,
   Edit2,
-  Trash2
+  Trash2,
+  ArrowLeft
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/dashboard/AppSidebar";
+import { ThemeToggle } from "@/components/dashboard/ThemeToggle";
+import { UserProfileDropdown } from "@/components/dashboard/UserProfileDropdown";
+import logo from "@/assets/tradebotx-logo.png";
+import logoWhite from "@/assets/tradebotx-logo-white.png";
+import { useTheme } from "@/components/theme-provider";
 
 interface JournalEntry {
   id: string;
@@ -58,8 +65,37 @@ export default function TradeJournal() {
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined });
   const [outcomeFilter, setOutcomeFilter] = useState<string>("all");
+  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">("dark");
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { theme } = useTheme();
+
+  useEffect(() => {
+    const updateEffectiveTheme = () => {
+      if (theme === "light") {
+        setEffectiveTheme("light");
+      } else if (theme === "dark") {
+        setEffectiveTheme("dark");
+      } else if (theme === "system") {
+        const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        setEffectiveTheme(isDark ? "dark" : "light");
+      }
+    };
+
+    updateEffectiveTheme();
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      if (theme === "system") {
+        updateEffectiveTheme();
+      }
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
+  const currentLogo = effectiveTheme === "light" ? logo : logoWhite;
 
   useEffect(() => {
     checkUser();
@@ -109,14 +145,11 @@ export default function TradeJournal() {
     setLoading(false);
   };
 
-  // Extract all unique tags
   const allTags = Array.from(new Set(entries.flatMap(e => e.tags || [])));
 
-  // Filter entries based on search, tags, date range, and outcome
   useEffect(() => {
     let filtered = [...entries];
 
-    // Search filter
     if (searchQuery) {
       filtered = filtered.filter(entry =>
         entry.notes?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -124,12 +157,10 @@ export default function TradeJournal() {
       );
     }
 
-    // Tag filter
     if (selectedTag !== "all") {
       filtered = filtered.filter(entry => entry.tags?.includes(selectedTag));
     }
 
-    // Date range filter
     if (dateRange.from) {
       filtered = filtered.filter(entry => {
         const entryDate = new Date(entry.created_at);
@@ -143,7 +174,6 @@ export default function TradeJournal() {
       });
     }
 
-    // Outcome filter
     if (outcomeFilter === "winning") {
       filtered = filtered.filter(entry => entry.trade.profit_loss > 0);
     } else if (outcomeFilter === "losing") {
@@ -153,7 +183,6 @@ export default function TradeJournal() {
     setFilteredEntries(filtered);
   }, [searchQuery, selectedTag, dateRange, outcomeFilter, entries]);
 
-  // Analytics calculations
   const analytics = {
     totalEntries: entries.length,
     winningTrades: entries.filter(e => e.trade.profit_loss > 0).length,
@@ -250,274 +279,301 @@ export default function TradeJournal() {
   }
 
   return (
-    <DashboardLayout user={user}>
-      <div className="container mx-auto p-6 space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <BookOpen className="w-8 h-8 text-primary" />
-              Trade Journal
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Review and analyze your trading notes and patterns
-            </p>
-          </div>
-          <Button onClick={exportToPDF} className="gap-2">
-            <Download className="w-4 h-4" />
-            Export PDF
-          </Button>
-        </div>
-
-        <Tabs defaultValue="entries" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="entries" className="gap-2">
-              <FileText className="w-4 h-4" />
-              Entries
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-2">
-              <BarChart3 className="w-4 h-4" />
-              Analytics
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="entries" className="space-y-6">
-            {/* Filters */}
-            <Card className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search notes or symbols..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-
-                <Select value={selectedTag} onValueChange={setSelectedTag}>
-                  <SelectTrigger>
-                    <Tag className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Filter by tag" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Tags</SelectItem>
-                    {allTags.map(tag => (
-                      <SelectItem key={tag} value={tag}>{tag}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
-                  <SelectTrigger>
-                    <Filter className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Filter by outcome" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Trades</SelectItem>
-                    <SelectItem value="winning">Winning Trades</SelectItem>
-                    <SelectItem value="losing">Losing Trades</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="justify-start">
-                      <CalendarIcon className="w-4 h-4 mr-2" />
-                      {dateRange.from ? (
-                        dateRange.to ? (
-                          <>
-                            {format(dateRange.from, "MMM dd")} - {format(dateRange.to, "MMM dd")}
-                          </>
-                        ) : (
-                          format(dateRange.from, "MMM dd, yyyy")
-                        )
-                      ) : (
-                        "Date range"
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="range"
-                      selected={{ from: dateRange.from, to: dateRange.to }}
-                      onSelect={(range) => setDateRange({ from: range?.from, to: range?.to })}
-                      numberOfMonths={2}
-                    />
-                  </PopoverContent>
-                </Popover>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full">
+        <AppSidebar activeTab="journal" onTabChange={() => {}} />
+        
+        <div className="flex-1 flex flex-col">
+          <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="flex h-16 items-center gap-4 px-4 sm:px-6">
+              <SidebarTrigger className="-ml-1" />
+              
+              <div className="flex items-center gap-2">
+                <img src={currentLogo} alt="TradeBotX" className="h-8 w-auto" />
               </div>
-            </Card>
 
-            {/* Journal Entries List */}
-            <div className="space-y-4">
-              {filteredEntries.length === 0 ? (
-                <Card className="p-12 text-center">
-                  <BookOpen className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                  <h3 className="text-xl font-semibold mb-2">No journal entries found</h3>
-                  <p className="text-muted-foreground">
-                    {entries.length === 0 
-                      ? "Start adding notes to your trades to build your journal"
-                      : "Try adjusting your filters"}
+              <div className="flex-1" />
+
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <UserProfileDropdown user={user} onSettingsClick={() => navigate('/dashboard')} />
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 overflow-y-auto">
+            <div className="container mx-auto p-6 space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <Button 
+                    variant="ghost" 
+                    onClick={() => navigate('/dashboard')} 
+                    className="mb-4 gap-2"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to Dashboard
+                  </Button>
+                  <h1 className="text-3xl font-bold flex items-center gap-2">
+                    <BookOpen className="w-8 h-8 text-primary" />
+                    Trade Journal
+                  </h1>
+                  <p className="text-muted-foreground mt-1">
+                    Review and analyze your trading notes and patterns
                   </p>
-                </Card>
-              ) : (
-                filteredEntries.map(entry => (
-                  <Card key={entry.id} className="p-6 hover:shadow-lg transition-shadow">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-xl font-bold">{entry.trade.symbol}</h3>
-                          <Badge variant={entry.trade.trade_type === "BUY" ? "default" : "secondary"}>
-                            {entry.trade.trade_type}
-                          </Badge>
-                          <Badge variant={entry.trade.profit_loss >= 0 ? "default" : "destructive"} className="gap-1">
-                            {entry.trade.profit_loss >= 0 ? (
-                              <TrendingUp className="w-3 h-3" />
+                </div>
+                <Button onClick={exportToPDF} className="gap-2">
+                  <Download className="w-4 h-4" />
+                  Export PDF
+                </Button>
+              </div>
+
+              <Tabs defaultValue="entries" className="space-y-6">
+                <TabsList>
+                  <TabsTrigger value="entries" className="gap-2">
+                    <FileText className="w-4 h-4" />
+                    Entries
+                  </TabsTrigger>
+                  <TabsTrigger value="analytics" className="gap-2">
+                    <BarChart3 className="w-4 h-4" />
+                    Analytics
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="entries" className="space-y-6">
+                  <Card className="p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search notes or symbols..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+
+                      <Select value={selectedTag} onValueChange={setSelectedTag}>
+                        <SelectTrigger>
+                          <Tag className="w-4 h-4 mr-2" />
+                          <SelectValue placeholder="Filter by tag" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Tags</SelectItem>
+                          {allTags.map(tag => (
+                            <SelectItem key={tag} value={tag}>{tag}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
+                        <SelectTrigger>
+                          <Filter className="w-4 h-4 mr-2" />
+                          <SelectValue placeholder="Filter by outcome" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Trades</SelectItem>
+                          <SelectItem value="winning">Winning Trades</SelectItem>
+                          <SelectItem value="losing">Losing Trades</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" className="justify-start">
+                            <CalendarIcon className="w-4 h-4 mr-2" />
+                            {dateRange.from ? (
+                              dateRange.to ? (
+                                <>
+                                  {format(dateRange.from, "MMM dd")} - {format(dateRange.to, "MMM dd")}
+                                </>
+                              ) : (
+                                format(dateRange.from, "MMM dd, yyyy")
+                              )
                             ) : (
-                              <TrendingDown className="w-3 h-3" />
+                              "Date range"
                             )}
-                            ${Math.abs(entry.trade.profit_loss || 0).toFixed(2)}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                          {format(new Date(entry.created_at), 'PPP p')}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm">
-                          <Edit2 className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => deleteEntry(entry.id)}
-                        >
-                          <Trash2 className="w-4 h-4 text-destructive" />
-                        </Button>
-                      </div>
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="range"
+                            selected={{ from: dateRange.from, to: dateRange.to }}
+                            onSelect={(range) => setDateRange({ from: range?.from, to: range?.to })}
+                            numberOfMonths={2}
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </div>
+                  </Card>
 
-                    {entry.notes && (
-                      <p className="text-sm mb-4 whitespace-pre-wrap">{entry.notes}</p>
-                    )}
-
-                    {entry.tags && entry.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {entry.tags.map(tag => (
-                          <Badge key={tag} variant="outline" className="gap-1">
-                            <Tag className="w-3 h-3" />
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Entry</p>
-                        <p className="font-semibold">${entry.trade.entry_price?.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Exit</p>
-                        <p className="font-semibold">${entry.trade.exit_price?.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Opened</p>
-                        <p className="text-sm">{format(new Date(entry.trade.opened_at), 'MM/dd/yy')}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Closed</p>
-                        <p className="text-sm">
-                          {entry.trade.closed_at ? format(new Date(entry.trade.closed_at), 'MM/dd/yy') : '-'}
+                  <div className="space-y-4">
+                    {filteredEntries.length === 0 ? (
+                      <Card className="p-12 text-center">
+                        <BookOpen className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                        <h3 className="text-xl font-semibold mb-2">No journal entries found</h3>
+                        <p className="text-muted-foreground">
+                          {entries.length === 0 
+                            ? "Start adding notes to your trades to build your journal"
+                            : "Try adjusting your filters"}
                         </p>
+                      </Card>
+                    ) : (
+                      filteredEntries.map(entry => (
+                        <Card key={entry.id} className="p-6 hover:shadow-lg transition-shadow">
+                          <div className="flex justify-between items-start mb-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h3 className="text-xl font-bold">{entry.trade.symbol}</h3>
+                                <Badge variant={entry.trade.trade_type === "BUY" ? "default" : "secondary"}>
+                                  {entry.trade.trade_type}
+                                </Badge>
+                                <Badge variant={entry.trade.profit_loss >= 0 ? "default" : "destructive"} className="gap-1">
+                                  {entry.trade.profit_loss >= 0 ? (
+                                    <TrendingUp className="w-3 h-3" />
+                                  ) : (
+                                    <TrendingDown className="w-3 h-3" />
+                                  )}
+                                  ${Math.abs(entry.trade.profit_loss || 0).toFixed(2)}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">
+                                {format(new Date(entry.created_at), 'PPP p')}
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button variant="ghost" size="sm">
+                                <Edit2 className="w-4 h-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={() => deleteEntry(entry.id)}
+                              >
+                                <Trash2 className="w-4 h-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {entry.notes && (
+                            <p className="text-sm mb-4 whitespace-pre-wrap">{entry.notes}</p>
+                          )}
+
+                          {entry.tags && entry.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {entry.tags.map(tag => (
+                                <Badge key={tag} variant="outline" className="gap-1">
+                                  <Tag className="w-3 h-3" />
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Entry</p>
+                              <p className="font-semibold">${entry.trade.entry_price?.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Exit</p>
+                              <p className="font-semibold">${entry.trade.exit_price?.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Opened</p>
+                              <p className="text-sm">{format(new Date(entry.trade.opened_at), 'MM/dd/yy')}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Closed</p>
+                              <p className="text-sm">
+                                {entry.trade.closed_at ? format(new Date(entry.trade.closed_at), 'MM/dd/yy') : '-'}
+                              </p>
+                            </div>
+                          </div>
+                        </Card>
+                      ))
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="analytics" className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <Card className="p-6">
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Total Entries</h3>
+                      <p className="text-3xl font-bold">{analytics.totalEntries}</p>
+                    </Card>
+                    <Card className="p-6">
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Winning Trades</h3>
+                      <p className="text-3xl font-bold text-green-500">{analytics.winningTrades}</p>
+                    </Card>
+                    <Card className="p-6">
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Losing Trades</h3>
+                      <p className="text-3xl font-bold text-red-500">{analytics.losingTrades}</p>
+                    </Card>
+                    <Card className="p-6">
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Journal Streak</h3>
+                      <p className="text-3xl font-bold">{analytics.journalStreak} days</p>
+                    </Card>
+                  </div>
+
+                  <Card className="p-6">
+                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <Tag className="w-5 h-5 text-primary" />
+                      Most Used Tags
+                    </h3>
+                    <div className="space-y-3">
+                      {analytics.mostUsedTags.map((item, index) => (
+                        <div key={item.tag} className="flex items-center gap-4">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-semibold">{item.tag}</p>
+                            <p className="text-sm text-muted-foreground">{item.count} entries</p>
+                          </div>
+                          <div className="w-24 bg-muted rounded-full h-2">
+                            <div 
+                              className="bg-primary h-2 rounded-full" 
+                              style={{ width: `${(item.count / analytics.totalEntries) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <Card className="p-6">
+                    <h3 className="text-xl font-bold mb-4">Journal Insights</h3>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Average Note Length</span>
+                        <span className="font-semibold">{Math.round(analytics.avgNotesLength)} characters</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Win Rate</span>
+                        <span className="font-semibold">
+                          {analytics.totalEntries > 0 
+                            ? `${((analytics.winningTrades / analytics.totalEntries) * 100).toFixed(1)}%`
+                            : '0%'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Entries This Week</span>
+                        <span className="font-semibold">
+                          {entries.filter(e => {
+                            const weekAgo = new Date();
+                            weekAgo.setDate(weekAgo.getDate() - 7);
+                            return new Date(e.created_at) > weekAgo;
+                          }).length}
+                        </span>
                       </div>
                     </div>
                   </Card>
-                ))
-              )}
+                </TabsContent>
+              </Tabs>
             </div>
-          </TabsContent>
-
-          <TabsContent value="analytics" className="space-y-6">
-            {/* Analytics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="p-6">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">Total Entries</h3>
-                <p className="text-3xl font-bold">{analytics.totalEntries}</p>
-              </Card>
-              <Card className="p-6">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">Winning Trades</h3>
-                <p className="text-3xl font-bold text-green-500">{analytics.winningTrades}</p>
-              </Card>
-              <Card className="p-6">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">Losing Trades</h3>
-                <p className="text-3xl font-bold text-red-500">{analytics.losingTrades}</p>
-              </Card>
-              <Card className="p-6">
-                <h3 className="text-sm font-medium text-muted-foreground mb-2">Journal Streak</h3>
-                <p className="text-3xl font-bold">{analytics.journalStreak} days</p>
-              </Card>
-            </div>
-
-            {/* Most Used Tags */}
-            <Card className="p-6">
-              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-                <Tag className="w-5 h-5 text-primary" />
-                Most Used Tags
-              </h3>
-              <div className="space-y-3">
-                {analytics.mostUsedTags.map((item, index) => (
-                  <div key={item.tag} className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                      {index + 1}
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-semibold">{item.tag}</p>
-                      <p className="text-sm text-muted-foreground">{item.count} entries</p>
-                    </div>
-                    <div className="w-24 bg-muted rounded-full h-2">
-                      <div 
-                        className="bg-primary h-2 rounded-full" 
-                        style={{ width: `${(item.count / analytics.totalEntries) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            {/* Journal Insights */}
-            <Card className="p-6">
-              <h3 className="text-xl font-bold mb-4">Journal Insights</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Average Note Length</span>
-                  <span className="font-semibold">{Math.round(analytics.avgNotesLength)} characters</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Win Rate</span>
-                  <span className="font-semibold">
-                    {analytics.totalEntries > 0 
-                      ? `${((analytics.winningTrades / analytics.totalEntries) * 100).toFixed(1)}%`
-                      : '0%'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Entries This Week</span>
-                  <span className="font-semibold">
-                    {entries.filter(e => {
-                      const weekAgo = new Date();
-                      weekAgo.setDate(weekAgo.getDate() - 7);
-                      return new Date(e.created_at) > weekAgo;
-                    }).length}
-                  </span>
-                </div>
-              </div>
-            </Card>
-          </TabsContent>
-        </Tabs>
+          </main>
+        </div>
       </div>
-    </DashboardLayout>
+    </SidebarProvider>
   );
 }
