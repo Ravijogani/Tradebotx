@@ -73,7 +73,7 @@ def start_bot():
         # Validate required fields
         required_fields = [
             'mt5_account', 'mt5_password', 'mt5_server',
-            'account_size', 'risk_per_trade', 'supabase_url', 'supabase_service_key'
+            'account_size', 'risk_per_trade', 'supabase_url', 'supabase_user_token'
         ]
         
         for field in required_fields:
