@@ -6,6 +6,7 @@ import { Stats } from "@/components/landing/Stats";
 import { TechnicalSpecs } from "@/components/landing/TechnicalSpecs";
 import { Integrations } from "@/components/landing/Integrations";
 import { TrustTransparency } from "@/components/landing/TrustTransparency";
+import { LivePerformance } from "@/components/landing/LivePerformance";
 import { PricingSection } from "@/components/landing/PricingSection";
 import { FAQ } from "@/components/landing/FAQ";
 import { SupportContact } from "@/components/landing/SupportContact";
@@ -24,6 +25,7 @@ const Landing = () => {
   const techSpecsAnimation = useScrollAnimation({ threshold: 0.2 });
   const integrationsAnimation = useScrollAnimation({ threshold: 0.2 });
   const trustAnimation = useScrollAnimation({ threshold: 0.2 });
+  const performanceAnimation = useScrollAnimation({ threshold: 0.2 });
   const pricingAnimation = useScrollAnimation({ threshold: 0.2 });
   const faqAnimation = useScrollAnimation({ threshold: 0.2 });
   const supportAnimation = useScrollAnimation({ threshold: 0.2 });
@@ -113,6 +115,9 @@ const Landing = () => {
       </section>
       <section ref={trustAnimation.ref as any} className={`scroll-animate ${trustAnimation.isVisible ? 'visible' : ''}`}>
         <TrustTransparency />
+      </section>
+      <section ref={performanceAnimation.ref as any} className={`scroll-animate ${performanceAnimation.isVisible ? 'visible' : ''}`}>
+        <LivePerformance />
       </section>
       <section ref={pricingAnimation.ref as any} className={`scroll-animate ${pricingAnimation.isVisible ? 'visible' : ''}`}>
         <PricingSection />
