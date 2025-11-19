@@ -91,6 +91,7 @@ serve(async (req) => {
       telegram_chat_id: setup.telegram_chat_id,
       telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
+      supabase_anon_key: Deno.env.get('SUPABASE_ANON_KEY'),
       supabase_user_token: userToken, // User-scoped token respects RLS policies
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
       action: action
