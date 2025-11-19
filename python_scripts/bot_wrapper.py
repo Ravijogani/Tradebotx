@@ -39,7 +39,7 @@ class SupabaseTradingBot:
         # Initialize Supabase client
         self.supabase: Client = create_client(
             config['supabase_url'],
-            config['supabase_service_key']
+            config['supabase_user_token']
         )
         
         # Trading state
