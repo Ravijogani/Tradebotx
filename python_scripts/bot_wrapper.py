@@ -209,8 +209,8 @@ class SupabaseTradingBot:
     def sync_closed_trades(self):
         """Sync closed trades from MT5 to Supabase"""
         try:
-            # Get deals from last 24 hours
-            from_date = datetime.now().replace(hour=0, minute=0, second=0)
+            # Get deals from last 7 days to catch any missed closures
+            from_date = datetime.now() - timedelta(days=7)
             deals = mt5.history_deals_get(from_date, datetime.now())
             
             if not deals:
