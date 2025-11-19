@@ -73,16 +73,11 @@ STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
 
-# Initialize Supabase client with anon key and user JWT in headers
-supabase: Client = create_client(
-    args.supabase_url, 
-    args.supabase_anon_key,
-    options={
-        'headers': {
-            'Authorization': f'Bearer {args.supabase_key}'
-        }
-    }
-)
+# Initialize Supabase client with anon key
+supabase: Client = create_client(args.supabase_url, args.supabase_anon_key)
+
+# Authenticate with user token for RLS policies
+supabase.postgrest.auth(args.supabase_key)
 
 # =============================================================================
 # CONFIGURATION
