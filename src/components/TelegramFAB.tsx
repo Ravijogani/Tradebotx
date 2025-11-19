@@ -4,8 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 export const TelegramFAB = () => {
   const handleTelegramClick = () => {
-    // Open Telegram support - replace with your actual Telegram link
-    window.open("https://t.me/your_support_bot", "_blank");
+    window.open("https://t.me/tradebotxsupport", "_blank");
   };
 
   return (

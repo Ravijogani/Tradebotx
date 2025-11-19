@@ -67,12 +67,13 @@ export const LivePerformance = () => {
 
   const loadEquityData = async () => {
     try {
-      // Fetch last 30 heartbeat records to show equity curve
+      // Fetch heartbeat records across all users to show platform performance
       const { data, error } = await supabase
         .from('bot_heartbeats')
         .select('equity, balance, last_heartbeat')
+        .not('equity', 'is', null)
         .order('last_heartbeat', { ascending: true })
-        .limit(30);
+        .limit(50);
 
       if (error) throw error;
 
@@ -122,16 +123,8 @@ export const LivePerformance = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-xl font-bold mb-1">Live Account Performance</h3>
-                <p className="text-sm text-muted-foreground">Updated every 5 minutes • Real trading account</p>
+                <p className="text-sm text-muted-foreground">Updated in real-time • Connected to trading account</p>
               </div>
-              <a 
-                href="https://www.myfxbook.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-primary hover:underline flex items-center gap-2 text-sm"
-              >
-                Verify on MyFxBook <ExternalLink className="w-4 h-4" />
-              </a>
             </div>
             
             {/* Live Metrics Grid */}
