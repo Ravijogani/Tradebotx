@@ -24,7 +24,7 @@ const trustFactors = [
   {
     icon: Shield,
     title: "Military-Grade Encryption",
-    description: "AES-256-GCM encryption, SOC 2 Type II compliance, regular security audits, and 2FA protection.",
+    description: "Your MT5 credentials are encrypted with AES-256-GCM encryption and stored securely. We never have withdrawal access.",
     link: "/docs#security"
   },
   {
