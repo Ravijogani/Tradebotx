@@ -19,7 +19,8 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { email, otpType = 'signup' } = await req.json();
+    const { email, otp_code, otp_type, otpType = 'signup' } = await req.json();
+    const finalOtpType = otp_type || otpType;
 
     // Rate limiting: 5 OTP requests per 60 seconds per IP
     const clientIp = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
@@ -67,20 +68,25 @@ serve(async (req) => {
       throw new Error('Email is required');
     }
 
-    // Generate OTP
-    const { data: otpData, error: otpError } = await supabase
-      .rpc('generate_otp', {
-        p_email: email,
-        p_otp_type: otpType
-      });
+    let otpCode = otp_code;
+    
+    // Generate OTP only if not provided
+    if (!otpCode) {
+      const { data: otpData, error: otpError } = await supabase
+        .rpc('generate_otp', {
+          p_email: email,
+          p_otp_type: finalOtpType
+        });
 
-    if (otpError) {
-      console.error('Error generating OTP:', otpError);
-      throw otpError;
+      if (otpError) {
+        console.error('Error generating OTP:', otpError);
+        throw otpError;
+      }
+
+      otpCode = otpData[0]?.otp_code;
     }
-
-    const otpCode = otpData[0]?.otp_code;
-    console.log('OTP generated for:', email, 'Type:', otpType);
+    
+    console.log('OTP for:', email, 'Type:', finalOtpType, 'Code provided:', !!otp_code);
 
     // Get SMTP configuration
     const smtpHost = Deno.env.get('SMTP_HOST');
@@ -96,17 +102,19 @@ serve(async (req) => {
     const subjects = {
       'signup': 'Verify Your Email - TradeBotX',
       'login': 'Login Verification - TradeBotX',
+      'admin_login': 'Admin Login Verification - TradeBotX',
       'forgot-password': 'Password Reset - TradeBotX'
     };
     
     const preheaders = {
       'signup': 'Complete your TradeBotX account setup with this verification code',
       'login': 'Your TradeBotX login verification code',
+      'admin_login': 'Your TradeBotX admin login verification code',
       'forgot-password': 'Reset your TradeBotX password'
     };
     
-    const subject = subjects[otpType as keyof typeof subjects] || 'Verification Code - TradeBotX';
-    const preheader = preheaders[otpType as keyof typeof preheaders] || 'Your verification code';
+    const subject = subjects[finalOtpType as keyof typeof subjects] || 'Verification Code - TradeBotX';
+    const preheader = preheaders[finalOtpType as keyof typeof preheaders] || 'Your verification code';
     const emailBody = getEmailTemplate(
       otpEmailContent(otpCode, otpType as 'signup' | 'login' | 'forgot-password'),
       preheader
