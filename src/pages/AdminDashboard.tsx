@@ -21,6 +21,7 @@ import { SupportTicketsManagement } from "@/components/admin/SupportTicketsManag
 import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboard";
 import { AIInsightsDashboard } from "@/components/admin/AIInsightsDashboard";
 import { SystemHealthCheck } from "@/components/admin/SystemHealthCheck";
+import { AdminOverview } from "@/components/admin/AdminOverview";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
@@ -31,7 +32,7 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const activeTab = searchParams.get('tab') || 'ai-insights';
+  const activeTab = searchParams.get('tab') || 'overview';
 
   useEffect(() => {
     checkAdminAccess();
@@ -110,11 +111,13 @@ const AdminDashboard = () => {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'overview':
+        return <AdminOverview />;
       case 'ai-insights':
         return <AIInsightsDashboard />;
-      case 'health-check':
+      case 'system-health':
         return <SystemHealthCheck />;
-      case 'botmonitor':
+      case 'bot-monitoring':
         return <BotMonitoringDashboard />;
       case 'users':
         return <AdminUsers />;
@@ -128,20 +131,20 @@ const AdminDashboard = () => {
         return <AdminSubscriptions />;
       case 'analytics':
         return <AdminAnalytics />;
-      case 'platform':
+      case 'platform-analytics':
         return <PlatformAnalytics />;
       case 'referrals':
         return <ReferralProgramDashboard />;
       case 'invoices':
         return <InvoiceBuilder />;
-      case 'emails':
+      case 'email-templates':
         return <EmailTemplatesManager />;
       case 'settings':
         return <PlatformSettings />;
-      case 'logs':
+      case 'activity-logs':
         return <AdminActivityLogs />;
       default:
-        return <AIInsightsDashboard />;
+        return <AdminOverview />;
     }
   };
 

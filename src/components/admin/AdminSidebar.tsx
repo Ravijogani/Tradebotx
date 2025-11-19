@@ -36,9 +36,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useState } from "react";
 
 const mainItems = [
+  { title: "Overview", path: "overview", icon: LayoutDashboard },
   { title: "AI Insights", path: "ai-insights", icon: Sparkles },
-  { title: "System Health", path: "health-check", icon: HeartPulse },
-  { title: "Bot Monitor", path: "botmonitor", icon: MonitorDot },
+  { title: "System Health", path: "system-health", icon: HeartPulse },
+  { title: "Bot Monitor", path: "bot-monitoring", icon: MonitorDot },
   { title: "Users", path: "users", icon: Users },
   { title: "Support", path: "support", icon: MessageSquare },
 ];
@@ -51,15 +52,15 @@ const managementItems = [
 
 const analyticsItems = [
   { title: "Analytics", path: "analytics", icon: TrendingUp },
-  { title: "Platform", path: "platform", icon: BarChart3 },
+  { title: "Platform", path: "platform-analytics", icon: BarChart3 },
   { title: "Referrals", path: "referrals", icon: Gift },
 ];
 
 const operationsItems = [
   { title: "Invoices", path: "invoices", icon: Receipt },
-  { title: "Email Templates", path: "emails", icon: Mail },
+  { title: "Email Templates", path: "email-templates", icon: Mail },
   { title: "Settings", path: "settings", icon: SettingsIcon },
-  { title: "Activity Logs", path: "logs", icon: Activity },
+  { title: "Activity Logs", path: "activity-logs", icon: Activity },
 ];
 
 export function AdminSidebar() {
@@ -74,7 +75,7 @@ export function AdminSidebar() {
   
   const getActiveTab = () => {
     const params = new URLSearchParams(location.search);
-    return params.get('tab') || 'ai-insights';
+    return params.get('tab') || 'overview';
   };
 
   const isActive = (path: string) => getActiveTab() === path;
