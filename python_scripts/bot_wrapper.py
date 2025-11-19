@@ -41,16 +41,11 @@ class SupabaseTradingBot:
         supabase_anon_key = config.get('supabase_anon_key', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxZ3FnbXpsdmJnbHVzdXBzanB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NzIwNzIsImV4cCI6MjA3ODE0ODA3Mn0.OLlqLUalx9g3EtgE95q4OwZjB2kj9CSJ5x0O7atQobI')
         user_token = config['supabase_user_token']
         
-        # Create client with anon key and set user token in headers
-        self.supabase: Client = create_client(
-            supabase_url,
-            supabase_anon_key,
-            options={
-                'headers': {
-                    'Authorization': f'Bearer {user_token}'
-                }
-            }
-        )
+        # Create client with anon key first
+        self.supabase: Client = create_client(supabase_url, supabase_anon_key)
+        
+        # Set user session using the JWT token for RLS
+        self.supabase.postgrest.auth(user_token)
         
         # Trading state
         self.is_running = True
