@@ -15,6 +15,7 @@ import { SEOHead } from "@/components/SEOHead";
 import { useScrollAnimation } from "@/hooks/useScrollAnimation";
 import { ScrollProgress } from "@/components/ui/scroll-progress";
 import { useHashScroll } from "@/components/ScrollLink";
+import { TelegramFAB } from "@/components/TelegramFAB";
 
 const Landing = () => {
   useHashScroll(); // Enable hash scroll on mount
@@ -129,6 +130,7 @@ const Landing = () => {
         <SupportContact />
       </section>
       <Footer />
+      <TelegramFAB />
     </div>
   );
 };
