@@ -19,6 +19,7 @@ import Privacy from "./pages/Privacy";
 import Disclaimer from "./pages/Disclaimer";
 import Status from "./pages/Status";
 import Docs from "./pages/Docs";
+import TradeJournal from "./pages/TradeJournal";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,7 @@ const App = () => (
           <Route path="/disclaimer" element={<Disclaimer />} />
           <Route path="/status" element={<Status />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/trade-journal" element={<TradeJournal />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
