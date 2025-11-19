@@ -29,9 +29,10 @@ export const Footer = () => {
           <div>
             <h3 className="font-semibold mb-3 sm:mb-4 text-sm sm:text-base">Support</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li><Link to="/#faq" className="hover:text-primary transition-colors">FAQ</Link></li>
-              <li><a href="https://t.me/tradebotxsupport" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">Telegram Support</a></li>
+              <li><a href="https://t.me/tradebotxsupport" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">Telegram Support (24/7)</a></li>
+              <li><a href="mailto:support@tradebotx.com" className="hover:text-primary transition-colors">Email Support</a></li>
               <li><Link to="/docs" className="hover:text-primary transition-colors">Documentation</Link></li>
+              <li><Link to="/#faq" className="hover:text-primary transition-colors">FAQ</Link></li>
               <li><Link to="/status" className="hover:text-primary transition-colors">System Status</Link></li>
             </ul>
           </div>

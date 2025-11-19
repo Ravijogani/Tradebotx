@@ -3,8 +3,12 @@ import { Hero } from "@/components/landing/Hero";
 import { Features } from "@/components/landing/Features";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { Stats } from "@/components/landing/Stats";
+import { TechnicalSpecs } from "@/components/landing/TechnicalSpecs";
+import { Integrations } from "@/components/landing/Integrations";
+import { TrustTransparency } from "@/components/landing/TrustTransparency";
 import { PricingSection } from "@/components/landing/PricingSection";
 import { FAQ } from "@/components/landing/FAQ";
+import { SupportContact } from "@/components/landing/SupportContact";
 import { Footer } from "@/components/landing/Footer";
 import { SEOHead } from "@/components/SEOHead";
 import { useScrollAnimation } from "@/hooks/useScrollAnimation";
@@ -14,8 +18,12 @@ const Landing = () => {
   const featuresAnimation = useScrollAnimation({ threshold: 0.2 });
   const howItWorksAnimation = useScrollAnimation({ threshold: 0.2 });
   const statsAnimation = useScrollAnimation({ threshold: 0.3 });
+  const techSpecsAnimation = useScrollAnimation({ threshold: 0.2 });
+  const integrationsAnimation = useScrollAnimation({ threshold: 0.2 });
+  const trustAnimation = useScrollAnimation({ threshold: 0.2 });
   const pricingAnimation = useScrollAnimation({ threshold: 0.2 });
   const faqAnimation = useScrollAnimation({ threshold: 0.2 });
+  const supportAnimation = useScrollAnimation({ threshold: 0.2 });
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
@@ -94,11 +102,23 @@ const Landing = () => {
       <section ref={howItWorksAnimation.ref as any} className={`scroll-animate ${howItWorksAnimation.isVisible ? 'visible' : ''}`}>
         <HowItWorks />
       </section>
+      <section ref={techSpecsAnimation.ref as any} className={`scroll-animate ${techSpecsAnimation.isVisible ? 'visible' : ''}`}>
+        <TechnicalSpecs />
+      </section>
+      <section ref={integrationsAnimation.ref as any} className={`scroll-animate ${integrationsAnimation.isVisible ? 'visible' : ''}`}>
+        <Integrations />
+      </section>
+      <section ref={trustAnimation.ref as any} className={`scroll-animate ${trustAnimation.isVisible ? 'visible' : ''}`}>
+        <TrustTransparency />
+      </section>
       <section ref={pricingAnimation.ref as any} className={`scroll-animate ${pricingAnimation.isVisible ? 'visible' : ''}`}>
         <PricingSection />
       </section>
       <section ref={faqAnimation.ref as any} className={`scroll-animate ${faqAnimation.isVisible ? 'visible' : ''}`}>
         <FAQ />
+      </section>
+      <section ref={supportAnimation.ref as any} className={`scroll-animate ${supportAnimation.isVisible ? 'visible' : ''}`}>
+        <SupportContact />
       </section>
       <Footer />
     </div>

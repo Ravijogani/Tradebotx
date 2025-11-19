@@ -74,25 +74,25 @@ export const Hero = () => {
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center animate-fade-in px-4" style={{ animationDelay: '0.4s' }}>
             <Button asChild size="lg" className="text-base sm:text-lg group relative overflow-hidden bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300 w-full sm:w-auto">
-              <Link to="/pricing" className="relative z-10">
-                Get Started Free
+              <Link to="/auth/login?signup=true" className="relative z-10">
+                Start 7-Day Free Trial
                 <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline" className="text-base sm:text-lg border-primary/30 hover:bg-primary/10 hover:border-primary/50 backdrop-blur-sm transition-all duration-300 w-full sm:w-auto">
-              <Link to="/auth/login">
-                Sign In to Dashboard
+              <Link to="/docs#setup-guide">
+                View Setup Guide
               </Link>
             </Button>
           </div>
 
           {/* Trust indicators */}
           <div className="mt-12 sm:mt-16 pt-6 sm:pt-8 border-t border-border/50 animate-fade-in px-4" style={{ animationDelay: '0.5s' }}>
-            <p className="text-xs sm:text-sm text-muted-foreground/80 mb-3 sm:mb-4">Trusted by traders worldwide</p>
+            <p className="text-xs sm:text-sm text-muted-foreground/80 mb-3 sm:mb-4">Trusted by traders worldwide • No credit card required</p>
             <div className="flex justify-center items-center gap-4 sm:gap-6 md:gap-8 text-xs sm:text-sm">
               <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">10,000+</div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Active Traders</div>
+                <div className="text-xl sm:text-2xl font-bold text-foreground">12,847</div>
+                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Registered Users</div>
               </div>
               <div className="w-px h-10 sm:h-12 bg-border"></div>
               <div className="text-center">
@@ -101,8 +101,8 @@ export const Hero = () => {
               </div>
               <div className="w-px h-10 sm:h-12 bg-border"></div>
               <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">24/7</div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Monitoring</div>
+                <div className="text-xl sm:text-2xl font-bold text-foreground">2.3M+</div>
+                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Trades Executed</div>
               </div>
             </div>
           </div>
