@@ -13,8 +13,11 @@ import { Footer } from "@/components/landing/Footer";
 import { SEOHead } from "@/components/SEOHead";
 import { useScrollAnimation } from "@/hooks/useScrollAnimation";
 import { ScrollProgress } from "@/components/ui/scroll-progress";
+import { useHashScroll } from "@/components/ScrollLink";
 
 const Landing = () => {
+  useHashScroll(); // Enable hash scroll on mount
+  
   const featuresAnimation = useScrollAnimation({ threshold: 0.2 });
   const howItWorksAnimation = useScrollAnimation({ threshold: 0.2 });
   const statsAnimation = useScrollAnimation({ threshold: 0.3 });

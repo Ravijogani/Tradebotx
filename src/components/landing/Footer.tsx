@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Bot } from "lucide-react";
+import { ScrollLink } from "@/components/ScrollLink";
 
 export const Footer = () => {
   return (
@@ -20,8 +21,8 @@ export const Footer = () => {
             <h3 className="font-semibold mb-3 sm:mb-4 text-sm sm:text-base">Product</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><Link to="/pricing" className="hover:text-primary transition-colors">Pricing</Link></li>
-              <li><Link to="/#features" className="hover:text-primary transition-colors">Features</Link></li>
-              <li><Link to="/#how-it-works" className="hover:text-primary transition-colors">How It Works</Link></li>
+              <li><ScrollLink to="/#features" className="hover:text-primary transition-colors">Features</ScrollLink></li>
+              <li><ScrollLink to="/#how-it-works" className="hover:text-primary transition-colors">How It Works</ScrollLink></li>
               <li><Link to="/dashboard" className="hover:text-primary transition-colors">Dashboard</Link></li>
             </ul>
           </div>
@@ -32,7 +33,7 @@ export const Footer = () => {
               <li><a href="https://t.me/tradebotxsupport" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">Telegram Support (24/7)</a></li>
               <li><a href="mailto:support@tradebotx.com" className="hover:text-primary transition-colors">Email Support</a></li>
               <li><Link to="/docs" className="hover:text-primary transition-colors">Documentation</Link></li>
-              <li><Link to="/#faq" className="hover:text-primary transition-colors">FAQ</Link></li>
+              <li><ScrollLink to="/#faq" className="hover:text-primary transition-colors">FAQ</ScrollLink></li>
               <li><Link to="/status" className="hover:text-primary transition-colors">System Status</Link></li>
             </ul>
           </div>

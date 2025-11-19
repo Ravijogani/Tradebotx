@@ -11,6 +11,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { ScrollLink } from "@/components/ScrollLink";
 
 export const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -51,20 +52,20 @@ export const Navbar = () => {
         </Link>
         
         <div className="hidden md:flex items-center gap-8">
-          <Link 
+          <ScrollLink 
             to="/#features" 
             className="text-foreground/80 hover:text-foreground transition-colors font-medium relative group"
           >
             Features
             <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-primary to-accent group-hover:w-full transition-all duration-300"></span>
-          </Link>
-          <Link 
+          </ScrollLink>
+          <ScrollLink 
             to="/#how-it-works" 
             className="text-foreground/80 hover:text-foreground transition-colors font-medium relative group"
           >
             How It Works
             <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-primary to-accent group-hover:w-full transition-all duration-300"></span>
-          </Link>
+          </ScrollLink>
           <Link 
             to="/pricing" 
             className="text-foreground/80 hover:text-foreground transition-colors font-medium relative group"
@@ -72,13 +73,13 @@ export const Navbar = () => {
             Pricing
             <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-primary to-accent group-hover:w-full transition-all duration-300"></span>
           </Link>
-          <Link 
+          <ScrollLink 
             to="/#faq" 
             className="text-foreground/80 hover:text-foreground transition-colors font-medium relative group"
           >
             FAQ
             <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-primary to-accent group-hover:w-full transition-all duration-300"></span>
-          </Link>
+          </ScrollLink>
         </div>
 
         <div className="hidden md:flex items-center gap-3">
@@ -86,7 +87,7 @@ export const Navbar = () => {
             <Link to="/auth/login">Sign In</Link>
           </Button>
           <Button asChild className="bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300">
-            <Link to="/pricing">Get Started</Link>
+            <Link to="/auth/login?signup=true">Get Started</Link>
           </Button>
         </div>
 
@@ -102,20 +103,20 @@ export const Navbar = () => {
               <SheetTitle>Menu</SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-4 mt-8">
-              <Link 
+              <ScrollLink 
                 to="/#features" 
                 onClick={() => setIsOpen(false)}
                 className="text-foreground/80 hover:text-foreground transition-colors font-medium py-2"
               >
                 Features
-              </Link>
-              <Link 
+              </ScrollLink>
+              <ScrollLink 
                 to="/#how-it-works" 
                 onClick={() => setIsOpen(false)}
                 className="text-foreground/80 hover:text-foreground transition-colors font-medium py-2"
               >
                 How It Works
-              </Link>
+              </ScrollLink>
               <Link 
                 to="/pricing" 
                 onClick={() => setIsOpen(false)}
@@ -123,19 +124,19 @@ export const Navbar = () => {
               >
                 Pricing
               </Link>
-              <Link 
+              <ScrollLink 
                 to="/#faq" 
                 onClick={() => setIsOpen(false)}
                 className="text-foreground/80 hover:text-foreground transition-colors font-medium py-2"
               >
                 FAQ
-              </Link>
+              </ScrollLink>
               <div className="pt-4 border-t border-border flex flex-col gap-3">
                 <Button asChild variant="ghost" className="w-full" onClick={() => setIsOpen(false)}>
                   <Link to="/auth/login">Sign In</Link>
                 </Button>
                 <Button asChild className="w-full bg-gradient-to-r from-primary to-accent" onClick={() => setIsOpen(false)}>
-                  <Link to="/pricing">Get Started</Link>
+                  <Link to="/auth/login?signup=true">Get Started</Link>
                 </Button>
               </div>
             </div>
