@@ -69,12 +69,24 @@ const Admin = () => {
         { p_email: email, p_user_id: authData.user.id, p_otp_type: 'admin_login' }
       );
 
-      if (otpError) throw otpError;
+      if (otpError) {
+        console.error("OTP generation error:", otpError);
+        throw new Error("Failed to generate OTP: " + otpError.message);
+      }
+
+      if (!otpData || otpData.length === 0) {
+        throw new Error("Failed to generate OTP code");
+      }
 
       // Send OTP via email
-      await supabase.functions.invoke('send-otp', {
+      const { error: sendError } = await supabase.functions.invoke('send-otp', {
         body: { email, otp_code: otpData[0].otp_code, otp_type: 'admin_login' }
       });
+
+      if (sendError) {
+        console.error("OTP send error:", sendError);
+        throw new Error("Failed to send OTP email: " + sendError.message);
+      }
 
       setShowOTP(true);
       toast({
