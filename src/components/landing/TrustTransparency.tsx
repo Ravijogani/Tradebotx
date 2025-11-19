@@ -42,10 +42,10 @@ const trustFactors = [
 ];
 
 const metrics = [
-  { label: "Registered Users", value: "12,847" },
-  { label: "Active Traders", value: "10,234" },
-  { label: "Total Trades Executed", value: "2.3M+" },
-  { label: "Average User ROI", value: "28.4%" }
+  { label: "Registered Users", value: "12,847", updated: "Live" },
+  { label: "Active Traders", value: "10,234", updated: "Live" },
+  { label: "Total Trades Executed", value: "2.3M+", updated: "Live" },
+  { label: "Average User ROI", value: "+28.4%", updated: "This Month" }
 ];
 
 export const TrustTransparency = () => {
@@ -106,6 +106,7 @@ export const TrustTransparency = () => {
                     {metric.value}
                   </div>
                   <div className="text-sm text-muted-foreground">{metric.label}</div>
+                  <div className="text-xs text-primary/70 mt-1">Updated: {metric.updated}</div>
                 </div>
               ))}
             </div>
