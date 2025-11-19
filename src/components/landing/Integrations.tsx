@@ -10,10 +10,10 @@ const brokers = [
     features: ["Real-time data feed", "Trade execution", "Position management", "Order types: Market, Limit, Stop"]
   },
   {
-    name: "IC Markets",
+    name: "XM",
     type: "Forex Broker",
     status: "Recommended",
-    features: ["Low spreads (0.0 pips)", "ECN execution", "MT5 compatible", "Crypto CFDs available"]
+    features: ["Low spreads", "Fast execution", "MT5 compatible", "Multiple account types"]
   },
   {
     name: "Pepperstone",
@@ -22,10 +22,10 @@ const brokers = [
     features: ["Fast execution", "MT5 integration", "Multiple asset classes", "Competitive spreads"]
   },
   {
-    name: "FBS",
+    name: "Vantage",
     type: "Forex Broker",
     status: "Compatible",
-    features: ["MT5 support", "Crypto trading", "High leverage options", "Multiple account types"]
+    features: ["MT5 support", "Crypto trading", "Fast execution", "Competitive spreads"]
   }
 ];
 
