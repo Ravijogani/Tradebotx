@@ -1,8 +1,8 @@
 const stats = [
   { value: "98.7%", label: "Uptime Reliability" },
-  { value: "10,000+", label: "Active Traders" },
+  { value: "12,847", label: "Registered Users" },
   { value: "$50M+", label: "Trading Volume" },
-  { value: "24/7", label: "Market Monitoring" },
+  { value: "2.3M+", label: "Trades Executed" },
 ];
 
 export const Stats = () => {
