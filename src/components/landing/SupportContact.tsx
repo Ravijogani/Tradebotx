@@ -17,7 +17,7 @@ const supportChannels = [
     title: "Email Support",
     description: "Detailed assistance for complex issues",
     action: "Email Us",
-    link: "mailto:support@tradebotx.com",
+    link: "mailto:tradebotxsuppo@gmail.com",
     availability: "Response in 24-48h",
     color: "from-purple-500 to-pink-500"
   },
