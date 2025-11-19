@@ -68,10 +68,6 @@ serve(async (req) => {
       console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
     }
 
-    // Extract user token from Authorization header
-    const authHeader = req.headers.get('Authorization');
-    const userToken = authHeader?.replace('Bearer ', '') || '';
-    
     // Prepare bot configuration
     const botConfig = {
       user_id: user.id,
@@ -86,8 +82,7 @@ serve(async (req) => {
       telegram_chat_id: setup.telegram_chat_id,
       telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
-      supabase_anon_key: Deno.env.get('SUPABASE_ANON_KEY'),
-      supabase_user_token: userToken,
+      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
       action: action
     };

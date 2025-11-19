@@ -172,7 +172,7 @@ def start_bot():
             return jsonify({'error': f'Bot script not found at {bot_script}'}), 500
 
         # 3. === MODIFIED ===
-        # Build the command list with NAMED arguments - using anon key + user token
+        # Build the command list with NAMED arguments - using service key
         logger.info("Building command list with named arguments...")
         command = [
             sys.executable,
@@ -183,8 +183,7 @@ def start_bot():
             '--mt5-password', str(config.get('mt5_password')),
             '--mt5-server', str(config.get('mt5_server')),
             '--supabase-url', str(config.get('supabase_url')),
-            '--supabase-anon-key', str(config.get('supabase_anon_key')),
-            '--supabase-user-token', str(config.get('supabase_user_token')),
+            '--supabase-key', str(config.get('supabase_service_key')),
             '--gemini-api-key', str(config.get('gemini_api_key'))
         ]
 
