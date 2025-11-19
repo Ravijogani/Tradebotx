@@ -1,6 +1,9 @@
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Download, ExternalLink, BarChart3 } from "lucide-react";
+import { TrendingUp, Download, ExternalLink, BarChart3, Activity } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const backtestingReports = [
   {
@@ -37,6 +40,60 @@ const liveMetrics = [
 ];
 
 export const LivePerformance = () => {
+  const [equityData, setEquityData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadEquityData();
+    
+    // Subscribe to real-time updates
+    const channel = supabase
+      .channel('equity-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bot_heartbeats'
+        },
+        () => loadEquityData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const loadEquityData = async () => {
+    try {
+      // Fetch last 30 heartbeat records to show equity curve
+      const { data, error } = await supabase
+        .from('bot_heartbeats')
+        .select('equity, balance, last_heartbeat')
+        .order('last_heartbeat', { ascending: true })
+        .limit(30);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const formattedData = data.map((item) => ({
+          time: new Date(item.last_heartbeat).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }),
+          equity: item.equity || 0,
+          balance: item.balance || 0
+        }));
+        setEquityData(formattedData);
+      }
+    } catch (error) {
+      console.error('Error loading equity data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <section id="performance" className="py-16 sm:py-24 md:py-32 relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-background via-primary/5 to-background"></div>
@@ -90,13 +147,75 @@ export const LivePerformance = () => {
               ))}
             </div>
 
-            {/* Equity Curve Placeholder */}
-            <div className="aspect-video w-full bg-gradient-to-br from-primary/5 to-accent/5 rounded-lg border border-border/50 flex items-center justify-center">
-              <div className="text-center">
-                <BarChart3 className="w-16 h-16 text-primary/50 mx-auto mb-4" />
-                <p className="text-muted-foreground">Live equity curve widget will be embedded here</p>
-                <p className="text-sm text-muted-foreground/60 mt-2">Connected to live trading account via MyFxBook API</p>
-              </div>
+            {/* Live Equity Curve */}
+            <div className="w-full bg-gradient-to-br from-primary/5 to-accent/5 rounded-lg border border-border/50 p-4">
+              {loading ? (
+                <div className="aspect-video flex items-center justify-center">
+                  <div className="text-center">
+                    <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-pulse" />
+                    <p className="text-muted-foreground">Loading live data...</p>
+                  </div>
+                </div>
+              ) : equityData.length > 0 ? (
+                <div className="h-[400px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={equityData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis 
+                        dataKey="time" 
+                        className="text-xs"
+                        stroke="hsl(var(--muted-foreground))"
+                      />
+                      <YAxis 
+                        className="text-xs"
+                        stroke="hsl(var(--muted-foreground))"
+                        domain={['auto', 'auto']}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'hsl(var(--background))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px'
+                        }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="equity" 
+                        stroke="hsl(var(--primary))" 
+                        strokeWidth={3}
+                        dot={false}
+                        name="Equity"
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="balance" 
+                        stroke="hsl(var(--accent))" 
+                        strokeWidth={3}
+                        dot={false}
+                        name="Balance"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <div className="flex gap-6 justify-center mt-4 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-primary" />
+                      <span className="text-muted-foreground">Equity (with floating P&L)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-accent" />
+                      <span className="text-muted-foreground">Balance (realized P&L)</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="aspect-video flex items-center justify-center">
+                  <div className="text-center">
+                    <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground mb-2">No trading data available yet</p>
+                    <p className="text-sm text-muted-foreground/60">Start trading to see your live equity curve</p>
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
         </div>
