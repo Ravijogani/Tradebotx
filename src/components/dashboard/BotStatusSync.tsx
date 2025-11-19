@@ -140,6 +140,23 @@ export const BotStatusSync = () => {
             })
             .eq("id", strategy.id);
         }
+
+        // Update PID if it's missing in user_strategies but exists in heartbeat
+        if (heartbeat.status === 'running' && strategy.status === 'running' && heartbeat.pid) {
+          const { data: currentStrategy } = await supabase
+            .from("user_strategies")
+            .select("bot_pid")
+            .eq("id", strategy.id)
+            .single();
+
+          if (currentStrategy && !currentStrategy.bot_pid) {
+            console.log(`🔄 Syncing PID ${heartbeat.pid} to user_strategies for strategy ${strategy.strategy_id}`);
+            await supabase
+              .from("user_strategies")
+              .update({ bot_pid: heartbeat.pid })
+              .eq("id", strategy.id);
+          }
+        }
       }
     };
 
