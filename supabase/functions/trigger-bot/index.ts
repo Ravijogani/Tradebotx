@@ -68,16 +68,7 @@ serve(async (req) => {
       console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
     }
 
-    // Extract user's current session token from request
-    const authHeader = req.headers.get('Authorization');
-    const userToken = authHeader?.replace('Bearer ', '');
-    
-    if (!userToken) {
-      throw new Error('Authentication token required');
-    }
-
     // Prepare bot configuration
-    // Bot manager will use user token for database operations (respects RLS)
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
@@ -91,8 +82,7 @@ serve(async (req) => {
       telegram_chat_id: setup.telegram_chat_id,
       telegram_bot_token: Deno.env.get('TELEGRAM_BOT_TOKEN'),
       supabase_url: Deno.env.get('SUPABASE_URL'),
-      supabase_anon_key: Deno.env.get('SUPABASE_ANON_KEY'),
-      supabase_user_token: userToken, // User-scoped token respects RLS policies
+      supabase_service_key: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
       gemini_api_key: Deno.env.get('GEMINI_API_KEY'),
       action: action
     };

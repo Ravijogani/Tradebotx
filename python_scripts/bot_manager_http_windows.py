@@ -183,8 +183,7 @@ def start_bot():
             '--mt5-password', str(config.get('mt5_password')),
             '--mt5-server', str(config.get('mt5_server')),
             '--supabase-url', str(config.get('supabase_url')),
-            '--supabase-key', str(config.get('supabase_user_token')),
-            '--supabase-anon-key', str(config.get('supabase_anon_key', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxZ3FnbXpsdmJnbHVzdXBzanB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NzIwNzIsImV4cCI6MjA3ODE0ODA3Mn0.OLlqLUalx9g3EtgE95q4OwZjB2kj9CSJ5x0O7atQobI')),
+            '--supabase-key', str(config.get('supabase_service_key')),
             '--gemini-api-key', str(config.get('gemini_api_key'))
         ]
 
