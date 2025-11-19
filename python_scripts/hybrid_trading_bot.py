@@ -60,9 +60,7 @@ parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
 parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
-parser.add_argument('--supabase-key', type=str, required=True, help='Supabase User JWT Token')
-parser.add_argument('--supabase-anon-key', type=str, required=False, help='Supabase Anon Key', 
-                    default='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxZ3FnbXpsdmJnbHVzdXBzanB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NzIwNzIsImV4cCI6MjA3ODE0ODA3Mn0.OLlqLUalx9g3EtgE95q4OwZjB2kj9CSJ5x0O7atQobI')
+parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Role Key')
 parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
 
 args = parser.parse_args()
@@ -73,11 +71,8 @@ STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
 
-# Initialize Supabase client with anon key
-supabase: Client = create_client(args.supabase_url, args.supabase_anon_key)
-
-# Authenticate with user token for RLS policies
-supabase.postgrest.auth(args.supabase_key)
+# Initialize Supabase client with service role key
+supabase: Client = create_client(args.supabase_url, args.supabase_key)
 
 # =============================================================================
 # CONFIGURATION
