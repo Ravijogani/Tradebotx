@@ -1,4 +1,4 @@
-import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain } from "lucide-react";
+import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -38,6 +38,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
   ];
 
   const quickAccessItems = [
+    { id: "journal", label: "Trade Journal", icon: BookOpen, path: "/trade-journal" },
     { id: "payments", label: "Payments", icon: FileText, path: "/payment-history" },
     { id: "referrals", label: "Referrals", icon: Gift, path: "/referral-program" },
     { id: "reports", label: "Reports", icon: BarChart3, path: "/pl-reports" },
