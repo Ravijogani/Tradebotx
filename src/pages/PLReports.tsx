@@ -10,6 +10,9 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import SymbolPerformanceChart from "@/components/dashboard/SymbolPerformanceChart";
+import RiskMetricsCard from "@/components/dashboard/RiskMetricsCard";
+import WithdrawalMilestones from "@/components/dashboard/WithdrawalMilestones";
 
 const PLReports = () => {
   const [trades, setTrades] = useState<any[]>([]);
@@ -324,6 +327,15 @@ const PLReports = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* Withdrawal Milestones */}
+        <WithdrawalMilestones />
+
+        {/* Advanced Risk Metrics */}
+        <RiskMetricsCard />
+
+        {/* Symbol Performance */}
+        <SymbolPerformanceChart />
       </div>
     </div>
   );

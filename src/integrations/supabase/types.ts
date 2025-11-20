@@ -293,6 +293,33 @@ export type Database = {
         }
         Relationships: []
       }
+      equity_snapshots: {
+        Row: {
+          balance: number
+          created_at: string
+          equity: number
+          id: string
+          snapshot_date: string
+          user_id: string
+        }
+        Insert: {
+          balance: number
+          created_at?: string
+          equity: number
+          id?: string
+          snapshot_date?: string
+          user_id: string
+        }
+        Update: {
+          balance?: number
+          created_at?: string
+          equity?: number
+          id?: string
+          snapshot_date?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       invoices: {
         Row: {
           amount: number
@@ -774,6 +801,54 @@ export type Database = {
         }
         Relationships: []
       }
+      symbol_performance: {
+        Row: {
+          avg_loss: number
+          avg_win: number
+          best_trade: number
+          id: string
+          last_updated: string
+          losing_trades: number
+          symbol: string
+          total_pnl: number
+          total_trades: number
+          user_id: string
+          win_rate: number
+          winning_trades: number
+          worst_trade: number
+        }
+        Insert: {
+          avg_loss?: number
+          avg_win?: number
+          best_trade?: number
+          id?: string
+          last_updated?: string
+          losing_trades?: number
+          symbol: string
+          total_pnl?: number
+          total_trades?: number
+          user_id: string
+          win_rate?: number
+          winning_trades?: number
+          worst_trade?: number
+        }
+        Update: {
+          avg_loss?: number
+          avg_win?: number
+          best_trade?: number
+          id?: string
+          last_updated?: string
+          losing_trades?: number
+          symbol?: string
+          total_pnl?: number
+          total_trades?: number
+          user_id?: string
+          win_rate?: number
+          winning_trades?: number
+          worst_trade?: number
+        }
+        Relationships: []
+      }
       ticket_messages: {
         Row: {
           created_at: string
@@ -1185,6 +1260,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      withdrawal_milestones: {
+        Row: {
+          achieved_at: string
+          created_at: string
+          id: string
+          initial_equity: number
+          milestone_type: string
+          notified: boolean
+          safe_withdrawal_amount: number | null
+          trigger_equity: number
+          user_id: string
+        }
+        Insert: {
+          achieved_at?: string
+          created_at?: string
+          id?: string
+          initial_equity: number
+          milestone_type: string
+          notified?: boolean
+          safe_withdrawal_amount?: number | null
+          trigger_equity: number
+          user_id: string
+        }
+        Update: {
+          achieved_at?: string
+          created_at?: string
+          id?: string
+          initial_equity?: number
+          milestone_type?: string
+          notified?: boolean
+          safe_withdrawal_amount?: number | null
+          trigger_equity?: number
+          user_id?: string
+        }
+        Relationships: []
       }
     }
     Views: {
