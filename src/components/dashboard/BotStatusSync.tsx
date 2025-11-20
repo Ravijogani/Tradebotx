@@ -14,12 +14,12 @@ export const BotStatusSync = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Get ALL user's strategies to check against heartbeats
-      // This ensures we catch bots that are actually running but DB status is outdated
+      // Get all user's strategies that are starting or running
       const { data: activeStrategies } = await supabase
         .from("user_strategies")
-        .select("id, strategy_id, user_id, status, is_running, bot_pid")
-        .eq("user_id", user.id);
+        .select("id, strategy_id, user_id, status, is_running")
+        .eq("user_id", user.id)
+        .in("status", ["starting", "running"]);
 
       if (!activeStrategies || activeStrategies.length === 0) return;
 
@@ -139,23 +139,6 @@ export const BotStatusSync = () => {
               bot_pid: heartbeat.pid
             })
             .eq("id", strategy.id);
-        }
-
-        // Update PID if it's missing in user_strategies but exists in heartbeat
-        if (heartbeat.status === 'running' && strategy.status === 'running' && heartbeat.pid) {
-          const { data: currentStrategy } = await supabase
-            .from("user_strategies")
-            .select("bot_pid")
-            .eq("id", strategy.id)
-            .single();
-
-          if (currentStrategy && !currentStrategy.bot_pid) {
-            console.log(`🔄 Syncing PID ${heartbeat.pid} to user_strategies for strategy ${strategy.strategy_id}`);
-            await supabase
-              .from("user_strategies")
-              .update({ bot_pid: heartbeat.pid })
-              .eq("id", strategy.id);
-          }
         }
       }
     };
