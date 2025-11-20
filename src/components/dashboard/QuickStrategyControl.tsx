@@ -57,11 +57,15 @@ export const QuickStrategyControl = () => {
         .eq("user_id", user.id)
         .maybeSingle();
 
+      console.log("Setup query result:", { setup, setupError, userId: user.id });
+
       if (setupError) {
         console.error("Error loading setup:", setupError);
       }
 
-      setSetupApproved(setup?.admin_approved === true);
+      const isApproved = setup?.admin_approved === true;
+      console.log("Admin approved status:", isApproved);
+      setSetupApproved(isApproved);
 
       // Load user strategies with strategy details
       const { data, error } = await supabase
