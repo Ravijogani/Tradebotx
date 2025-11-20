@@ -14,12 +14,12 @@ export const BotStatusSync = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Get all user's strategies that are starting or running
+      // Get ALL user's strategies to check against heartbeats
+      // This ensures we catch bots that are actually running but DB status is outdated
       const { data: activeStrategies } = await supabase
         .from("user_strategies")
-        .select("id, strategy_id, user_id, status, is_running")
-        .eq("user_id", user.id)
-        .in("status", ["starting", "running"]);
+        .select("id, strategy_id, user_id, status, is_running, bot_pid")
+        .eq("user_id", user.id);
 
       if (!activeStrategies || activeStrategies.length === 0) return;
 
