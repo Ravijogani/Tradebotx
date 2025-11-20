@@ -74,7 +74,7 @@ serve(async (req) => {
       .select('last_heartbeat, status, pid')
       .eq('user_id', user.id)
       .eq('strategy_id', strategyId)
-      .single();
+      .maybeSingle();
 
     if (recentHeartbeat) {
       const lastHeartbeatTime = new Date(recentHeartbeat.last_heartbeat).getTime();
