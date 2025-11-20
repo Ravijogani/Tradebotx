@@ -187,21 +187,21 @@ const PLReports = () => {
   const chartData = getChartData();
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
+    <div className="min-h-[100dvh] bg-background p-3 sm:p-4 md:p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")} className="flex-shrink-0 touch-manipulation min-h-[44px] min-w-[44px]">
               <ArrowLeft className="w-5 h-5" />
             </Button>
-            <div>
-              <h1 className="text-3xl font-bold">P&L Reports</h1>
-              <p className="text-muted-foreground">Detailed profit and loss analytics</p>
+            <div className="flex-1 sm:flex-initial">
+              <h1 className="text-2xl sm:text-3xl font-bold">P&L Reports</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground">Detailed profit and loss analytics</p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <Select value={dateRange} onValueChange={setDateRange}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-full sm:w-40 touch-manipulation">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -211,7 +211,7 @@ const PLReports = () => {
                 <SelectItem value="365">Last year</SelectItem>
               </SelectContent>
             </Select>
-            <Button onClick={exportToPDF}>
+            <Button onClick={exportToPDF} className="w-full sm:w-auto touch-manipulation min-h-[44px]">
               <Download className="w-4 h-4 mr-2" />
               Export PDF
             </Button>
@@ -219,18 +219,18 @@ const PLReports = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total P&L</CardTitle>
+              <CardTitle className="text-xs sm:text-sm font-medium">Total P&L</CardTitle>
               {stats.totalPL >= 0 ? (
-                <TrendingUp className="h-4 w-4 text-green-500" />
+                <TrendingUp className="h-4 w-4 text-success flex-shrink-0" />
               ) : (
-                <TrendingDown className="h-4 w-4 text-red-500" />
+                <TrendingDown className="h-4 w-4 text-destructive flex-shrink-0" />
               )}
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-bold ${stats.totalPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              <div className={`text-lg sm:text-2xl font-bold ${stats.totalPL >= 0 ? 'text-success' : 'text-destructive'} break-words`}>
                 ₹{stats.totalPL.toFixed(2)}
               </div>
             </CardContent>
@@ -238,28 +238,28 @@ const PLReports = () => {
 
           <Card>
             <CardHeader className="space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Win Rate</CardTitle>
+              <CardTitle className="text-xs sm:text-sm font-medium">Win Rate</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.winRate.toFixed(2)}%</div>
+              <div className="text-lg sm:text-2xl font-bold">{stats.winRate.toFixed(2)}%</div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Trades</CardTitle>
+              <CardTitle className="text-xs sm:text-sm font-medium">Total Trades</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.totalTrades}</div>
+              <div className="text-lg sm:text-2xl font-bold">{stats.totalTrades}</div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Avg Profit/Trade</CardTitle>
+              <CardTitle className="text-xs sm:text-sm font-medium">Avg Profit/Trade</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-bold ${stats.avgProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              <div className={`text-lg sm:text-2xl font-bold ${stats.avgProfit >= 0 ? 'text-success' : 'text-destructive'} break-words`}>
                 ₹{stats.avgProfit.toFixed(2)}
               </div>
             </CardContent>
@@ -268,55 +268,63 @@ const PLReports = () => {
 
         {/* Charts */}
         {chartData.length > 0 ? (
-          <>
+          <div className="grid grid-cols-1 gap-4 sm:gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Cumulative P&L</CardTitle>
-                <CardDescription>Your cumulative profit/loss over time</CardDescription>
+                <CardTitle className="text-base sm:text-lg">Cumulative P&L</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">Your cumulative profit/loss over time</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line 
-                      type="monotone" 
-                      dataKey="cumulative" 
-                      stroke="hsl(var(--primary))" 
-                      strokeWidth={2}
-                      name="Cumulative P&L"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                <div className="w-full overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                  <div className="min-w-[400px]">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: '12px' }} />
+                        <Line 
+                          type="monotone" 
+                          dataKey="cumulative" 
+                          stroke="hsl(var(--primary))" 
+                          strokeWidth={2}
+                          name="Cumulative P&L"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Trade-by-Trade P&L</CardTitle>
-                <CardDescription>Individual trade performance</CardDescription>
+                <CardTitle className="text-base sm:text-lg">Trade-by-Trade P&L</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">Individual trade performance</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar 
-                      dataKey="pl" 
-                      fill="hsl(var(--primary))"
-                      name="P&L per Trade"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="w-full overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                  <div className="min-w-[400px]">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: '12px' }} />
+                        <Bar 
+                          dataKey="pl" 
+                          fill="hsl(var(--primary))"
+                          name="P&L per Trade"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-          </>
+          </div>
         ) : (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">

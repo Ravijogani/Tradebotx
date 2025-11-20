@@ -5,7 +5,7 @@ import heroImage from "@/assets/hero-trading.jpg";
 
 export const Hero = () => {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+    <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden">
       {/* Animated background gradient mesh */}
       <div className="absolute inset-0 bg-gradient-mesh opacity-50 animate-float"></div>
       
@@ -23,23 +23,23 @@ export const Hero = () => {
 
       {/* Floating particles effect */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/20 rounded-full blur-3xl animate-float"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-accent/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '1.5s' }}></div>
+        <div className="absolute top-1/4 left-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-primary/20 rounded-full blur-3xl animate-float"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-accent/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '1.5s' }}></div>
       </div>
 
       {/* Content */}
-      <div className="container mx-auto px-4 sm:px-6 py-20 sm:py-28 md:py-32 relative z-10">
+      <div className="container mx-auto px-4 sm:px-6 py-16 sm:py-20 md:py-28 lg:py-32 relative z-10">
         <div className="max-w-5xl mx-auto text-center">
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-6 sm:mb-8 animate-fade-in">
-            <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary" />
-            <span className="text-xs sm:text-sm font-medium bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent whitespace-nowrap">
               Next-Gen AI Trading Platform
             </span>
           </div>
 
           {/* Main heading */}
-          <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl xl:text-8xl font-bold mb-4 sm:mb-6 leading-tight animate-fade-in-up px-2">
+          <h1 className="font-display text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold mb-4 sm:mb-6 leading-tight animate-fade-in-up px-2">
             <span className="bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent">
               Trade Smarter with
             </span>
@@ -50,22 +50,22 @@ export const Hero = () => {
           </h1>
 
           {/* Subheading */}
-          <p className="text-base sm:text-lg md:text-xl lg:text-2xl text-muted-foreground/90 mb-8 sm:mb-12 max-w-3xl mx-auto leading-relaxed animate-fade-in px-4" style={{ animationDelay: '0.2s' }}>
+          <p className="text-sm sm:text-base md:text-lg lg:text-xl text-muted-foreground/90 mb-6 sm:mb-8 md:mb-12 max-w-3xl mx-auto leading-relaxed animate-fade-in px-4" style={{ animationDelay: '0.2s' }}>
             Harness the power of advanced algorithms and machine learning to automate your forex and crypto trading. 
             <span className="text-foreground font-semibold"> Maximize profits while minimizing risk.</span>
           </p>
 
           {/* Feature pills */}
-          <div className="flex flex-wrap justify-center gap-2 sm:gap-3 md:gap-4 mb-8 sm:mb-12 animate-fade-in px-4" style={{ animationDelay: '0.3s' }}>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border">
+          <div className="flex flex-wrap justify-center gap-2 sm:gap-3 md:gap-4 mb-6 sm:mb-8 md:mb-12 animate-fade-in px-4" style={{ animationDelay: '0.3s' }}>
+            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
               <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-success flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">98.7% Uptime</span>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border">
+            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
               <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">Bank-Grade Security</span>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border">
+            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
               <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">Real-Time Execution</span>
             </div>

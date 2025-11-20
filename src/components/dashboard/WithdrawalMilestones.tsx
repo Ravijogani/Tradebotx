@@ -103,9 +103,9 @@ export default function WithdrawalMilestones() {
 
   if (loading) {
     return (
-      <Card className="p-6">
-        <Skeleton className="h-8 w-48 mb-4" />
-        <Skeleton className="h-32 w-full" />
+      <Card className="p-4 sm:p-6">
+        <Skeleton className="h-6 sm:h-8 w-36 sm:w-48 mb-4" />
+        <Skeleton className="h-24 sm:h-32 w-full" />
       </Card>
     );
   }
@@ -116,21 +116,21 @@ export default function WithdrawalMilestones() {
   const progressToNext = ((currentEquity / nextMilestone) * 100).toFixed(1);
 
   return (
-    <Card className="p-6">
-      <div className="flex items-center gap-2 mb-6">
-        <Trophy className="h-5 w-5 text-primary" />
-        <h3 className="text-lg font-semibold">Withdrawal Milestones</h3>
+    <Card className="p-4 sm:p-6">
+      <div className="flex items-center gap-2 mb-4 sm:mb-6">
+        <Trophy className="h-4 w-4 sm:h-5 sm:w-5 text-primary flex-shrink-0" />
+        <h3 className="text-base sm:text-lg font-semibold">Withdrawal Milestones</h3>
       </div>
 
       {/* Current Progress */}
-      <Card className="p-4 mb-6 bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+      <Card className="p-3 sm:p-4 mb-4 sm:mb-6 bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium">Progress to Next Milestone</span>
-          <span className="text-sm font-bold">{progressToNext}%</span>
+          <span className="text-xs sm:text-sm font-medium">Progress to Next Milestone</span>
+          <span className="text-xs sm:text-sm font-bold">{progressToNext}%</span>
         </div>
-        <div className="w-full bg-muted rounded-full h-3 mb-3">
+        <div className="w-full bg-muted rounded-full h-2 sm:h-3 mb-2 sm:mb-3">
           <div 
-            className="bg-gradient-to-r from-primary to-primary/80 h-3 rounded-full transition-all duration-500"
+            className="bg-gradient-to-r from-primary to-primary/80 h-2 sm:h-3 rounded-full transition-all duration-500"
             style={{ width: `${Math.min(parseFloat(progressToNext), 100)}%` }}
           />
         </div>
@@ -142,10 +142,10 @@ export default function WithdrawalMilestones() {
 
       {/* Milestones List */}
       {milestones.length === 0 ? (
-        <div className="text-center py-8">
-          <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-          <p className="text-muted-foreground">No milestones achieved yet.</p>
-          <p className="text-sm text-muted-foreground mt-1">
+        <div className="text-center py-6 sm:py-8">
+          <TrendingUp className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">No milestones achieved yet.</p>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
             Reach ${(initialEquity * 2).toFixed(2)} to unlock your first milestone!
           </p>
         </div>
@@ -154,23 +154,23 @@ export default function WithdrawalMilestones() {
           {milestones.map((milestone) => (
             <Card 
               key={milestone.id} 
-              className={`p-4 ${!milestone.notified ? 'border-primary bg-primary/5' : 'bg-muted/30'}`}
+              className={`p-3 sm:p-4 ${!milestone.notified ? 'border-primary bg-primary/5' : 'bg-muted/30'}`}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-3">
+              <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
                   {milestone.milestone_type === '2x' ? (
-                    <Trophy className="h-5 w-5 text-primary mt-1" />
+                    <Trophy className="h-4 w-4 sm:h-5 sm:w-5 text-primary mt-1 flex-shrink-0" />
                   ) : (
-                    <Wallet className="h-5 w-5 text-primary mt-1" />
+                    <Wallet className="h-4 w-4 sm:h-5 sm:w-5 text-primary mt-1 flex-shrink-0" />
                   )}
-                  <div>
-                    <h4 className="font-semibold mb-1">
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-semibold mb-1 text-sm sm:text-base">
                       {milestone.milestone_type === '2x' ? '2x Initial Capital!' : '50% Growth Milestone'}
                     </h4>
-                    <p className="text-sm text-muted-foreground mb-2">
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-2">
                       Achieved on {new Date(milestone.achieved_at).toLocaleDateString()}
                     </p>
-                    <div className="space-y-1 text-sm">
+                    <div className="space-y-1 text-xs sm:text-sm">
                       <p>Equity at milestone: <span className="font-semibold">${milestone.trigger_equity.toFixed(2)}</span></p>
                       <p className="text-success">
                         <Wallet className="h-3 w-3 inline mr-1" />
@@ -184,6 +184,7 @@ export default function WithdrawalMilestones() {
                     size="sm" 
                     variant="outline"
                     onClick={() => markAsNotified(milestone.id)}
+                    className="w-full sm:w-auto touch-target"
                   >
                     <CheckCircle className="h-4 w-4 mr-1" />
                     Acknowledge
@@ -195,9 +196,9 @@ export default function WithdrawalMilestones() {
         </div>
       )}
 
-      <div className="mt-6 p-4 bg-muted/20 rounded-lg">
-        <h4 className="font-medium mb-2 text-sm">About Safe Withdrawals</h4>
-        <p className="text-xs text-muted-foreground">
+      <div className="mt-4 sm:mt-6 p-3 sm:p-4 bg-muted/20 rounded-lg">
+        <h4 className="font-medium mb-2 text-xs sm:text-sm">About Safe Withdrawals</h4>
+        <p className="text-xs text-muted-foreground leading-relaxed">
           Safe withdrawal amounts are calculated to protect your initial capital while allowing you to realize profits. 
           For the first 2x milestone, we suggest withdrawing 70% of profit. For subsequent 50% growth milestones, 
           we suggest 50% of total profit to maintain compound growth potential.
