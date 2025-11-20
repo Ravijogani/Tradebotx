@@ -68,11 +68,15 @@ class SupabaseTradingBot:
     def update_heartbeat(self, status: str = 'running', mt5_connected: bool = True, error_message: str = None):
         """Update bot heartbeat in Supabase"""
         try:
+            # Get current process ID
+            pid = os.getpid() if status == 'running' else None
+            
             self.supabase.table('bot_heartbeats').upsert({
                 'user_id': self.user_id,
                 'strategy_id': self.strategy_id,
                 'last_heartbeat': datetime.utcnow().isoformat(),
                 'status': status,
+                'pid': pid,  # Include PID so system knows bot is actually running
                 'mt5_connected': mt5_connected,
                 'error_message': error_message,
                 'metadata': {
@@ -377,6 +381,12 @@ class SupabaseTradingBot:
             except:
                 pass
         finally:
+            # Ensure heartbeat is cleared when bot exits
+            try:
+                self.update_heartbeat(status='stopped', mt5_connected=False)
+            except:
+                pass
+            
             mt5.shutdown()
             logger.info("🛑 Bot shutdown complete")
 
