@@ -14,17 +14,24 @@ export const StatsOverview = () => {
   useEffect(() => {
     loadStats();
 
-    // Realtime subscription for live updates
+    // Realtime subscription with debounce to prevent excessive reloads
+    let debounceTimer: NodeJS.Timeout;
+    
     const channel = supabase
       .channel('stats-overview')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'trades' },
-        () => loadStats()
+        () => {
+          // Debounce stats reload to once every 3 seconds
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => loadStats(), 3000);
+        }
       )
       .subscribe();
 
     return () => {
+      clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);

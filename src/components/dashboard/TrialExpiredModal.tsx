@@ -4,24 +4,38 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertTriangle, Lock } from "lucide-react";
 import { RazorpayDialog } from "@/components/payment/RazorpayDialog";
-import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 export function TrialExpiredModal() {
   const [showPayment, setShowPayment] = useState(false);
-  
-  // Check user's trial status
-  const { data: user } = useQuery<any>({
-    queryKey: ['/api/custom-auth/user'],
-  });
+  const [isTrialExpired, setIsTrialExpired] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  // Show modal if trial is expired and user is on free plan
-  const isTrialExpired = user?.trialExpired && user?.subscriptionTier === 'starter';
+  useEffect(() => {
+    checkTrialStatus();
+  }, []);
+
+  const checkTrialStatus = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    
+    setUserId(user.id);
+
+    const { data: subscription } = await supabase
+      .from("user_subscriptions")
+      .select("status, trial_ends_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const trialExpired = subscription?.status === 'expired';
+    setIsTrialExpired(trialExpired);
+  };
 
   if (!isTrialExpired) {
     return null;
   }
 
-  if (showPayment && user?.id) {
+  if (showPayment && userId) {
     return (
       <RazorpayDialog
         open={true}
@@ -35,7 +49,7 @@ export function TrialExpiredModal() {
         planId="pro_plan"
         planName="Pro"
         amount={99}
-        userId={user.id}
+        userId={userId}
       />
     );
   }
