@@ -30,15 +30,19 @@ export const StrategySelector = () => {
         .eq('user_id', user.id)
         .single();
 
-      const { data: setup } = await supabase
+      const { data: setup, error: setupError } = await supabase
         .from('user_setup')
         .select('admin_approved')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
+
+      if (setupError) {
+        console.error("Error loading setup:", setupError);
+      }
 
       const type = (subscription?.plans as any)?.plan_type || '';
       setPlanType(type);
-      setAdminApproved(setup?.admin_approved || false);
+      setAdminApproved(setup?.admin_approved === true);
     } catch (error) {
       console.error('Error checking approval:', error);
     }

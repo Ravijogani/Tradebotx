@@ -79,13 +79,17 @@ export const StrategySelection = () => {
       if (!user) return;
 
       // Check if setup is approved
-      const { data: setup } = await supabase
+      const { data: setup, error: setupError } = await supabase
         .from("user_setup")
         .select("admin_approved")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (!setup?.admin_approved) {
+      if (setupError) {
+        console.error("Error loading setup:", setupError);
+      }
+
+      if (setup?.admin_approved !== true) {
         setSetupApproved(false);
         setLoading(false);
         return;
