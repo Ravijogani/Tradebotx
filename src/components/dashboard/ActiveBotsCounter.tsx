@@ -28,20 +28,35 @@ export const ActiveBotsCounter = () => {
 
   const loadActiveBots = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      // Simple rule: Count strategies where bot_pid exists (not null)
+      // Bot is running ONLY if bot_pid exists (not null)
       const { data, error } = await supabase
         .from("user_strategies")
-        .select("id, bot_pid")
-        .eq("user_id", user.id)
+        .select("id, bot_pid, user_id, strategy_id")
         .not("bot_pid", "is", null);
 
       if (error) throw error;
       
-      const activeCount = data?.length || 0;
-      console.log(`🤖 Active bots count: ${activeCount}`);
+      // Double check with heartbeat freshness
+      let activeCount = 0;
+      if (data && data.length > 0) {
+        for (const strategy of data) {
+          const { data: heartbeat } = await supabase
+            .from("bot_heartbeats")
+            .select("last_heartbeat, pid")
+            .eq("user_id", strategy.user_id)
+            .eq("strategy_id", strategy.strategy_id)
+            .maybeSingle();
+
+          if (heartbeat?.pid) {
+            const diffSeconds = (Date.now() - new Date(heartbeat.last_heartbeat).getTime()) / 1000;
+            // Increased threshold to 60s to account for network/DB latency
+            if (diffSeconds <= 60) {
+              activeCount++;
+            }
+          }
+        }
+      }
+      
       setActiveBots(activeCount);
     } catch (error) {
       console.error("Error loading active bots:", error);
