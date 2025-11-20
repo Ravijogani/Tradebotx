@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   ArrowUpRight, 
@@ -310,61 +311,63 @@ export const TradesListEnhanced = () => {
             </p>
           </div>
         ) : (
-          <div className="space-y-2 overflow-x-auto">
-            {filteredTrades.map((trade) => (
-              <div
-                key={trade.id}
-                className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group gap-2 sm:gap-4 min-w-0"
-              >
-                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-                  {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors flex-shrink-0">
-                      <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-success" />
-                    </div>
-                  ) : (
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors flex-shrink-0">
-                      <ArrowDownRight className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
-                    </div>
-                  )}
-
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm sm:text-base text-foreground group-hover:text-primary transition-colors truncate">
-                      {trade.symbol}
-                    </div>
-                    <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 sm:gap-2 flex-wrap">
-                      <span className="font-medium">{trade.trade_type}</span>
-                      <span className="hidden sm:inline">•</span>
-                      <span className="text-xs">{new Date(trade.opened_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex sm:flex-row items-center justify-between sm:justify-end gap-2 sm:gap-3 border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-3">
-                  <div className="flex-1 sm:flex-initial sm:text-right">
-                    {trade.profit_loss && (
-                      <div
-                        className={`text-base sm:text-lg font-bold ${
-                          parseFloat(trade.profit_loss) >= 0
-                            ? "text-success"
-                            : "text-destructive"
-                        }`}
-                      >
-                        {parseFloat(trade.profit_loss) >= 0 ? "+" : ""}
-                        ${parseFloat(trade.profit_loss).toFixed(2)}
+          <ScrollArea className="h-[600px] px-4">
+            <div className="space-y-2 pr-4">
+              {filteredTrades.map((trade) => (
+                <div
+                  key={trade.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group gap-2 sm:gap-4 min-w-0"
+                >
+                  <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                    {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors flex-shrink-0">
+                        <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-success" />
+                      </div>
+                    ) : (
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors flex-shrink-0">
+                        <ArrowDownRight className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
                       </div>
                     )}
-                    <Badge
-                      variant={trade.status === "executed" ? "default" : "secondary"}
-                      className="min-w-[60px] sm:min-w-[80px] justify-center text-xs mt-1"
-                    >
-                      {trade.status}
-                    </Badge>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm sm:text-base text-foreground group-hover:text-primary transition-colors truncate">
+                        {trade.symbol}
+                      </div>
+                      <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 sm:gap-2 flex-wrap">
+                        <span className="font-medium">{trade.trade_type}</span>
+                        <span className="hidden sm:inline">•</span>
+                        <span className="text-xs">{new Date(trade.opened_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+                      </div>
+                    </div>
                   </div>
-                  <TradeJournalDialog tradeId={trade.id} />
+
+                  <div className="flex sm:flex-row items-center justify-between sm:justify-end gap-2 sm:gap-3 border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-3">
+                    <div className="flex-1 sm:flex-initial sm:text-right">
+                      {trade.profit_loss && (
+                        <div
+                          className={`text-base sm:text-lg font-bold ${
+                            parseFloat(trade.profit_loss) >= 0
+                              ? "text-success"
+                              : "text-destructive"
+                          }`}
+                        >
+                          {parseFloat(trade.profit_loss) >= 0 ? "+" : ""}
+                          ${parseFloat(trade.profit_loss).toFixed(2)}
+                        </div>
+                      )}
+                      <Badge
+                        variant={trade.status === "executed" ? "default" : "secondary"}
+                        className="min-w-[60px] sm:min-w-[80px] justify-center text-xs mt-1"
+                      >
+                        {trade.status}
+                      </Badge>
+                    </div>
+                    <TradeJournalDialog tradeId={trade.id} />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </CardContent>
     </Card>
