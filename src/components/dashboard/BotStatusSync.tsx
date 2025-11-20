@@ -14,17 +14,16 @@ export const BotStatusSync = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Get all user's strategies that are starting or running
-      const { data: activeStrategies } = await supabase
+      // Get all user's strategies (including stopped ones to check if they're actually running)
+      const { data: strategies } = await supabase
         .from("user_strategies")
-        .select("id, strategy_id, user_id, status, is_running")
-        .eq("user_id", user.id)
-        .in("status", ["starting", "running"]);
+        .select("id, strategy_id, user_id, status, is_running, bot_pid, started_at")
+        .eq("user_id", user.id);
 
-      if (!activeStrategies || activeStrategies.length === 0) return;
+      if (!strategies || strategies.length === 0) return;
 
-      // Check heartbeat for each active strategy
-      for (const strategy of activeStrategies) {
+      // Check heartbeat for each strategy
+      for (const strategy of strategies) {
         const { data: heartbeat } = await supabase
           .from("bot_heartbeats")
           .select("last_heartbeat, status, pid")
@@ -32,113 +31,75 @@ export const BotStatusSync = () => {
           .eq("strategy_id", strategy.strategy_id)
           .maybeSingle();
 
-        // If no heartbeat exists yet and status is 'starting', wait for bot to start
-        if (!heartbeat && strategy.status === 'starting') {
-          continue; // Bot is still starting up
-        }
-
-        // If no heartbeat but status is 'running', something is wrong
-        if (!heartbeat && strategy.status === 'running') {
-          console.log(`No heartbeat for running strategy ${strategy.strategy_id}, marking as crashed`);
-          await supabase
-            .from("user_strategies")
-            .update({
-              is_running: false,
-              status: 'crashed',
-              stopped_at: new Date().toISOString(),
-              bot_pid: null
-            })
-            .eq("id", strategy.id);
+        if (!heartbeat) {
+          // No heartbeat exists - if strategy thinks it's running, mark as stopped
+          if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
+            console.log(`No heartbeat for strategy ${strategy.strategy_id}, marking as stopped`);
+            await supabase
+              .from("user_strategies")
+              .update({
+                is_running: false,
+                status: 'stopped',
+                stopped_at: new Date().toISOString(),
+                bot_pid: null
+              })
+              .eq("id", strategy.id);
+          }
           continue;
         }
-
-        if (!heartbeat) continue;
 
         const lastBeat = new Date(heartbeat.last_heartbeat).getTime();
         const now = Date.now();
         const diffSeconds = (now - lastBeat) / 1000;
-        const diffMinutes = (diffSeconds / 60).toFixed(1);
 
-        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}`);
+        console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}, DB Status: ${strategy.status}`);
 
-        // 1. If PID is missing, the process is definitely dead
-        if (!heartbeat.pid) {
-          console.log(`🛑 Bot stopped (No PID found) for strategy ${strategy.strategy_id}`);
-          await supabase
-            .from("user_strategies")
-            .update({
-              is_running: false,
-              status: 'stopped',
-              stopped_at: new Date().toISOString(),
-              bot_pid: null
-            })
-            .eq("id", strategy.id);
-          
-          await supabase
-            .from("bot_heartbeats")
-            .update({ pid: null, status: 'stopped' })
-            .eq("user_id", strategy.user_id)
-            .eq("strategy_id", strategy.strategy_id);
+        // Check if heartbeat is fresh (< 60 seconds)
+        const isHeartbeatFresh = diffSeconds < 60;
+        
+        // Bot is actually running if heartbeat is fresh and has PID
+        if (isHeartbeatFresh && heartbeat.pid && heartbeat.status === 'running') {
+          // But database thinks it's stopped - FIX THIS
+          if (!strategy.is_running || strategy.status !== 'running') {
+            console.log(`✅ Bot is actually running but DB shows stopped - fixing for strategy ${strategy.strategy_id}`);
+            await supabase
+              .from("user_strategies")
+              .update({
+                is_running: true,
+                status: 'running',
+                bot_pid: heartbeat.pid,
+                started_at: strategy.started_at || new Date().toISOString()
+              })
+              .eq("id", strategy.id);
+            
+            toast({
+              title: "✅ Bot Status Synced",
+              description: "Trading bot is running and connected.",
+            });
+          }
           continue;
         }
 
-        // 2. If PID exists but heartbeat is stale (>60s), process is frozen/dead
-        // Increased threshold to account for network/database latency
-        const isStale = diffSeconds > 60;
-        if (isStale) {
-          console.warn(`⚠️ STALE HEARTBEAT: Strategy ${strategy.strategy_id} - Last beat: ${diffSeconds.toFixed(0)}s ago (PID: ${heartbeat.pid})`);
-          
-          await supabase
-            .from("user_strategies")
-            .update({
-              is_running: false,
-              status: 'stopped',
-              stopped_at: new Date().toISOString(),
-              bot_pid: null
-            })
-            .eq("id", strategy.id);
-          
-          // Clear PID in heartbeat table
-          await supabase
-            .from("bot_heartbeats")
-            .update({ pid: null, status: 'stopped' })
-            .eq("user_id", strategy.user_id)
-            .eq("strategy_id", strategy.strategy_id);
-
-          // Don't show aggressive toast - let UI components show status naturally
-          continue;
-        }
-
-        // 3. Bot is healthy - PID exists AND heartbeat is fresh
-        // Handle transitions
-        if (heartbeat.status === 'running' && strategy.status === 'starting') {
-          console.log(`✅ Bot confirmed running for strategy ${strategy.strategy_id}, PID: ${heartbeat.pid}`);
-          await supabase
-            .from("user_strategies")
-            .update({
-              is_running: true,
-              status: 'running',
-              bot_pid: heartbeat.pid
-            })
-            .eq("id", strategy.id);
-          
-          toast({
-            title: "✅ Bot Started",
-            description: "Trading bot is now running with live market data.",
-          });
-        }
-
-        // Edge case: DB says stopped but PID/Heartbeat are active - fix UI
-        if (heartbeat.status === 'running' && !strategy.is_running) {
-          console.log(`🔄 Fixing inconsistent state: Heartbeat active but DB says stopped for strategy ${strategy.strategy_id}`);
-          await supabase
-            .from("user_strategies")
-            .update({
-              is_running: true,
-              status: 'running',
-              bot_pid: heartbeat.pid
-            })
-            .eq("id", strategy.id);
+        // Heartbeat is stale or bot is stopped
+        if (!isHeartbeatFresh || !heartbeat.pid) {
+          if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
+            console.log(`🛑 Bot stopped/stale for strategy ${strategy.strategy_id}`);
+            await supabase
+              .from("user_strategies")
+              .update({
+                is_running: false,
+                status: 'stopped',
+                stopped_at: new Date().toISOString(),
+                bot_pid: null
+              })
+              .eq("id", strategy.id);
+            
+            await supabase
+              .from("bot_heartbeats")
+              .update({ pid: null, status: 'stopped' })
+              .eq("user_id", strategy.user_id)
+              .eq("strategy_id", strategy.strategy_id);
+          }
         }
       }
     };
