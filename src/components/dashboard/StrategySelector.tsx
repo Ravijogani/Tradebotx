@@ -36,13 +36,17 @@ export const StrategySelector = () => {
         .eq('user_id', user.id)
         .maybeSingle();
 
+      console.log("StrategySelector - Setup query result:", { setup, setupError, userId: user.id });
+
       if (setupError) {
         console.error("Error loading setup:", setupError);
       }
 
       const type = (subscription?.plans as any)?.plan_type || '';
       setPlanType(type);
-      setAdminApproved(setup?.admin_approved === true);
+      const isApproved = setup?.admin_approved === true;
+      console.log("StrategySelector - Admin approved:", isApproved);
+      setAdminApproved(isApproved);
     } catch (error) {
       console.error('Error checking approval:', error);
     }

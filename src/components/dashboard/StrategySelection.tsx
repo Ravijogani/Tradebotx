@@ -85,11 +85,14 @@ export const StrategySelection = () => {
         .eq("user_id", user.id)
         .maybeSingle();
 
+      console.log("StrategySelection - Setup query result:", { setup, setupError, userId: user.id });
+
       if (setupError) {
         console.error("Error loading setup:", setupError);
       }
 
       if (setup?.admin_approved !== true) {
+        console.log("StrategySelection - Not approved, hiding strategies");
         setSetupApproved(false);
         setLoading(false);
         return;
