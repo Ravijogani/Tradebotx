@@ -30,11 +30,15 @@ const Dashboard = () => {
       setUser(session.user);
 
       // Check if setup is completed
-      const { data: setup } = await supabase
+      const { data: setup, error: setupError } = await supabase
         .from("user_setup")
         .select("is_completed, admin_approved")
         .eq("user_id", session.user.id)
-        .single();
+        .maybeSingle();
+
+      if (setupError) {
+        console.error("Error loading setup:", setupError);
+      }
 
       if (!setup || !setup.is_completed) {
         setShowSetup(true);
