@@ -13,7 +13,10 @@ export const OpenPositions = () => {
   useEffect(() => {
     loadPositions();
     
-    // Set up realtime subscription
+    // Set up realtime subscription with throttling
+    let lastUpdateTime = 0;
+    const updateThrottle = 5000; // Only show toasts every 5 seconds
+    
     const channel = supabase
       .channel('open-positions-changes')
       .on(
@@ -28,22 +31,18 @@ export const OpenPositions = () => {
           console.log('Position change:', payload);
           loadPositions();
           
+          const now = Date.now();
+          const shouldShowToast = now - lastUpdateTime > updateThrottle;
+          
           if (payload.eventType === 'INSERT') {
             toast({
               title: "New Position Opened",
               description: `${payload.new.symbol} - ${payload.new.trade_type}`,
             });
-          } else if (payload.eventType === 'UPDATE') {
-            // Calculate P&L from metadata
-            const metadata = typeof payload.new.metadata === 'object' && payload.new.metadata !== null 
-              ? payload.new.metadata as any 
-              : {};
-            const profit = metadata.running_profit || metadata.profit || 0;
-            toast({
-              title: "Position Updated",
-              description: `${payload.new.symbol} - P&L: $${profit.toFixed(2)}`,
-              variant: profit >= 0 ? "default" : "destructive"
-            });
+            lastUpdateTime = now;
+          } else if (payload.eventType === 'UPDATE' && shouldShowToast) {
+            // Only show update toasts every 5 seconds to prevent spam
+            lastUpdateTime = now;
           }
         }
       )
