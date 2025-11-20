@@ -101,11 +101,11 @@ export default function RiskMetricsCard() {
 
   if (loading) {
     return (
-      <Card className="p-6">
-        <Skeleton className="h-8 w-48 mb-4" />
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <Card className="p-4 sm:p-6">
+        <Skeleton className="h-6 sm:h-8 w-36 sm:w-48 mb-4" />
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <Skeleton key={i} className="h-24" />
+            <Skeleton key={i} className="h-20 sm:h-24" />
           ))}
         </div>
       </Card>
@@ -114,9 +114,9 @@ export default function RiskMetricsCard() {
 
   if (!metrics) {
     return (
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Risk Metrics</h3>
-        <p className="text-muted-foreground">Not enough trade data to calculate risk metrics.</p>
+      <Card className="p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold mb-4">Risk Metrics</h3>
+        <p className="text-sm text-muted-foreground">Not enough trade data to calculate risk metrics.</p>
       </Card>
     );
   }
@@ -136,16 +136,16 @@ export default function RiskMetricsCard() {
   };
 
   return (
-    <Card className="p-6">
-      <h3 className="text-lg font-semibold mb-6">Advanced Risk Metrics</h3>
+    <Card className="p-4 sm:p-6">
+      <h3 className="text-base sm:text-lg font-semibold mb-4 sm:mb-6">Advanced Risk Metrics</h3>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="p-4 bg-muted/30">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Sharpe Ratio</span>
+            <TrendingUp className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Sharpe Ratio</span>
           </div>
-          <p className={`text-2xl font-bold ${getRiskColor(metrics.sharpeRatio, 'sharpe')}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${getRiskColor(metrics.sharpeRatio, 'sharpe')}`}>
             {metrics.sharpeRatio}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
@@ -153,12 +153,12 @@ export default function RiskMetricsCard() {
           </p>
         </Card>
 
-        <Card className="p-4 bg-muted/30">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Max Drawdown</span>
+            <AlertTriangle className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Max Drawdown</span>
           </div>
-          <p className={`text-2xl font-bold ${getRiskColor(metrics.maxDrawdown, 'maxDrawdown')}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${getRiskColor(metrics.maxDrawdown, 'maxDrawdown')}`}>
             ${metrics.maxDrawdown}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
@@ -166,23 +166,23 @@ export default function RiskMetricsCard() {
           </p>
         </Card>
 
-        <Card className="p-4 bg-muted/30">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <Activity className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Sortino Ratio</span>
+            <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Sortino Ratio</span>
           </div>
-          <p className={`text-2xl font-bold ${getRiskColor(metrics.sortinoRatio, 'sortino')}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${getRiskColor(metrics.sortinoRatio, 'sortino')}`}>
             {metrics.sortinoRatio}
           </p>
           <p className="text-xs text-muted-foreground mt-1">Downside risk-adjusted</p>
         </Card>
 
-        <Card className="p-4 bg-muted/30">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <Target className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Profit Factor</span>
+            <Target className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Profit Factor</span>
           </div>
-          <p className={`text-2xl font-bold ${getRiskColor(metrics.profitFactor, 'profitFactor')}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${getRiskColor(metrics.profitFactor, 'profitFactor')}`}>
             {metrics.profitFactor}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
@@ -190,32 +190,32 @@ export default function RiskMetricsCard() {
           </p>
         </Card>
 
-        <Card className="p-4 bg-muted/30">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Recovery Factor</span>
+            <TrendingUp className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Recovery Factor</span>
           </div>
-          <p className={`text-2xl font-bold ${metrics.recoveryFactor >= 0 ? 'text-success' : 'text-destructive'}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${metrics.recoveryFactor >= 0 ? 'text-success' : 'text-destructive'}`}>
             {metrics.recoveryFactor}
           </p>
           <p className="text-xs text-muted-foreground mt-1">Profit/Max Drawdown</p>
         </Card>
 
-        <Card className="p-4 bg-muted/30">
+        <Card className="p-3 sm:p-4 bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
-            <Activity className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Expectancy</span>
+            <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">Expectancy</span>
           </div>
-          <p className={`text-2xl font-bold ${metrics.expectancy >= 0 ? 'text-success' : 'text-destructive'}`}>
+          <p className={`text-xl sm:text-2xl font-bold ${metrics.expectancy >= 0 ? 'text-success' : 'text-destructive'}`}>
             ${metrics.expectancy}
           </p>
           <p className="text-xs text-muted-foreground mt-1">Expected per trade</p>
         </Card>
       </div>
 
-      <div className="mt-6 p-4 bg-muted/20 rounded-lg">
-        <h4 className="font-medium mb-2">Risk Assessment</h4>
-        <div className="space-y-2 text-sm">
+      <div className="mt-4 sm:mt-6 p-3 sm:p-4 bg-muted/20 rounded-lg">
+        <h4 className="font-medium mb-2 text-sm sm:text-base">Risk Assessment</h4>
+        <div className="space-y-2 text-xs sm:text-sm">
           <p className="text-muted-foreground">
             • <strong>Sharpe Ratio:</strong> Measures risk-adjusted returns. Above 1 is good, above 2 is excellent.
           </p>
