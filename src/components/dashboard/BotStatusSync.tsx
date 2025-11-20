@@ -54,8 +54,8 @@ export const BotStatusSync = () => {
 
         console.log(`Strategy ${strategy.strategy_id}: Last heartbeat ${diffSeconds.toFixed(0)}s ago, Status: ${heartbeat.status}, PID: ${heartbeat.pid}, DB Status: ${strategy.status}`);
 
-        // Check if heartbeat is fresh (< 60 seconds)
-        const isHeartbeatFresh = diffSeconds < 60;
+        // Check if heartbeat is fresh (< 90 seconds to match edge function threshold)
+        const isHeartbeatFresh = diffSeconds < 90;
         
         // Bot is actually running if heartbeat is fresh and has PID
         if (isHeartbeatFresh && heartbeat.pid && heartbeat.status === 'running') {

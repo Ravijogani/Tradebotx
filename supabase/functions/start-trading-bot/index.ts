@@ -76,9 +76,10 @@ serve(async (req) => {
       .eq('strategy_id', strategyId)
       .maybeSingle();
 
-    // Check if bot is actually running (fresh heartbeat within last 60 seconds)
+    // Check if bot is actually running (fresh heartbeat within last 90 seconds)
+    // Using 90 seconds to account for network delays and heartbeat intervals
     const isActuallyRunning = heartbeat && 
-      new Date(heartbeat.last_heartbeat).getTime() > Date.now() - 60000 &&
+      new Date(heartbeat.last_heartbeat).getTime() > Date.now() - 90000 &&
       heartbeat.status === 'running';
 
     if (isActuallyRunning) {
