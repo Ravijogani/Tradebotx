@@ -29,7 +29,10 @@ export const ActivityTimeline = () => {
   useEffect(() => {
     loadActivities();
     
-    // Subscribe to real-time updates
+    // Debounce timer for real-time updates
+    let debounceTimer: NodeJS.Timeout;
+    
+    // Subscribe to real-time updates with debouncing
     const tradesChannel = supabase
       .channel("activity-trades")
       .on(
@@ -40,12 +43,17 @@ export const ActivityTimeline = () => {
           table: "trades",
         },
         () => {
-          loadActivities();
+          // Debounce reload to prevent excessive updates
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            loadActivities();
+          }, 3000); // Only reload once every 3 seconds max
         }
       )
       .subscribe();
 
     return () => {
+      clearTimeout(debounceTimer);
       supabase.removeChannel(tradesChannel);
     };
   }, []);
