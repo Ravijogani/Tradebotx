@@ -68,16 +68,20 @@ serve(async (req) => {
 
     const strategyName = strategy.name;
 
-    // Check if strategy is already running for this user
-    const { data: existingStrategy } = await supabaseClient
-      .from('user_strategies')
+    // Check actual bot status from heartbeats (source of truth)
+    const { data: heartbeat } = await supabaseClient
+      .from('bot_heartbeats')
       .select('*')
       .eq('user_id', user.id)
       .eq('strategy_id', strategyId)
-      .eq('is_running', true)
       .maybeSingle();
 
-    if (existingStrategy) {
+    // Check if bot is actually running (fresh heartbeat within last 60 seconds)
+    const isActuallyRunning = heartbeat && 
+      new Date(heartbeat.last_heartbeat).getTime() > Date.now() - 60000 &&
+      heartbeat.status === 'running';
+
+    if (isActuallyRunning) {
       throw new Error('This strategy is already running');
     }
 
