@@ -27,22 +27,38 @@ export const StrategyPerformance = () => {
   useEffect(() => {
     loadPerformances();
 
-    // Real-time subscription for live performance updates
+    // Debounce timer for real-time updates
+    let debounceTimer: NodeJS.Timeout;
+
+    // Real-time subscription for live performance updates with debouncing
     const channel = supabase
       .channel('strategy-performance')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'strategy_performance' },
-        () => loadPerformances()
+        () => {
+          // Debounce reload to prevent excessive updates
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            loadPerformances();
+          }, 5000); // Only reload once every 5 seconds max
+        }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'trades' },
-        () => loadPerformances()
+        () => {
+          // Debounce reload to prevent excessive updates
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            loadPerformances();
+          }, 5000); // Only reload once every 5 seconds max
+        }
       )
       .subscribe();
 
     return () => {
+      clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);
