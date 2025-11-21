@@ -29,12 +29,15 @@ export const OpenPositions = () => {
             event: '*',
             schema: 'public',
             table: 'trades',
-            filter: 'status=eq.open'
+            filter: `user_id=eq.${user.id}`
           },
           async (payload) => {
-            // Only process if this trade belongs to the current user
-            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
-            if (tradeUserId !== user.id) return;
+            // Check if the change is related to open positions
+            const newStatus = (payload.new as any)?.status;
+            const oldStatus = (payload.old as any)?.status;
+            const isOpenRelated = newStatus === 'open' || oldStatus === 'open';
+            
+            if (!isOpenRelated) return;
 
             console.log('Position change:', payload);
             loadPositions();
