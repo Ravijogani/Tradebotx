@@ -6,53 +6,65 @@ import { Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { SetupDialog } from "@/components/dashboard/SetupDialog";
 import { TrialExpiredModal } from "@/components/dashboard/TrialExpiredModal";
+import type { Session } from "@supabase/supabase-js";
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    checkAuth();
-  }, []);
+    // Set up auth state listener first
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (!session) {
+          navigate("/auth/login");
+          setLoading(false);
+          return;
+        }
 
-  const checkAuth = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
+        // Check setup completion when user is authenticated
+        try {
+          const { data: setup, error: setupError } = await supabase
+            .from("user_setup")
+            .select("is_completed, admin_approved")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          if (setupError) {
+            console.error("Error loading setup:", setupError);
+          }
+
+          if (!setup || !setup.is_completed) {
+            setShowSetup(true);
+          }
+        } catch (error: any) {
+          console.error("Setup check error:", error);
+        }
+        
+        setLoading(false);
+      }
+    );
+
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
       
       if (!session) {
         navigate("/auth/login");
-        return;
+        setLoading(false);
       }
+    });
 
-      setUser(session.user);
-
-      // Check if setup is completed
-      const { data: setup, error: setupError } = await supabase
-        .from("user_setup")
-        .select("is_completed, admin_approved")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
-
-      if (setupError) {
-        console.error("Error loading setup:", setupError);
-      }
-
-      if (!setup || !setup.is_completed) {
-        setShowSetup(true);
-      }
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => subscription.unsubscribe();
+  }, [navigate]);
 
   if (loading) {
     return (
