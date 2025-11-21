@@ -17,39 +17,54 @@ export const OpenPositions = () => {
     let lastUpdateTime = 0;
     const updateThrottle = 5000; // Only show toasts every 5 seconds
     
-    const channel = supabase
-      .channel('open-positions-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'trades',
-          filter: 'status=eq.open'
-        },
-        (payload) => {
-          console.log('Position change:', payload);
-          loadPositions();
-          
-          const now = Date.now();
-          const shouldShowToast = now - lastUpdateTime > updateThrottle;
-          
-          if (payload.eventType === 'INSERT') {
-            toast({
-              title: "New Position Opened",
-              description: `${payload.new.symbol} - ${payload.new.trade_type}`,
-            });
-            lastUpdateTime = now;
-          } else if (payload.eventType === 'UPDATE' && shouldShowToast) {
-            // Only show update toasts every 5 seconds to prevent spam
-            lastUpdateTime = now;
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channel = supabase
+        .channel('open-positions-changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'trades',
+            filter: 'status=eq.open'
+          },
+          async (payload) => {
+            // Only process if this trade belongs to the current user
+            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            if (tradeUserId !== user.id) return;
+
+            console.log('Position change:', payload);
+            loadPositions();
+            
+            const now = Date.now();
+            const shouldShowToast = now - lastUpdateTime > updateThrottle;
+            
+            if (payload.eventType === 'INSERT') {
+              toast({
+                title: "New Position Opened",
+                description: `${payload.new.symbol} - ${payload.new.trade_type}`,
+              });
+              lastUpdateTime = now;
+            } else if (payload.eventType === 'UPDATE' && shouldShowToast) {
+              // Only show update toasts every 5 seconds to prevent spam
+              lastUpdateTime = now;
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    };
+
+    const cleanup = setupRealtime();
 
     return () => {
-      supabase.removeChannel(channel);
+      cleanup.then(fn => fn?.());
     };
   }, []);
 

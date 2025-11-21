@@ -18,25 +18,40 @@ export const PerformanceChart = () => {
     // Debounce timer for real-time updates
     let debounceTimer: NodeJS.Timeout;
 
-    // Realtime subscription for live chart updates with debouncing
-    const channel = supabase
-      .channel('performance-chart')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'trades' },
-        () => {
-          // Debounce reload to prevent excessive updates
-          clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            loadPerformanceData();
-          }, 5000); // Only reload once every 5 seconds max
-        }
-      )
-      .subscribe();
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Realtime subscription for live chart updates with debouncing
+      const channel = supabase
+        .channel('performance-chart')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'trades' },
+          async (payload) => {
+            // Only reload if this trade belongs to the current user
+            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            if (tradeUserId === user.id) {
+              // Debounce reload to prevent excessive updates
+              clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(() => {
+                loadPerformanceData();
+              }, 3000); // Reduced to 3 seconds for faster updates
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        clearTimeout(debounceTimer);
+        supabase.removeChannel(channel);
+      };
+    };
+
+    const cleanup = setupRealtime();
 
     return () => {
-      clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
+      cleanup.then(fn => fn?.());
     };
   }, [timeRange]);
 

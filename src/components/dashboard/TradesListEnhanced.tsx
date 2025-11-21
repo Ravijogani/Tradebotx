@@ -57,9 +57,13 @@ export const TradesListEnhanced = () => {
           schema: 'public',
           table: 'trades'
         },
-        (payload) => {
+        async (payload) => {
           console.log('Trade change:', payload);
-          loadTrades();
+          // Get current user to verify this trade belongs to them
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user && payload.new && (payload.new as any).user_id === user.id) {
+            loadTrades();
+          }
         }
       )
       .subscribe();
@@ -74,9 +78,13 @@ export const TradesListEnhanced = () => {
   }, [trades, dateRange, symbolFilter, statusFilter]);
 
   const loadTrades = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const { data } = await supabase
       .from("trades")
       .select("*")
+      .eq("user_id", user.id)
       .order("opened_at", { ascending: false });
 
     setTrades(data || []);
