@@ -32,40 +32,62 @@ export const ActivityTimeline = () => {
     // Debounce timer for real-time updates
     let debounceTimer: NodeJS.Timeout;
     
-    // Subscribe to real-time updates with debouncing
-    const tradesChannel = supabase
-      .channel("activity-trades")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "trades",
-        },
-        () => {
-          // Debounce reload to prevent excessive updates
-          clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            loadActivities();
-          }, 3000); // Only reload once every 3 seconds max
-        }
-      )
-      .subscribe();
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Subscribe to real-time updates with debouncing
+      const tradesChannel = supabase
+        .channel("activity-trades")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "trades",
+          },
+          async (payload) => {
+            // Only reload if this trade belongs to the current user
+            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            if (tradeUserId === user.id) {
+              // Debounce reload to prevent excessive updates
+              clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(() => {
+                loadActivities();
+              }, 2000); // Reduced to 2 seconds for faster updates
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        clearTimeout(debounceTimer);
+        supabase.removeChannel(tradesChannel);
+      };
+    };
+
+    const cleanup = setupRealtime();
 
     return () => {
-      clearTimeout(debounceTimer);
-      supabase.removeChannel(tradesChannel);
+      cleanup.then(fn => fn?.());
     };
   }, []);
 
   const loadActivities = async () => {
     setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     const items: ActivityItem[] = [];
 
-    // Load recent trades
+    // Load recent trades for current user only
     const { data: trades } = await supabase
       .from("trades")
       .select("*")
+      .eq("user_id", user.id)
       .order("opened_at", { ascending: false })
       .limit(5);
 
@@ -95,6 +117,7 @@ export const ActivityTimeline = () => {
     const { data: strategies } = await supabase
       .from("user_strategies")
       .select("*")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(5);
 

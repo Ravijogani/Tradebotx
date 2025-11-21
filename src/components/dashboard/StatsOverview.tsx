@@ -18,22 +18,37 @@ export const StatsOverview = () => {
     // Realtime subscription with debounce to prevent excessive reloads
     let debounceTimer: NodeJS.Timeout;
     
-    const channel = supabase
-      .channel('stats-overview')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'trades' },
-        () => {
-          // Debounce stats reload to once every 3 seconds
-          clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => loadStats(), 3000);
-        }
-      )
-      .subscribe();
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channel = supabase
+        .channel('stats-overview')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'trades' },
+          async (payload) => {
+            // Only reload if this trade belongs to the current user
+            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            if (tradeUserId === user.id) {
+              // Debounce stats reload to once every 2 seconds
+              clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(() => loadStats(), 2000);
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        clearTimeout(debounceTimer);
+        supabase.removeChannel(channel);
+      };
+    };
+
+    const cleanup = setupRealtime();
 
     return () => {
-      clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
+      cleanup.then(fn => fn?.());
     };
   }, []);
 
