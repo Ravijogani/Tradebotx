@@ -18,6 +18,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     let mounted = true;
+    let initialCheckDone = false;
 
     const checkAuth = async () => {
       try {
@@ -33,21 +34,19 @@ const Dashboard = () => {
 
         setSession(session);
         setUser(session.user);
+        setLoading(false); // Set loading to false immediately after session check
+        initialCheckDone = true;
 
-        // Check setup completion
+        // Check setup completion after loading screen is removed
         const { data: setup } = await supabase
           .from("user_setup")
           .select("is_completed, admin_approved")
           .eq("user_id", session.user.id)
           .maybeSingle();
 
-        if (!mounted) return;
-
-        if (!setup || !setup.is_completed) {
+        if (mounted && (!setup || !setup.is_completed)) {
           setShowSetup(true);
         }
-
-        setLoading(false);
       } catch (error) {
         console.error("Auth check error:", error);
         if (mounted) {
@@ -58,33 +57,18 @@ const Dashboard = () => {
 
     checkAuth();
 
-    // Set up auth state listener
+    // Set up auth state listener - only for actual changes (logout, new login)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (!mounted) return;
+      async (event, session) => {
+        if (!mounted || !initialCheckDone) return; // Skip if initial check hasn't completed
         
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (!session) {
+        if (event === 'SIGNED_OUT' || !session) {
           navigate("/auth/login");
           return;
         }
-
-        // Check setup on auth changes
-        try {
-          const { data: setup } = await supabase
-            .from("user_setup")
-            .select("is_completed, admin_approved")
-            .eq("user_id", session.user.id)
-            .maybeSingle();
-
-          if (mounted && (!setup || !setup.is_completed)) {
-            setShowSetup(true);
-          }
-        } catch (error) {
-          console.error("Setup check error:", error);
-        }
+        
+        setSession(session);
+        setUser(session?.user ?? null);
       }
     );
 
