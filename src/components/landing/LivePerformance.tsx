@@ -255,6 +255,54 @@ export const LivePerformance = () => {
           </Card>
         </div>
 
+        {/* Telegram Community Section */}
+        <div className="mb-12">
+          <Card className="p-8 bg-gradient-to-br from-primary/10 via-accent/5 to-primary/10 backdrop-blur-sm border-primary/20 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+            <div className="relative z-10">
+              <div className="flex flex-col md:flex-row items-center gap-6 md:gap-8">
+                <div className="flex-shrink-0">
+                  <div className="w-20 h-20 rounded-full bg-gradient-hero flex items-center justify-center shadow-glow">
+                    <TrendingUp className="w-10 h-10 text-primary-foreground" />
+                  </div>
+                </div>
+                <div className="flex-1 text-center md:text-left">
+                  <h3 className="text-2xl sm:text-3xl font-bold mb-3">
+                    Join Our Trading Community
+                  </h3>
+                  <p className="text-muted-foreground text-base sm:text-lg mb-4">
+                    Connect with 1000+ traders, get real-time trade alerts, share strategies, and get instant support from our team and experienced community members.
+                  </p>
+                  <div className="flex flex-wrap gap-3 justify-center md:justify-start text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Activity className="w-4 h-4 text-primary" /> Live Trade Signals
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <BarChart3 className="w-4 h-4 text-primary" /> Strategy Discussions
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <ExternalLink className="w-4 h-4 text-primary" /> Market Updates
+                    </span>
+                  </div>
+                </div>
+                <div className="flex-shrink-0">
+                  <Button 
+                    size="lg"
+                    className="bg-gradient-hero shadow-glow hover:scale-105 transition-all group"
+                    onClick={() => window.open("https://t.me/TradeBotXAlgo", "_blank")}
+                  >
+                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.121l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.941z"/>
+                    </svg>
+                    Join Telegram
+                    <ExternalLink className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
         {/* Strategy Explanation */}
         <div className="mb-12">
           <Card className="p-6 sm:p-8 bg-card/50 backdrop-blur-sm border-border/50">
