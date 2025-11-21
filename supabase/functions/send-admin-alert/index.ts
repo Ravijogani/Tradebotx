@@ -21,6 +21,7 @@ serve(async (req) => {
   try {
     const { actionType, performedBy, targetUser, details }: AdminAlertRequest = await req.json();
     const adminEmail = Deno.env.get('ADMIN_EMAIL') || "tradebotxsuppo@gmail.com";
+    const adminEmailCC = Deno.env.get('ADMIN_EMAIL_CC');
 
     const smtpHost = Deno.env.get('SMTP_HOST');
     const smtpPort = Deno.env.get('SMTP_PORT');
@@ -98,19 +99,26 @@ serve(async (req) => {
       },
     });
 
+    // Prepare recipients
+    const recipients = [adminEmail];
+    if (adminEmailCC) {
+      recipients.push(adminEmailCC);
+    }
+
+    // Send to all admin emails
     await client.send({
       from: smtpFrom,
-      to: adminEmail,
+      to: recipients.join(', '),
       subject: subject,
       html: emailBody,
     });
 
     await client.close();
 
-    console.log('Admin alert email sent successfully to:', adminEmail);
+    console.log('Admin alert email sent successfully to:', recipients.join(', '));
 
     return new Response(
-      JSON.stringify({ success: true, message: 'Admin alert sent' }),
+      JSON.stringify({ success: true, message: 'Admin alert sent to all admins' }),
       { 
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }

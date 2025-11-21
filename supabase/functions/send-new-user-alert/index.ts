@@ -29,6 +29,7 @@ serve(async (req) => {
     const smtpPass = Deno.env.get('SMTP_PASS');
     const smtpFrom = Deno.env.get('SMTP_FROM');
     const adminEmail = Deno.env.get('ADMIN_EMAIL') || "tradebotxsuppo@gmail.com";
+    const adminEmailCC = Deno.env.get('ADMIN_EMAIL_CC');
 
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
       throw new Error('SMTP configuration is missing');
@@ -100,19 +101,26 @@ serve(async (req) => {
       },
     });
 
+    // Prepare recipients
+    const recipients = [adminEmail];
+    if (adminEmailCC) {
+      recipients.push(adminEmailCC);
+    }
+
+    // Send to all admin emails
     await client.send({
       from: smtpFrom,
-      to: adminEmail,
+      to: recipients.join(', '),
       subject: subject,
       html: emailBody,
     });
 
     await client.close();
 
-    console.log('New user alert sent to admin');
+    console.log('New user alert sent to admins:', recipients.join(', '));
 
     return new Response(
-      JSON.stringify({ success: true, message: 'Admin alert sent' }),
+      JSON.stringify({ success: true, message: 'Admin alert sent to all admins' }),
       { 
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
