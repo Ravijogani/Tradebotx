@@ -152,40 +152,61 @@ export const LivePerformance = () => {
               ) : equityData.length > 0 ? (
                 <div className="h-[400px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={equityData}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <LineChart 
+                      data={equityData}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" opacity={0.3} />
                       <XAxis 
                         dataKey="time" 
                         className="text-xs"
                         stroke="hsl(var(--muted-foreground))"
+                        tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                        tickMargin={10}
                       />
                       <YAxis 
                         className="text-xs"
                         stroke="hsl(var(--muted-foreground))"
-                        domain={['auto', 'auto']}
+                        tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                        tickMargin={10}
+                        domain={[(dataMin: number) => {
+                          const padding = Math.max((dataMin * 0.001), 0.5);
+                          return (dataMin - padding).toFixed(2);
+                        }, (dataMax: number) => {
+                          const padding = Math.max((dataMax * 0.001), 0.5);
+                          return (dataMax + padding).toFixed(2);
+                        }]}
+                        tickFormatter={(value) => value.toFixed(2)}
                       />
                       <Tooltip 
                         contentStyle={{ 
                           backgroundColor: 'hsl(var(--background))',
                           border: '1px solid hsl(var(--border))',
-                          borderRadius: '8px'
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                         }}
+                        labelStyle={{ color: 'hsl(var(--foreground))' }}
+                        formatter={(value: any) => [`$${Number(value).toFixed(2)}`, '']}
                       />
                       <Line 
                         type="monotone" 
                         dataKey="equity" 
                         stroke="hsl(var(--primary))" 
                         strokeWidth={3}
-                        dot={false}
-                        name="Equity"
+                        dot={{ fill: 'hsl(var(--primary))', r: 4 }}
+                        activeDot={{ r: 6, fill: 'hsl(var(--primary))' }}
+                        name="Equity (with floating P&L)"
+                        connectNulls
                       />
                       <Line 
                         type="monotone" 
                         dataKey="balance" 
                         stroke="hsl(var(--accent))" 
                         strokeWidth={3}
-                        dot={false}
-                        name="Balance"
+                        dot={{ fill: 'hsl(var(--accent))', r: 4 }}
+                        activeDot={{ r: 6, fill: 'hsl(var(--accent))' }}
+                        name="Balance (realized P&L)"
+                        connectNulls
                       />
                     </LineChart>
                   </ResponsiveContainer>
