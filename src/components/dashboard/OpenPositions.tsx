@@ -145,6 +145,7 @@ export const OpenPositions = () => {
                 : {};
               const currentProfit = metadata.running_profit || metadata.profit || position.profit_loss || 0;
               const currentPrice = metadata.current_price || position.entry_price;
+              const hasLiveData = metadata.running_profit !== undefined || metadata.current_price !== undefined;
               
               return (
                 <div
@@ -168,6 +169,11 @@ export const OpenPositions = () => {
                         <Badge variant={position.trade_type === 'BUY' ? 'default' : 'secondary'} className="text-xs">
                           {position.trade_type}
                         </Badge>
+                        {!hasLiveData && (
+                          <Badge variant="outline" className="text-xs">
+                            Awaiting update
+                          </Badge>
+                        )}
                       </div>
                       <div className="text-xs sm:text-sm text-muted-foreground flex flex-wrap gap-1 sm:gap-3">
                         <span className="whitespace-nowrap">Entry: ${parseFloat(position.entry_price).toFixed(5)}</span>
