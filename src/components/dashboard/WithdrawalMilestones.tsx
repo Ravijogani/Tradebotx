@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Trophy, TrendingUp, Wallet, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { ShareableAchievementCard } from "./ShareableAchievementCard";
 
 interface Milestone {
   id: string;
@@ -179,17 +180,29 @@ export default function WithdrawalMilestones() {
                     </div>
                   </div>
                 </div>
-                {!milestone.notified && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={() => markAsNotified(milestone.id)}
-                    className="w-full sm:w-auto touch-target"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-1" />
-                    Acknowledge
-                  </Button>
-                )}
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  <ShareableAchievementCard
+                    achievementType="milestone"
+                    title={milestone.milestone_type === '2x' ? '2x Capital Achieved!' : '50% Growth Milestone'}
+                    subtitle="Safe Withdrawal Unlocked"
+                    mainValue={`$${milestone.safe_withdrawal_amount.toFixed(2)}`}
+                    secondaryValue="Safe to Withdraw"
+                    initialEquity={milestone.initial_equity}
+                    currentEquity={milestone.trigger_equity}
+                    growthPercent={((milestone.trigger_equity - milestone.initial_equity) / milestone.initial_equity) * 100}
+                  />
+                  {!milestone.notified && (
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => markAsNotified(milestone.id)}
+                      className="w-full sm:w-auto touch-target"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-1" />
+                      Acknowledge
+                    </Button>
+                  )}
+                </div>
               </div>
             </Card>
           ))}
