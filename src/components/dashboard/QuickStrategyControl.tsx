@@ -113,41 +113,77 @@ export const QuickStrategyControl = () => {
 
   const handleStartStop = async (userStrategyId: string, strategyId: string, isRunning: boolean) => {
     setActionLoading(userStrategyId);
+    
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError) {
+        console.error("Auth error:", authError);
+        toast({
+          title: "Authentication Error",
+          description: "Please refresh the page and try again",
+          variant: "destructive",
+        });
+        setActionLoading(null);
+        return;
+      }
+
+      if (!user) {
+        toast({
+          title: "Not Authenticated",
+          description: "Please log in again",
+          variant: "destructive",
+        });
+        setActionLoading(null);
+        return;
+      }
+
+      console.log(`${isRunning ? 'Stopping' : 'Starting'} bot - User Strategy ID:`, userStrategyId);
+      console.log(`Strategy ID:`, strategyId);
 
       if (isRunning) {
-        // Stop the bot
-        const { error } = await supabase.functions.invoke("stop-trading-bot", {
+        console.log("Invoking stop-trading-bot edge function...");
+        const { data, error } = await supabase.functions.invoke("stop-trading-bot", {
           body: { userStrategyId },
         });
-
-        if (error) throw error;
+        
+        console.log("Stop response:", { data, error });
+        
+        if (error) {
+          console.error("Stop error:", error);
+          throw error;
+        }
 
         toast({
           title: "Bot Stopped",
           description: "Trading bot has been stopped successfully",
         });
       } else {
-        // Start the bot - pass strategyId as expected by the edge function
-        const { error } = await supabase.functions.invoke("start-trading-bot", {
+        console.log("Invoking start-trading-bot edge function...");
+        const { data, error } = await supabase.functions.invoke("start-trading-bot", {
           body: { strategyId },
         });
-
-        if (error) throw error;
+        
+        console.log("Start response:", { data, error });
+        
+        if (error) {
+          console.error("Start error:", error);
+          throw error;
+        }
 
         toast({
           title: "Bot Starting",
-          description: "Bot start command sent. Waiting for confirmation...",
+          description: "Bot start command sent successfully",
         });
       }
 
+      // Reload to get actual state from server
       await loadStrategies();
     } catch (error: any) {
+      console.error("Handle start/stop error:", error);
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Failed to process request",
         variant: "destructive",
       });
     } finally {
