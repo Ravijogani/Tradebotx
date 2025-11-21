@@ -20,7 +20,7 @@ serve(async (req) => {
 
   try {
     const { actionType, performedBy, targetUser, details }: AdminAlertRequest = await req.json();
-    const adminEmail = "tradebotxsuppo@gmail.com";
+    const adminEmail = Deno.env.get('ADMIN_EMAIL') || "tradebotxsuppo@gmail.com";
 
     const smtpHost = Deno.env.get('SMTP_HOST');
     const smtpPort = Deno.env.get('SMTP_PORT');

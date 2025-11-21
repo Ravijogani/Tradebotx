@@ -28,9 +28,9 @@ serve(async (req) => {
     const smtpUser = Deno.env.get('SMTP_USER');
     const smtpPass = Deno.env.get('SMTP_PASS');
     const smtpFrom = Deno.env.get('SMTP_FROM');
-    const adminEmail = Deno.env.get('ADMIN_EMAIL');
+    const adminEmail = Deno.env.get('ADMIN_EMAIL') || "tradebotxsuppo@gmail.com";
 
-    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom || !adminEmail) {
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
       throw new Error('SMTP configuration is missing');
     }
 
