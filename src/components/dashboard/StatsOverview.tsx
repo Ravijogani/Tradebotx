@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 export const StatsOverview = () => {
   const [stats, setStats] = useState({
     totalProfit: 0,
+    todayPL: 0,
     activeTrades: 0,
     winRate: 0,
     totalTrades: 0,
@@ -57,6 +58,18 @@ export const StatsOverview = () => {
         return sum + parseFloat(String(trade.profit_loss || 0));
       }, 0);
 
+      // Calculate today's P&L
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayTrades = trades.filter(t => new Date(t.opened_at) >= today);
+      const todayPL = todayTrades.reduce((sum, trade) => {
+        if (trade.status === 'open') {
+          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          return sum + (metadata.running_profit || 0);
+        }
+        return sum + parseFloat(String(trade.profit_loss || 0));
+      }, 0);
+
       // Count open trades correctly (status = 'open' or 'OPEN')
       const activeTrades = trades.filter(t => 
         t.status?.toLowerCase() === "open"
@@ -71,6 +84,7 @@ export const StatsOverview = () => {
 
       setStats({
         totalProfit,
+        todayPL,
         activeTrades,
         winRate,
         totalTrades: trades.length,
@@ -85,6 +99,13 @@ export const StatsOverview = () => {
       icon: DollarSign,
       trend: stats.totalProfit >= 0 ? "up" : "down",
       color: stats.totalProfit >= 0 ? "text-success" : "text-destructive",
+    },
+    {
+      title: "Today's P&L",
+      value: `$${stats.todayPL.toFixed(2)}`,
+      icon: TrendingUp,
+      trend: stats.todayPL >= 0 ? "up" : "down",
+      color: stats.todayPL >= 0 ? "text-success" : "text-destructive",
     },
     {
       title: "Active Trades",
@@ -107,7 +128,7 @@ export const StatsOverview = () => {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 w-full">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 lg:gap-6 w-full">
       {statCards.map((stat, idx) => (
         <Card 
           key={idx} 
