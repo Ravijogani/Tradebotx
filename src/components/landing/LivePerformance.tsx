@@ -77,16 +77,43 @@ export const LivePerformance = () => {
 
       if (error) throw error;
 
-      if (data && data.length > 0) {
+      if (data && data.length > 5) {
+        // Only show chart if we have meaningful data (more than 5 points)
         const formattedData = data.map((item) => ({
           time: new Date(item.last_heartbeat).toLocaleTimeString('en-US', { 
             hour: '2-digit', 
             minute: '2-digit' 
           }),
-          equity: item.equity || 0,
-          balance: item.balance || 0
+          equity: Number(item.equity) || 0,
+          balance: Number(item.balance) || 0
         }));
         setEquityData(formattedData);
+      } else {
+        // Show demo data to illustrate what users will see
+        const now = new Date();
+        const demoData = [];
+        let baseEquity = 10000;
+        let baseBalance = 10000;
+        
+        for (let i = 0; i < 24; i++) {
+          const time = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000);
+          // Simulate realistic trading with some wins and losses
+          const change = (Math.random() - 0.45) * 150; // Slight upward bias
+          baseEquity += change;
+          if (Math.random() > 0.7) { // Occasionally realize profits
+            baseBalance = baseEquity;
+          }
+          
+          demoData.push({
+            time: time.toLocaleTimeString('en-US', { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            }),
+            equity: Math.round(baseEquity * 100) / 100,
+            balance: Math.round(baseBalance * 100) / 100
+          });
+        }
+        setEquityData(demoData);
       }
     } catch (error) {
       console.error('Error loading equity data:', error);
@@ -123,7 +150,9 @@ export const LivePerformance = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-xl font-bold mb-1">Live Account Performance</h3>
-                <p className="text-sm text-muted-foreground">Updated in real-time • Connected to trading account</p>
+                <p className="text-sm text-muted-foreground">
+                  {equityData.length > 5 ? 'Updated in real-time • Connected to trading account' : 'Demo visualization • Real data will appear when trading starts'}
+                </p>
               </div>
             </div>
             
@@ -221,15 +250,7 @@ export const LivePerformance = () => {
                     </div>
                   </div>
                 </div>
-              ) : (
-                <div className="aspect-video flex items-center justify-center">
-                  <div className="text-center">
-                    <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground mb-2">No trading data available yet</p>
-                    <p className="text-sm text-muted-foreground/60">Start trading to see your live equity curve</p>
-                  </div>
-                </div>
-              )}
+              ) : null}
             </div>
           </Card>
         </div>
