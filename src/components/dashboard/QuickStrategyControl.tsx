@@ -113,38 +113,45 @@ export const QuickStrategyControl = () => {
 
   const handleStartStop = async (userStrategyId: string, strategyId: string, isRunning: boolean) => {
     setActionLoading(userStrategyId);
+    
+    // Optimistic UI update
+    const originalStrategies = [...strategies];
+    setStrategies(prev => prev.map(s => 
+      s.id === userStrategyId 
+        ? { ...s, is_running: !isRunning, status: isRunning ? 'stopping' : 'starting' }
+        : s
+    ));
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        setStrategies(originalStrategies);
+        return;
+      }
+
+      // Show immediate feedback
+      toast({
+        title: isRunning ? "Stopping Bot" : "Starting Bot",
+        description: isRunning ? "Stopping trading bot..." : "Starting trading bot...",
+      });
 
       if (isRunning) {
-        // Stop the bot
         const { error } = await supabase.functions.invoke("stop-trading-bot", {
           body: { userStrategyId },
         });
-
         if (error) throw error;
-
-        toast({
-          title: "Bot Stopped",
-          description: "Trading bot has been stopped successfully",
-        });
       } else {
-        // Start the bot - pass strategyId as expected by the edge function
         const { error } = await supabase.functions.invoke("start-trading-bot", {
           body: { strategyId },
         });
-
         if (error) throw error;
-
-        toast({
-          title: "Bot Starting",
-          description: "Bot start command sent. Waiting for confirmation...",
-        });
       }
 
+      // Reload to get actual state from server
       await loadStrategies();
     } catch (error: any) {
+      // Roll back optimistic update on error
+      setStrategies(originalStrategies);
       toast({
         title: "Error",
         description: error.message,
