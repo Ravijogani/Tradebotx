@@ -53,14 +53,36 @@ const Dashboard = () => {
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
       
       if (!session) {
         navigate("/auth/login");
         setLoading(false);
+        return;
       }
+
+      // Check setup completion when user is authenticated
+      try {
+        const { data: setup, error: setupError } = await supabase
+          .from("user_setup")
+          .select("is_completed, admin_approved")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (setupError) {
+          console.error("Error loading setup:", setupError);
+        }
+
+        if (!setup || !setup.is_completed) {
+          setShowSetup(true);
+        }
+      } catch (error: any) {
+        console.error("Setup check error:", error);
+      }
+      
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
