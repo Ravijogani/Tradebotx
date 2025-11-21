@@ -10,6 +10,7 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ShareableAchievementCard } from "./ShareableAchievementCard";
 
 export const AccountHealth = () => {
   const [accountData, setAccountData] = useState({
@@ -17,6 +18,7 @@ export const AccountHealth = () => {
     dailyPL: 0,
     riskExposure: 0,
     maxDrawdown: 0,
+    initialBalance: 10000,
   });
 
   useEffect(() => {
@@ -148,6 +150,7 @@ export const AccountHealth = () => {
       dailyPL,
       riskExposure: Math.min(riskExposure, 100),
       maxDrawdown: Math.min(maxDrawdown, 100),
+      initialBalance: setup?.account_size || 10000,
     });
   };
 
@@ -189,6 +192,20 @@ export const AccountHealth = () => {
                 {accountData.dailyPL >= 0 ? "+" : ""}${accountData.dailyPL.toFixed(2)}
               </span>
             </div>
+            {accountData.balance > accountData.initialBalance * 1.2 && (
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <ShareableAchievementCard
+                  achievementType="equity_growth"
+                  title="Account Growth!"
+                  subtitle="Trading Success"
+                  mainValue={`$${accountData.balance.toFixed(2)}`}
+                  secondaryValue={`+${((accountData.balance - accountData.initialBalance) / accountData.initialBalance * 100).toFixed(2)}%`}
+                  initialEquity={accountData.initialBalance}
+                  currentEquity={accountData.balance}
+                  growthPercent={((accountData.balance - accountData.initialBalance) / accountData.initialBalance) * 100}
+                />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
