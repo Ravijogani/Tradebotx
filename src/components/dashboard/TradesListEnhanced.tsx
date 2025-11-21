@@ -32,6 +32,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { TradeJournalDialog } from "./TradeJournalDialog";
+import { ShareableTradeCard } from "./ShareableTradeCard";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -362,7 +363,10 @@ export const TradesListEnhanced = () => {
                         {trade.status}
                       </Badge>
                     </div>
-                    <TradeJournalDialog tradeId={trade.id} />
+                    <div className="flex gap-2">
+                      <TradeJournalDialog tradeId={trade.id} />
+                      <ShareableTradeCard trade={trade} />
+                    </div>
                   </div>
                 </div>
               ))}
