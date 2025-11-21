@@ -112,7 +112,27 @@ export const QuickStrategyControl = () => {
   };
 
   const handleStartStop = async (userStrategyId: string, strategyId: string, isRunning: boolean) => {
+    // Check if already in a transitional state
+    const currentStrategy = strategies.find(s => s.id === userStrategyId);
+    if (currentStrategy?.status === 'starting' || currentStrategy?.status === 'stopping') {
+      toast({
+        title: "Please Wait",
+        description: "Bot is already processing your previous command",
+      });
+      return;
+    }
+
     setActionLoading(userStrategyId);
+    
+    // Set a timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      setActionLoading(null);
+      toast({
+        title: "Request Timeout",
+        description: "The operation is taking longer than expected. Please check the bot status.",
+        variant: "destructive",
+      });
+    }, 15000); // 15 second timeout
     
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -124,6 +144,7 @@ export const QuickStrategyControl = () => {
           description: "Please refresh the page and try again",
           variant: "destructive",
         });
+        clearTimeout(timeoutId);
         setActionLoading(null);
         return;
       }
@@ -134,11 +155,13 @@ export const QuickStrategyControl = () => {
           description: "Please log in again",
           variant: "destructive",
         });
+        clearTimeout(timeoutId);
         setActionLoading(null);
         return;
       }
 
       console.log(`${isRunning ? 'Stopping' : 'Starting'} bot - User Strategy ID:`, userStrategyId);
+      console.log(`Current strategy status:`, currentStrategy?.status);
       console.log(`Strategy ID:`, strategyId);
 
       if (isRunning) {
@@ -150,7 +173,15 @@ export const QuickStrategyControl = () => {
         console.log("Stop response:", { data, error });
         
         if (error) {
-          console.error("Stop error:", error);
+          // Check if it's an "already stopped" error
+          if (error.message?.includes("already stopped") || error.message?.includes("not running")) {
+            toast({
+              title: "Bot Already Stopped",
+              description: "The bot is not currently running",
+            });
+            await loadStrategies();
+            return;
+          }
           throw error;
         }
 
@@ -167,7 +198,15 @@ export const QuickStrategyControl = () => {
         console.log("Start response:", { data, error });
         
         if (error) {
-          console.error("Start error:", error);
+          // Check if it's an "already running" error
+          if (error.message?.includes("already running") || error.message?.includes("already started")) {
+            toast({
+              title: "Bot Already Running",
+              description: "The bot is already active",
+            });
+            await loadStrategies();
+            return;
+          }
           throw error;
         }
 
@@ -186,7 +225,10 @@ export const QuickStrategyControl = () => {
         description: error.message || "Failed to process request",
         variant: "destructive",
       });
+      // Reload strategies to sync with actual backend state
+      await loadStrategies();
     } finally {
+      clearTimeout(timeoutId);
       setActionLoading(null);
     }
   };
