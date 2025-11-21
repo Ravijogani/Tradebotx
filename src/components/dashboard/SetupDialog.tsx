@@ -357,9 +357,18 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   placeholder="e.g., 12345678"
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Find this in your MT5 platform under Tools → Options
-                </p>
+                <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    How to find your MT5 Account Number:
+                  </p>
+                  <ol className="text-xs text-muted-foreground space-y-1 ml-4 list-decimal">
+                    <li>Open your MetaTrader 5 platform</li>
+                    <li>Click on <strong>Tools</strong> in the top menu</li>
+                    <li>Select <strong>Options</strong></li>
+                    <li>Look for your account number (usually 5-20 digits)</li>
+                  </ol>
+                </div>
               </div>
 
               <div>
@@ -372,9 +381,24 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   placeholder="Your MT5 password"
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  We recommend using a read-only investor password for security
-                </p>
+                <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Security Recommendation:
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    <strong>Use an Investor Password (Read-Only)</strong> instead of your main password for maximum security.
+                  </p>
+                  <ol className="text-xs text-muted-foreground space-y-1 ml-4 list-decimal">
+                    <li>In MT5, go to <strong>Tools → Options → Server</strong></li>
+                    <li>Click on <strong>Change</strong> next to "Investor Password"</li>
+                    <li>Set a new investor password (read-only access)</li>
+                    <li>Use that password here instead of your main password</li>
+                  </ol>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    ℹ️ Investor passwords allow the bot to view and place trades but cannot withdraw funds.
+                  </p>
+                </div>
               </div>
 
               <div>
@@ -383,12 +407,21 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   id="mt5Server"
                   value={formData.mt5Server}
                   onChange={(e) => setFormData({ ...formData, mt5Server: e.target.value })}
-                  placeholder="e.g., BrokerName-Demo or BrokerName-Live"
+                  placeholder="e.g., XM-Demo, XM-Real, Vantage-Live"
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Server address shown in MT5 under Tools → Options → Server
-                </p>
+                <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    How to find your MT5 Server:
+                  </p>
+                  <ol className="text-xs text-muted-foreground space-y-1 ml-4 list-decimal">
+                    <li>Open MetaTrader 5</li>
+                    <li>Go to <strong>Tools → Options</strong></li>
+                    <li>Click on the <strong>Server</strong> tab</li>
+                    <li>Copy the server name exactly as shown (e.g., "XM-Demo" or "Vantage-Live")</li>
+                  </ol>
+                </div>
               </div>
 
               <div className="flex gap-3">
@@ -425,7 +458,7 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   className="mt-1.5"
                 />
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  Your trading account balance in USD
+                  Enter your current trading account balance in US Dollars. This helps calculate position sizes. Minimum: $100
                 </p>
               </div>
 
@@ -440,9 +473,19 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   placeholder="1.0"
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Recommended: 1-2% per trade. Lower risk = safer trading
-                </p>
+                <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs text-muted-foreground">
+                    <strong>Risk per trade</strong> determines how much of your account you're willing to risk on each trade.
+                  </p>
+                  <div className="text-xs text-muted-foreground mt-2 space-y-1">
+                    <div>• <strong>1-2%:</strong> Conservative (Recommended for beginners)</div>
+                    <div>• <strong>3-5%:</strong> Moderate risk</div>
+                    <div>• <strong>Above 5%:</strong> Aggressive (Not recommended)</div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    💡 Lower risk = slower growth but better account protection
+                  </p>
+                </div>
               </div>
 
               <div>
@@ -456,7 +499,7 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   className="mt-1.5"
                 />
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  How many trades can run at the same time
+                  Maximum number of trades that can run at the same time. Recommended: 3-5 positions. Range: 1-20
                 </p>
               </div>
 
@@ -466,12 +509,25 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
                   id="telegramChatId"
                   value={formData.telegramChatId}
                   onChange={(e) => setFormData({ ...formData, telegramChatId: e.target.value })}
-                  placeholder="Get notifications on Telegram"
+                  placeholder="e.g., 123456789"
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Receive trade alerts on Telegram. Leave empty to skip.
-                </p>
+                <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    How to get your Telegram Chat ID:
+                  </p>
+                  <ol className="text-xs text-muted-foreground space-y-1.5 ml-4 list-decimal">
+                    <li>Open Telegram app</li>
+                    <li>Search for <strong>@userinfobot</strong></li>
+                    <li>Start a chat and type <strong>/start</strong></li>
+                    <li>The bot will reply with your Chat ID</li>
+                    <li>Copy the ID and paste it here</li>
+                  </ol>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    📱 You'll receive instant notifications when trades open or close. Leave empty to skip.
+                  </p>
+                </div>
               </div>
 
               <div className="flex gap-3">
