@@ -5,7 +5,7 @@ import heroImage from "@/assets/hero-trading.jpg";
 
 export const Hero = () => {
   return (
-    <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden">
+    <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden py-safe">
       {/* Animated background gradient mesh */}
       <div className="absolute inset-0 bg-gradient-mesh opacity-50 animate-float"></div>
       
@@ -28,58 +28,57 @@ export const Hero = () => {
       </div>
 
       {/* Content */}
-      <div className="container mx-auto px-4 sm:px-6 py-16 sm:py-20 md:py-28 lg:py-32 relative z-10">
-        <div className="max-w-5xl mx-auto text-center">
+      <div className="container mx-auto container-padding py-8 sm:py-12 md:py-16 lg:py-20 relative z-10">
+        <div className="max-w-5xl mx-auto text-center space-y-4 sm:space-y-6">
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-6 sm:mb-8 animate-fade-in">
-            <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
-            <span className="text-xs sm:text-sm font-medium bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent whitespace-nowrap">
+          <div className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 animate-fade-in touch-target">
+            <Zap className="w-4 h-4 text-primary flex-shrink-0" />
+            <span className="text-xs sm:text-sm font-medium bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
               Next-Gen AI Trading Platform
             </span>
           </div>
 
           {/* Main heading */}
-          <h1 className="font-display text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold mb-4 sm:mb-6 leading-tight animate-fade-in-up px-2">
-            <span className="bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent">
+          <h1 className="font-display text-responsive-xl font-bold leading-[1.1] sm:leading-tight animate-fade-in-up">
+            <span className="bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent block">
               Trade Smarter with
             </span>
-            <br />
-            <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-glow-pulse">
+            <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-glow-pulse block mt-1 sm:mt-2">
               AI Precision
             </span>
           </h1>
 
           {/* Subheading */}
-          <p className="text-sm sm:text-base md:text-lg lg:text-xl text-muted-foreground/90 mb-6 sm:mb-8 md:mb-12 max-w-3xl mx-auto leading-relaxed animate-fade-in px-4" style={{ animationDelay: '0.2s' }}>
+          <p className="text-responsive-base text-muted-foreground/90 max-w-3xl mx-auto leading-relaxed animate-fade-in" style={{ animationDelay: '0.2s' }}>
             Harness the power of advanced algorithms and machine learning to automate your forex and crypto trading. 
             <span className="text-foreground font-semibold"> Maximize profits while minimizing risk.</span>
           </p>
 
           {/* Feature pills */}
-          <div className="flex flex-wrap justify-center gap-2 sm:gap-3 md:gap-4 mb-6 sm:mb-8 md:mb-12 animate-fade-in px-4" style={{ animationDelay: '0.3s' }}>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
-              <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-success flex-shrink-0" />
+          <div className="flex flex-wrap justify-center gap-2 sm:gap-3 animate-fade-in" style={{ animationDelay: '0.3s' }}>
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-target">
+              <TrendingUp className="w-4 h-4 text-success flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">98.7% Uptime</span>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
-              <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-target">
+              <Shield className="w-4 h-4 text-primary flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">Bank-Grade Security</span>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-manipulation">
-              <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent flex-shrink-0" />
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-card/50 backdrop-blur-sm border border-border touch-target">
+              <Zap className="w-4 h-4 text-accent flex-shrink-0" />
               <span className="text-xs sm:text-sm whitespace-nowrap">Real-Time Execution</span>
             </div>
           </div>
 
           {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center animate-fade-in px-4" style={{ animationDelay: '0.4s' }}>
-            <Button asChild size="lg" className="text-base sm:text-lg group relative overflow-hidden bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center animate-fade-in pt-2" style={{ animationDelay: '0.4s' }}>
+            <Button asChild size="lg" className="text-base sm:text-lg group relative overflow-hidden bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300 w-full sm:w-auto touch-target">
               <Link to="/auth/login?signup=true" className="relative z-10">
                 Start 7-Day Free Trial
-                <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-1 transition-transform" />
+                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
             </Button>
-            <Button asChild size="lg" variant="outline" className="text-base sm:text-lg border-primary/30 hover:bg-primary/10 hover:border-primary/50 backdrop-blur-sm transition-all duration-300 w-full sm:w-auto">
+            <Button asChild size="lg" variant="outline" className="text-base sm:text-lg border-primary/30 hover:bg-primary/10 hover:border-primary/50 backdrop-blur-sm transition-all duration-300 w-full sm:w-auto touch-target">
               <Link to="/docs#setup-guide">
                 View Setup Guide
               </Link>
@@ -87,22 +86,20 @@ export const Hero = () => {
           </div>
 
           {/* Trust indicators */}
-          <div className="mt-12 sm:mt-16 pt-6 sm:pt-8 border-t border-border/50 animate-fade-in px-4" style={{ animationDelay: '0.5s' }}>
-            <p className="text-xs sm:text-sm text-muted-foreground/80 mb-3 sm:mb-4">Trusted by traders worldwide • No credit card required</p>
-            <div className="flex justify-center items-center gap-4 sm:gap-6 md:gap-8 text-xs sm:text-sm">
-              <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">12,847</div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Registered Users</div>
+          <div className="pt-8 sm:pt-12 border-t border-border/50 animate-fade-in" style={{ animationDelay: '0.5s' }}>
+            <p className="text-xs sm:text-sm text-muted-foreground/80 mb-4">Trusted by traders worldwide • No credit card required</p>
+            <div className="grid grid-cols-3 gap-4 sm:gap-6 md:gap-8 text-center">
+              <div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">12,847</div>
+                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Registered Users</div>
               </div>
-              <div className="w-px h-10 sm:h-12 bg-border"></div>
-              <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">$50M+</div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Trading Volume</div>
+              <div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">$50M+</div>
+                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trading Volume</div>
               </div>
-              <div className="w-px h-10 sm:h-12 bg-border"></div>
-              <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-foreground">2.3M+</div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs">Trades Executed</div>
+              <div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">2.3M+</div>
+                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trades Executed</div>
               </div>
             </div>
           </div>
