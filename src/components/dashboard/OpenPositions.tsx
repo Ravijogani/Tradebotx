@@ -73,14 +73,26 @@ export const OpenPositions = () => {
 
   const loadPositions = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      console.log('[OpenPositions] No user found');
+      return;
+    }
 
-    const { data } = await supabase
+    console.log('[OpenPositions] Loading positions for user:', user.id);
+    
+    const { data, error } = await supabase
       .from("trades")
       .select("*")
       .eq("user_id", user.id)
-      .eq("status", "open" as any)
+      .eq("status", "open")
       .order("opened_at", { ascending: false });
+
+    console.log('[OpenPositions] Query result:', { data, error, count: data?.length });
+
+    if (error) {
+      console.error('[OpenPositions] Error loading positions:', error);
+      return;
+    }
 
     setPositions(data || []);
     
@@ -90,6 +102,7 @@ export const OpenPositions = () => {
       const runningProfit = metadata.running_profit || pos.profit_loss || 0;
       return sum + runningProfit;
     }, 0);
+    console.log('[OpenPositions] Total P&L:', total);
     setTotalPnL(total);
   };
 
