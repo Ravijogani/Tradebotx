@@ -139,57 +139,42 @@ export const StrategySelection = () => {
   };
 
   const handleStartStrategy = async (strategyId: string, strategyName: string) => {
-    setActionLoading(strategyId);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setActionLoading(null);
-      return;
-    }
-
-    // Check if strategy is already running
-    const existingStrategy = userStrategies.find(
-      us => us.strategy_id === strategyId && us.is_running
-    );
-
-    if (existingStrategy) {
-      toast({
-        title: "Already Running",
-        description: "This strategy is already active",
-        variant: "destructive",
-      });
-      setActionLoading(null);
-      return;
-    }
-
-    // Optimistic update - add temporary user strategy
-    const tempUserStrategy: UserStrategy = {
-      id: `temp-${strategyId}`,
-      strategy_id: strategyId,
-      is_running: true,
-      started_at: new Date().toISOString(),
-      stopped_at: null
-    };
-    const originalUserStrategies = [...userStrategies];
-    setUserStrategies(prev => [...prev, tempUserStrategy]);
-
-    // Show immediate feedback
-    toast({
-      title: "Starting Strategy",
-      description: `Starting ${strategyName}...`,
-    });
-
     try {
-      const { error } = await supabase.functions.invoke('start-trading-bot', {
-        body: { strategyId, strategyName }
+      setActionLoading(strategyId);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      // Check if strategy is already running
+      const existingStrategy = userStrategies.find(
+        us => us.strategy_id === strategyId && us.is_running
+      );
+
+      if (existingStrategy) {
+        toast({
+          title: "Already Running",
+          description: "This strategy is already active",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Call edge function to start the bot
+      const { data, error } = await supabase.functions.invoke('start-trading-bot', {
+        body: { 
+          strategyId,
+          strategyName 
+        }
       });
 
       if (error) throw error;
 
-      // Reload to get actual state
+      toast({
+        title: "Strategy Started",
+        description: `${strategyName} is now running`,
+      });
+
       await loadData();
     } catch (error: any) {
-      // Roll back on error
-      setUserStrategies(originalUserStrategies);
       toast({
         title: "Error",
         description: error.message || "Failed to start strategy",
@@ -201,34 +186,22 @@ export const StrategySelection = () => {
   };
 
   const handleStopStrategy = async (userStrategyId: string, strategyName: string) => {
-    setActionLoading(userStrategyId);
-
-    // Optimistic update
-    const originalUserStrategies = [...userStrategies];
-    setUserStrategies(prev => prev.map(us => 
-      us.id === userStrategyId 
-        ? { ...us, is_running: false, stopped_at: new Date().toISOString() }
-        : us
-    ));
-
-    // Show immediate feedback
-    toast({
-      title: "Stopping Strategy",
-      description: `Stopping ${strategyName}...`,
-    });
-
     try {
+      setActionLoading(userStrategyId);
+
       const { error } = await supabase.functions.invoke('stop-trading-bot', {
         body: { userStrategyId }
       });
 
       if (error) throw error;
 
-      // Reload to get actual state
+      toast({
+        title: "Strategy Stopped",
+        description: `${strategyName} has been stopped`,
+      });
+
       await loadData();
     } catch (error: any) {
-      // Roll back on error
-      setUserStrategies(originalUserStrategies);
       toast({
         title: "Error",
         description: error.message || "Failed to stop strategy",
