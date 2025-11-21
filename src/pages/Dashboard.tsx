@@ -17,11 +17,13 @@ const Dashboard = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Set up auth state listener first
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+    let mounted = true;
+
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
         
         if (!session) {
           navigate("/auth/login");
@@ -29,63 +31,67 @@ const Dashboard = () => {
           return;
         }
 
-        // Check setup completion when user is authenticated
-        try {
-          const { data: setup, error: setupError } = await supabase
-            .from("user_setup")
-            .select("is_completed, admin_approved")
-            .eq("user_id", session.user.id)
-            .maybeSingle();
+        setSession(session);
+        setUser(session.user);
 
-          if (setupError) {
-            console.error("Error loading setup:", setupError);
-          }
-
-          if (!setup || !setup.is_completed) {
-            setShowSetup(true);
-          }
-        } catch (error: any) {
-          console.error("Setup check error:", error);
-        }
-        
-        setLoading(false);
-      }
-    );
-
-    // Check for existing session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (!session) {
-        navigate("/auth/login");
-        setLoading(false);
-        return;
-      }
-
-      // Check setup completion when user is authenticated
-      try {
-        const { data: setup, error: setupError } = await supabase
+        // Check setup completion
+        const { data: setup } = await supabase
           .from("user_setup")
           .select("is_completed, admin_approved")
           .eq("user_id", session.user.id)
           .maybeSingle();
 
-        if (setupError) {
-          console.error("Error loading setup:", setupError);
-        }
+        if (!mounted) return;
 
         if (!setup || !setup.is_completed) {
           setShowSetup(true);
         }
-      } catch (error: any) {
-        console.error("Setup check error:", error);
-      }
-      
-      setLoading(false);
-    });
 
-    return () => subscription.unsubscribe();
+        setLoading(false);
+      } catch (error) {
+        console.error("Auth check error:", error);
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    checkAuth();
+
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (!mounted) return;
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (!session) {
+          navigate("/auth/login");
+          return;
+        }
+
+        // Check setup on auth changes
+        try {
+          const { data: setup } = await supabase
+            .from("user_setup")
+            .select("is_completed, admin_approved")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          if (mounted && (!setup || !setup.is_completed)) {
+            setShowSetup(true);
+          }
+        } catch (error) {
+          console.error("Setup check error:", error);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [navigate]);
 
   if (loading) {
