@@ -18,16 +18,35 @@ const Dashboard = () => {
 
   useEffect(() => {
     let mounted = true;
+    let loadingTimeout: NodeJS.Timeout;
 
     const checkAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // Set a safety timeout to prevent infinite loading
+        loadingTimeout = setTimeout(() => {
+          if (mounted) {
+            console.error("Auth check timeout - forcing loading to false");
+            setLoading(false);
+          }
+        }, 5000);
+
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          console.error("Session error:", sessionError);
+          if (mounted) {
+            navigate("/auth/login");
+            setLoading(false);
+          }
+          return;
+        }
         
         if (!mounted) return;
         
         if (!session) {
           navigate("/auth/login");
           setLoading(false);
+          clearTimeout(loadingTimeout);
           return;
         }
 
@@ -35,11 +54,15 @@ const Dashboard = () => {
         setUser(session.user);
 
         // Check setup completion
-        const { data: setup } = await supabase
+        const { data: setup, error: setupError } = await supabase
           .from("user_setup")
           .select("is_completed, admin_approved")
           .eq("user_id", session.user.id)
           .maybeSingle();
+
+        if (setupError) {
+          console.error("Setup check error:", setupError);
+        }
 
         if (!mounted) return;
 
@@ -48,10 +71,12 @@ const Dashboard = () => {
         }
 
         setLoading(false);
+        clearTimeout(loadingTimeout);
       } catch (error) {
         console.error("Auth check error:", error);
         if (mounted) {
           setLoading(false);
+          clearTimeout(loadingTimeout);
         }
       }
     };
@@ -60,7 +85,7 @@ const Dashboard = () => {
 
     // Set up auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (!mounted) return;
         
         setSession(session);
@@ -71,25 +96,28 @@ const Dashboard = () => {
           return;
         }
 
-        // Check setup on auth changes
-        try {
-          const { data: setup } = await supabase
-            .from("user_setup")
-            .select("is_completed, admin_approved")
-            .eq("user_id", session.user.id)
-            .maybeSingle();
+        // Check setup on auth changes (non-blocking)
+        setTimeout(async () => {
+          try {
+            const { data: setup } = await supabase
+              .from("user_setup")
+              .select("is_completed, admin_approved")
+              .eq("user_id", session.user.id)
+              .maybeSingle();
 
-          if (mounted && (!setup || !setup.is_completed)) {
-            setShowSetup(true);
+            if (mounted && (!setup || !setup.is_completed)) {
+              setShowSetup(true);
+            }
+          } catch (error) {
+            console.error("Setup check error:", error);
           }
-        } catch (error) {
-          console.error("Setup check error:", error);
-        }
+        }, 0);
       }
     );
 
     return () => {
       mounted = false;
+      if (loadingTimeout) clearTimeout(loadingTimeout);
       subscription.unsubscribe();
     };
   }, [navigate]);
