@@ -9,6 +9,35 @@ export const TradesList = () => {
 
   useEffect(() => {
     loadTrades();
+
+    // Add realtime subscription for live updates
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channel = supabase
+        .channel('trades-list-changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'trades',
+            filter: `user_id=eq.${user.id}`
+          },
+          () => loadTrades()
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    };
+
+    const cleanup = setupRealtime();
+    return () => {
+      cleanup.then(fn => fn?.());
+    };
   }, []);
 
   const loadTrades = async () => {

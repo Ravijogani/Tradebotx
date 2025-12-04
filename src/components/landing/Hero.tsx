@@ -1,9 +1,59 @@
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { TrendingUp, Zap, Shield, ArrowRight } from "lucide-react";
 import heroImage from "@/assets/hero-trading.jpg";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Hero = () => {
+  const [stats, setStats] = useState({
+    userCount: 0,
+    tradingVolume: 0,
+    tradesExecuted: 0,
+  });
+
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        // Get user count
+        const { count: userCount } = await supabase
+          .from("profiles")
+          .select("*", { count: "exact", head: true });
+
+        // Get trades count and volume
+        const { data: trades } = await supabase
+          .from("trades")
+          .select("quantity, entry_price");
+
+        const tradesExecuted = trades?.length || 0;
+        const tradingVolume = trades?.reduce((sum, t) => 
+          sum + (parseFloat(String(t.quantity)) * parseFloat(String(t.entry_price))), 0) || 0;
+
+        setStats({
+          userCount: userCount || 0,
+          tradingVolume,
+          tradesExecuted,
+        });
+      } catch (error) {
+        console.error("Error loading stats:", error);
+      }
+    };
+
+    loadStats();
+  }, []);
+
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M+`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K+`;
+    return num.toString();
+  };
+
+  const formatCurrency = (num: number): string => {
+    if (num >= 1000000) return `$${(num / 1000000).toFixed(1)}M+`;
+    if (num >= 1000) return `$${(num / 1000).toFixed(0)}K+`;
+    return `$${num.toFixed(0)}`;
+  };
+
   return (
     <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden py-safe">
       {/* Animated background gradient mesh */}
@@ -90,15 +140,21 @@ export const Hero = () => {
             <p className="text-xs sm:text-sm text-muted-foreground/80 mb-4">Trusted by traders worldwide • No credit card required</p>
             <div className="grid grid-cols-3 gap-4 sm:gap-6 md:gap-8 text-center">
               <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">12,847</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                  {stats.userCount > 0 ? formatNumber(stats.userCount) : "500+"}
+                </div>
                 <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Registered Users</div>
               </div>
               <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">$50M+</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                  {stats.tradingVolume > 0 ? formatCurrency(stats.tradingVolume) : "$100K+"}
+                </div>
                 <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trading Volume</div>
               </div>
               <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">2.3M+</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                  {stats.tradesExecuted > 0 ? formatNumber(stats.tradesExecuted) : "1K+"}
+                </div>
                 <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trades Executed</div>
               </div>
             </div>

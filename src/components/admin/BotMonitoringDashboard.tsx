@@ -100,16 +100,32 @@ export const BotMonitoringDashboard = () => {
 
   const loadLogs = async (userId: string, strategyId: string) => {
     try {
+      // Use bot_audit_logs instead of non-existent bot_logs table
       const { data, error } = await supabase
-        .from("bot_logs" as any)
+        .from("bot_audit_logs")
         .select("*")
         .eq("user_id", userId)
         .eq("strategy_id", strategyId)
-        .order("created_at", { ascending: false})
+        .order("created_at", { ascending: false })
         .limit(100);
 
       if (error) throw error;
-      setBotLogs(data || []);
+      
+      // Transform audit logs to match expected format
+      const formattedLogs = (data || []).map(log => {
+        const metadata = typeof log.metadata === 'object' && log.metadata !== null 
+          ? log.metadata as Record<string, any>
+          : {};
+        return {
+          id: log.id,
+          message: `${log.action}: ${metadata.strategy_name || 'Strategy'}`,
+          log_level: log.action === 'start' ? 'info' : log.action === 'stop' ? 'warning' : 'info',
+          created_at: log.created_at,
+          metadata: log.metadata
+        };
+      });
+      
+      setBotLogs(formattedLogs);
     } catch (error: any) {
       toast({
         title: "Error loading logs",
