@@ -84,7 +84,7 @@ export const OpenPositions = () => {
       .from("trades")
       .select("*")
       .eq("user_id", user.id)
-      .eq("status", "open")
+      .in("status", ["open", "OPEN"])
       .order("opened_at", { ascending: false });
 
     console.log('[OpenPositions] Query result:', { data, error, count: data?.length });
