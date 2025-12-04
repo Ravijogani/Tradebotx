@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { SetupDialog } from "@/components/dashboard/SetupDialog";
 import { TrialExpiredModal } from "@/components/dashboard/TrialExpiredModal";
+import { SessionTimeoutWarning } from "@/components/dashboard/SessionTimeoutWarning";
 import type { Session } from "@supabase/supabase-js";
 
 const Dashboard = () => {
@@ -134,6 +135,7 @@ const Dashboard = () => {
     <>
       <DashboardLayout user={user} />
       <TrialExpiredModal />
+      <SessionTimeoutWarning warningThresholdMinutes={5} />
       {showSetup && <SetupDialog open={showSetup} onComplete={() => setShowSetup(false)} />}
     </>
   );

@@ -113,32 +113,37 @@ export const StatsOverview = () => {
       value: `$${stats.totalProfit.toFixed(2)}`,
       icon: DollarSign,
       trend: stats.totalProfit >= 0 ? "up" : "down",
-      color: stats.totalProfit >= 0 ? "text-success" : "text-destructive",
+      colorClass: stats.totalProfit >= 0 ? "text-success" : "text-destructive",
+      bgClass: stats.totalProfit >= 0 ? "bg-success/20" : "bg-destructive/20",
     },
     {
       title: "Today's P&L",
       value: `$${stats.todayPL.toFixed(2)}`,
       icon: TrendingUp,
       trend: stats.todayPL >= 0 ? "up" : "down",
-      color: stats.todayPL >= 0 ? "text-success" : "text-destructive",
+      colorClass: stats.todayPL >= 0 ? "text-success" : "text-destructive",
+      bgClass: stats.todayPL >= 0 ? "bg-success/20" : "bg-destructive/20",
     },
     {
       title: "Active Trades",
       value: stats.activeTrades,
       icon: Activity,
-      color: "text-primary",
+      colorClass: "text-primary",
+      bgClass: "bg-primary/20",
     },
     {
       title: "Win Rate",
       value: `${stats.winRate.toFixed(1)}%`,
       icon: Target,
-      color: "text-accent",
+      colorClass: "text-accent",
+      bgClass: "bg-accent/20",
     },
     {
       title: "Total Trades",
       value: stats.totalTrades,
       icon: TrendingUp,
-      color: "text-foreground",
+      colorClass: "text-foreground",
+      bgClass: "bg-muted",
     },
   ];
 
@@ -150,13 +155,13 @@ export const StatsOverview = () => {
           className="p-4 sm:p-6 border-border/50 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all duration-300 group min-w-0"
         >
           <div className="flex items-start justify-between mb-4">
-            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br from-${stat.color.replace('text-', '')}/20 to-${stat.color.replace('text-', '')}/5 flex items-center justify-center group-hover:scale-110 transition-transform`}>
-              <stat.icon className={`w-6 h-6 ${stat.color}`} />
+            <div className={`w-12 h-12 rounded-xl ${stat.bgClass} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+              <stat.icon className={`w-6 h-6 ${stat.colorClass}`} />
             </div>
           </div>
           <div className="min-w-0">
             <p className="text-xs sm:text-sm text-muted-foreground mb-1 sm:mb-2 font-medium truncate">{stat.title}</p>
-            <p className={`text-2xl sm:text-3xl font-bold ${stat.color} tracking-tight break-all`}>{stat.value}</p>
+            <p className={`text-2xl sm:text-3xl font-bold ${stat.colorClass} tracking-tight break-all`}>{stat.value}</p>
           </div>
         </Card>
       ))}
