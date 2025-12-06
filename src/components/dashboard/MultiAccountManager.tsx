@@ -80,26 +80,23 @@ export const MultiAccountManager = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // If setting as primary, unset other primary accounts
-      if (formData.is_primary && accounts.length > 0) {
-        await supabase
-          .from("user_mt5_accounts")
-          .update({ is_primary: false })
-          .eq("user_id", user.id);
-      }
-
-      const { error } = await supabase.from("user_mt5_accounts").insert({
-        user_id: user.id,
-        account_name: formData.account_name,
-        mt5_account: formData.mt5_account,
-        mt5_password: formData.mt5_password,
-        mt5_server: formData.mt5_server,
-        broker_name: formData.broker_name,
-        account_size: parseFloat(formData.account_size),
-        is_primary: formData.is_primary || accounts.length === 0
+      // Use the encrypt-mt5-account edge function to securely store the password
+      const { data, error } = await supabase.functions.invoke('encrypt-mt5-account', {
+        body: {
+          password: formData.mt5_password,
+          accountData: {
+            account_name: formData.account_name,
+            mt5_account: formData.mt5_account,
+            mt5_server: formData.mt5_server,
+            broker_name: formData.broker_name,
+            account_size: parseFloat(formData.account_size),
+            is_primary: formData.is_primary || accounts.length === 0
+          }
+        }
       });
 
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
 
       toast({ title: "Account added successfully" });
       setDialogOpen(false);
