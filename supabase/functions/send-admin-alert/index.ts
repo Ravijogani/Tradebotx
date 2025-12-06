@@ -99,16 +99,23 @@ serve(async (req) => {
       },
     });
 
-    // Prepare recipients
-    const recipients = [adminEmail];
-    if (adminEmailCC) {
-      recipients.push(adminEmailCC);
+    // Prepare recipients as array (denomailer expects array, not comma-separated string)
+    const recipients: string[] = [];
+    if (adminEmail && adminEmail.trim()) {
+      recipients.push(adminEmail.trim());
+    }
+    if (adminEmailCC && adminEmailCC.trim()) {
+      recipients.push(adminEmailCC.trim());
     }
 
-    // Send to all admin emails
+    if (recipients.length === 0) {
+      throw new Error('No valid admin email addresses configured');
+    }
+
+    // Send to all admin emails - denomailer expects array for 'to' field
     await client.send({
       from: smtpFrom,
-      to: recipients.join(', '),
+      to: recipients,
       subject: subject,
       html: emailBody,
     });
