@@ -20,6 +20,7 @@ import Disclaimer from "./pages/Disclaimer";
 import Status from "./pages/Status";
 import Docs from "./pages/Docs";
 import TradeJournal from "./pages/TradeJournal";
+import StrategyBuilderPage from "./pages/StrategyBuilderPage";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,7 @@ const App = () => (
           <Route path="/status" element={<Status />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="/trade-journal" element={<TradeJournal />} />
+          <Route path="/strategy-builder" element={<StrategyBuilderPage />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

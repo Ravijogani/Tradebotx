@@ -71,3 +71,24 @@ verify_jwt = true
 
 [functions.send-onboarding-nurture]
 verify_jwt = false
+
+[functions.send-weekly-report]
+verify_jwt = false
+
+[functions.send-trade-opened]
+verify_jwt = false
+
+[functions.send-trade-closed]
+verify_jwt = false
+
+[functions.send-bot-stopped]
+verify_jwt = false
+
+[functions.send-emergency-stop]
+verify_jwt = false
+
+[functions.generate-ai-insights]
+verify_jwt = true
+
+[functions.check-withdrawal-milestones]
+verify_jwt = false
