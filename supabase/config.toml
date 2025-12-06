@@ -68,3 +68,6 @@ verify_jwt = false
 
 [functions.generate-invoice]
 verify_jwt = true
+
+[functions.send-onboarding-nurture]
+verify_jwt = false
