@@ -44,6 +44,54 @@ export type Database = {
         }
         Relationships: []
       }
+      advanced_audit_logs: {
+        Row: {
+          action_category: string
+          action_description: string
+          action_type: string
+          created_at: string
+          id: string
+          ip_address: string | null
+          new_values: Json | null
+          old_values: Json | null
+          resource_id: string | null
+          resource_type: string | null
+          session_id: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          action_category: string
+          action_description: string
+          action_type: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          new_values?: Json | null
+          old_values?: Json | null
+          resource_id?: string | null
+          resource_type?: string | null
+          session_id?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          action_category?: string
+          action_description?: string
+          action_type?: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          new_values?: Json | null
+          old_values?: Json | null
+          resource_id?: string | null
+          resource_type?: string | null
+          session_id?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_analysis_history: {
         Row: {
           analysis_type: string
@@ -262,6 +310,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      custom_strategies: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean | null
+          is_approved: boolean | null
+          name: string
+          strategy_config: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_approved?: boolean | null
+          name: string
+          strategy_config?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_approved?: boolean | null
+          name?: string
+          strategy_config?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       email_templates: {
         Row: {
@@ -727,6 +817,48 @@ export type Database = {
         }
         Relationships: []
       }
+      strategy_blocks: {
+        Row: {
+          block_type: string
+          category: string | null
+          config_schema: Json
+          created_at: string
+          default_config: Json
+          description: string | null
+          icon: string | null
+          id: string
+          is_active: boolean | null
+          is_premium: boolean | null
+          name: string
+        }
+        Insert: {
+          block_type: string
+          category?: string | null
+          config_schema?: Json
+          created_at?: string
+          default_config?: Json
+          description?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_premium?: boolean | null
+          name: string
+        }
+        Update: {
+          block_type?: string
+          category?: string | null
+          config_schema?: Json
+          created_at?: string
+          default_config?: Json
+          description?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_premium?: boolean | null
+          name?: string
+        }
+        Relationships: []
+      }
       strategy_performance: {
         Row: {
           avg_loss: number
@@ -1041,6 +1173,51 @@ export type Database = {
         }
         Relationships: []
       }
+      user_mt5_accounts: {
+        Row: {
+          account_name: string
+          account_size: number | null
+          broker_name: string | null
+          created_at: string
+          id: string
+          is_active: boolean | null
+          is_primary: boolean | null
+          mt5_account: string
+          mt5_password: string | null
+          mt5_server: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_name?: string
+          account_size?: number | null
+          broker_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          is_primary?: boolean | null
+          mt5_account: string
+          mt5_password?: string | null
+          mt5_server: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_name?: string
+          account_size?: number | null
+          broker_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          is_primary?: boolean | null
+          mt5_account?: string
+          mt5_password?: string | null
+          mt5_server?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_notifications: {
         Row: {
           created_at: string
@@ -1288,6 +1465,36 @@ export type Database = {
           },
         ]
       }
+      weekly_report_settings: {
+        Row: {
+          created_at: string
+          id: string
+          is_enabled: boolean | null
+          last_sent_at: string | null
+          send_day: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean | null
+          last_sent_at?: string | null
+          send_day?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean | null
+          last_sent_at?: string | null
+          send_day?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       withdrawal_milestones: {
         Row: {
           achieved_at: string
@@ -1405,6 +1612,21 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      log_audit_action: {
+        Args: {
+          p_action_category: string
+          p_action_description: string
+          p_action_type: string
+          p_ip_address?: string
+          p_new_values?: Json
+          p_old_values?: Json
+          p_resource_id?: string
+          p_resource_type?: string
+          p_user_agent?: string
+          p_user_id: string
+        }
+        Returns: string
       }
       notify_trial_expiring: { Args: never; Returns: undefined }
       process_referral_signup: {
