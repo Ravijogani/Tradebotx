@@ -43,14 +43,36 @@ export const AdminAnalytics = () => {
       const totalProfitLoss = trades?.reduce((sum, trade) => 
         sum + (Number(trade.profit_loss) || 0), 0) || 0;
 
-      // Generate mock growth data (last 7 days)
-      const userGrowth = Array.from({ length: 7 }, (_, i) => 
-        Math.floor(Math.random() * 50) + 10
-      );
-
-      const tradeVolume = Array.from({ length: 7 }, (_, i) => 
-        Math.floor(Math.random() * 100) + 20
-      );
+      // Get real user growth data (last 7 days)
+      const userGrowth: number[] = [];
+      const tradeVolume: number[] = [];
+      
+      for (let i = 6; i >= 0; i--) {
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - i);
+        startDate.setHours(0, 0, 0, 0);
+        
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + 1);
+        
+        // Count users created on this day
+        const { count: usersOnDay } = await supabase
+          .from("profiles")
+          .select("*", { count: "exact", head: true })
+          .gte("created_at", startDate.toISOString())
+          .lt("created_at", endDate.toISOString());
+        
+        userGrowth.push(usersOnDay || 0);
+        
+        // Count trades on this day
+        const { count: tradesOnDay } = await supabase
+          .from("trades")
+          .select("*", { count: "exact", head: true })
+          .gte("opened_at", startDate.toISOString())
+          .lt("opened_at", endDate.toISOString());
+        
+        tradeVolume.push(tradesOnDay || 0);
+      }
 
       setAnalytics({
         totalUsers: totalUsers || 0,
