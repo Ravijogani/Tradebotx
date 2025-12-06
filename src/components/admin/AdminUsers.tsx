@@ -326,7 +326,47 @@ export const AdminUsers = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
+              {/* Mobile: Card layout */}
+              <div className="md:hidden space-y-3">
+                {pendingApprovals.map((user) => {
+                  const setup = user.user_setup?.[0];
+                  return (
+                    <div key={user.id} className="p-4 border rounded-lg bg-card space-y-3">
+                      <div>
+                        <div className="font-medium">{user.full_name || "N/A"}</div>
+                        <div className="text-sm text-muted-foreground">{user.email}</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-sm">
+                        <Badge variant="outline">{setup?.broker_name || "N/A"}</Badge>
+                        <span className="font-mono text-xs">{setup?.broker_account_id || "N/A"}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={() => setSelectedUser({ ...user, action: 'approve' })}
+                          className="flex-1"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-1" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => setSelectedUser({ ...user, action: 'reject' })}
+                          className="flex-1"
+                        >
+                          <XCircle className="h-4 w-4 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              {/* Desktop: Table layout */}
+              <div className="hidden md:block rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -390,43 +430,45 @@ export const AdminUsers = () => {
         )}
 
         {/* All Users Section */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
+        <Card className="overflow-hidden">
+          <CardHeader className="p-3 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <CardTitle>All Users</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-lg sm:text-xl">All Users</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">
                   Manage user accounts and subscriptions
                 </CardDescription>
               </div>
               {selectedUsers.length > 0 && (
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     size="sm"
                     variant="default"
                     onClick={handleBulkApproval}
                     disabled={actionLoading}
+                    className="text-xs sm:text-sm"
                   >
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Approve Selected ({selectedUsers.length})
+                    <CheckCircle className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
+                    Approve ({selectedUsers.length})
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => setShowBulkEmailDialog(true)}
                     disabled={actionLoading}
+                    className="text-xs sm:text-sm"
                   >
-                    <Mail className="w-4 h-4 mr-2" />
-                    Email Selected
+                    <Mail className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
+                    Email
                   </Button>
                 </div>
               )}
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-3 sm:p-6 space-y-4">
             {/* Search and Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="flex items-center gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-1">
                 <Search className="w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search users..."
@@ -470,7 +512,74 @@ export const AdminUsers = () => {
               </Select>
             </div>
 
-            <div className="rounded-md border">
+            {/* Mobile: Card layout */}
+            <div className="lg:hidden space-y-3">
+              <div className="flex items-center gap-2 mb-3">
+                <Checkbox
+                  checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
+                  onCheckedChange={toggleAllUsers}
+                />
+                <span className="text-sm text-muted-foreground">Select all</span>
+              </div>
+              {filteredUsers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No users found</div>
+              ) : (
+                filteredUsers.map((user) => {
+                  const setup = user.user_setup?.[0];
+                  const subscription = user.user_subscriptions?.[0];
+                  const planType = subscription?.plans?.plan_type;
+                  
+                  return (
+                    <div key={user.id} className="p-3 sm:p-4 border rounded-lg bg-card space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <Checkbox
+                            checked={selectedUsers.includes(user.id)}
+                            onCheckedChange={() => toggleUserSelection(user.id)}
+                            className="mt-1"
+                          />
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{user.full_name || "N/A"}</div>
+                            <div className="text-sm text-muted-foreground truncate">{user.email}</div>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedUserIdForProfile(user.id)}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline" className="text-xs">{planType || "starter"}</Badge>
+                        {subscription?.status === "active" ? (
+                          <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-xs">Active</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">{subscription?.status || "trial"}</Badge>
+                        )}
+                        {setup?.is_completed ? (
+                          <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">Setup Done</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">Setup Pending</Badge>
+                        )}
+                        {setup?.admin_approved ? (
+                          <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-xs">Approved</Badge>
+                        ) : setup?.is_completed ? (
+                          <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20 text-xs">Approval Pending</Badge>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Joined: {new Date(user.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop: Table layout */}
+            <div className="hidden lg:block rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -578,9 +687,9 @@ export const AdminUsers = () => {
               </Table>
             </div>
 
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>Total Users: {filteredUsers.length}</span>
-              <span>Pending Approvals: {pendingApprovals.length}</span>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs sm:text-sm text-muted-foreground">
+              <span>Total: {filteredUsers.length}</span>
+              <span>Pending: {pendingApprovals.length}</span>
               {selectedUsers.length > 0 && (
                 <span className="text-primary font-medium">{selectedUsers.length} selected</span>
               )}

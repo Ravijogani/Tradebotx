@@ -165,16 +165,16 @@ export const ActivityTimeline = () => {
   };
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-accent" />
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
+      <CardHeader className="p-3 sm:p-4 md:p-6">
+        <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+          <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />
           Recent Activity
         </CardTitle>
-        <CardDescription>Live feed of your trading actions</CardDescription>
+        <CardDescription className="text-xs sm:text-sm">Live feed of your trading actions</CardDescription>
       </CardHeader>
-      <CardContent>
-        <ScrollArea className="h-[400px] pr-4">
+      <CardContent className="p-3 sm:p-4 md:p-6 pt-0">
+        <ScrollArea className="h-[350px] sm:h-[400px] pr-2 sm:pr-4">
           {loading ? (
             <div className="space-y-4">
               {[...Array(3)].map((_, i) => (
@@ -193,23 +193,23 @@ export const ActivityTimeline = () => {
               <p className="text-muted-foreground">No recent activity</p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {activities.map((activity, index) => (
-                <div key={activity.id} className="flex items-start gap-4 relative">
+                <div key={activity.id} className="flex items-start gap-2 sm:gap-4 relative">
                   {index < activities.length - 1 && (
-                    <div className="absolute left-5 top-10 bottom-0 w-px bg-border" />
+                    <div className="absolute left-4 sm:left-5 top-8 sm:top-10 bottom-0 w-px bg-border" />
                   )}
-                  <div className="w-10 h-10 rounded-full bg-muted/50 flex items-center justify-center flex-shrink-0 relative z-10">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-muted/50 flex items-center justify-center flex-shrink-0 relative z-10">
                     {getIcon(activity.type, activity.status)}
                   </div>
-                  <div className="flex-1 space-y-1 pt-1">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium leading-none">{activity.title}</p>
-                      <span className="text-xs text-muted-foreground">
+                  <div className="flex-1 space-y-1 pt-0.5 sm:pt-1 min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <p className="text-xs sm:text-sm font-medium leading-none truncate">{activity.title}</p>
+                      <span className="text-[10px] sm:text-xs text-muted-foreground flex-shrink-0">
                         {getTimeAgo(activity.timestamp)}
                       </span>
                     </div>
-                    <p className="text-sm text-muted-foreground">{activity.description}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground truncate">{activity.description}</p>
                     {activity.status && (
                       <Badge
                         variant={
