@@ -11,9 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle, Eye, Filter, Mail, Download } from "lucide-react";
+import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCircle, Eye, Filter, Mail, Download, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { UserProfileModal } from "@/components/admin/UserProfileModal";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const ADMIN_EMAIL = "admin@tradebotx.com"; // Configure this with your admin email
 
@@ -32,6 +33,8 @@ export const AdminUsers = () => {
   const [showBulkEmailDialog, setShowBulkEmailDialog] = useState(false);
   const [bulkEmailSubject, setBulkEmailSubject] = useState("");
   const [bulkEmailMessage, setBulkEmailMessage] = useState("");
+  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -265,6 +268,137 @@ export const AdminUsers = () => {
     }
   };
 
+  const handleDeleteUser = async (user: any) => {
+    setDeleteLoading(true);
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      
+      // Delete related data first (in order to avoid foreign key issues)
+      // Delete trades
+      await supabase.from("trades").delete().eq("user_id", user.id);
+      
+      // Delete user_strategies
+      await supabase.from("user_strategies").delete().eq("user_id", user.id);
+      
+      // Delete bot_heartbeats
+      await supabase.from("bot_heartbeats").delete().eq("user_id", user.id);
+      
+      // Delete bot_commands
+      await supabase.from("bot_commands").delete().eq("user_id", user.id);
+      
+      // Delete user_subscriptions
+      await supabase.from("user_subscriptions").delete().eq("user_id", user.id);
+      
+      // Delete user_setup
+      await supabase.from("user_setup").delete().eq("user_id", user.id);
+      
+      // Delete user_notifications
+      await supabase.from("user_notifications").delete().eq("user_id", user.id);
+      
+      // Delete referral_codes
+      await supabase.from("referral_codes").delete().eq("user_id", user.id);
+      
+      // Delete user_roles
+      await supabase.from("user_roles").delete().eq("user_id", user.id);
+      
+      // Delete profile
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .delete()
+        .eq("id", user.id);
+      
+      if (profileError) throw profileError;
+
+      // Log activity
+      if (currentUser) {
+        await supabase.from("admin_activity_logs").insert({
+          admin_user_id: currentUser.id,
+          action_type: "user_deleted",
+          target_user_id: user.id,
+          description: `Deleted user account: ${user.email}`,
+        });
+      }
+
+      toast({
+        title: "User Deleted",
+        description: `${user.email} has been permanently deleted`,
+      });
+
+      setUserToDelete(null);
+      loadUsers();
+    } catch (error: any) {
+      toast({
+        title: "Error deleting user",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedUsers.length === 0) {
+      toast({
+        title: "No users selected",
+        description: "Please select users to delete",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      for (const userId of selectedUsers) {
+        const user = users.find(u => u.id === userId);
+        if (user) {
+          await handleDeleteUserData(userId, user.email);
+        }
+      }
+
+      toast({
+        title: "Bulk Delete Complete",
+        description: `${selectedUsers.length} users deleted successfully`,
+      });
+
+      setSelectedUsers([]);
+      loadUsers();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteUserData = async (userId: string, email: string) => {
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    
+    // Delete all related data
+    await supabase.from("trades").delete().eq("user_id", userId);
+    await supabase.from("user_strategies").delete().eq("user_id", userId);
+    await supabase.from("bot_heartbeats").delete().eq("user_id", userId);
+    await supabase.from("bot_commands").delete().eq("user_id", userId);
+    await supabase.from("user_subscriptions").delete().eq("user_id", userId);
+    await supabase.from("user_setup").delete().eq("user_id", userId);
+    await supabase.from("user_notifications").delete().eq("user_id", userId);
+    await supabase.from("referral_codes").delete().eq("user_id", userId);
+    await supabase.from("user_roles").delete().eq("user_id", userId);
+    await supabase.from("profiles").delete().eq("id", userId);
+
+    if (currentUser) {
+      await supabase.from("admin_activity_logs").insert({
+        admin_user_id: currentUser.id,
+        action_type: "user_deleted",
+        target_user_id: userId,
+        description: `Deleted user account: ${email}`,
+      });
+    }
+  };
+
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -461,6 +595,16 @@ export const AdminUsers = () => {
                     <Mail className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
                     Email
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={handleBulkDelete}
+                    disabled={actionLoading}
+                    className="text-xs sm:text-sm"
+                  >
+                    <Trash2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
+                    Delete ({selectedUsers.length})
+                  </Button>
                 </div>
               )}
             </div>
@@ -543,13 +687,22 @@ export const AdminUsers = () => {
                             <div className="text-sm text-muted-foreground truncate">{user.email}</div>
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSelectedUserIdForProfile(user.id)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedUserIdForProfile(user.id)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => setUserToDelete(user)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Badge variant="outline" className="text-xs">{planType || "starter"}</Badge>
@@ -669,15 +822,22 @@ export const AdminUsers = () => {
                             {new Date(user.created_at).toLocaleDateString()}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setSelectedUserIdForProfile(user.id)}
-                              className="gap-2"
-                            >
-                              <Eye className="w-4 h-4" />
-                              View
-                            </Button>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSelectedUserIdForProfile(user.id)}
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => setUserToDelete(user)}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -835,6 +995,40 @@ export const AdminUsers = () => {
         open={!!selectedUserIdForProfile}
         onClose={() => setSelectedUserIdForProfile(null)}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!userToDelete} onOpenChange={() => setUserToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User Account</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently delete <strong>{userToDelete?.email}</strong>? 
+              This action cannot be undone and will remove all user data including trades, 
+              subscriptions, and settings.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => handleDeleteUser(userToDelete)}
+              disabled={deleteLoading}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete User
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };
