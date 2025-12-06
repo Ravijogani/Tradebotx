@@ -16,7 +16,8 @@ import {
   MonitorDot,
   ChevronDown,
   Sparkles,
-  HeartPulse
+  HeartPulse,
+  UserPlus
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -53,6 +54,7 @@ const managementItems = [
 const analyticsItems = [
   { title: "Analytics", path: "analytics", icon: TrendingUp },
   { title: "Platform", path: "platform-analytics", icon: BarChart3 },
+  { title: "Onboarding", path: "onboarding", icon: UserPlus },
   { title: "Referrals", path: "referrals", icon: Gift },
 ];
 

@@ -22,6 +22,7 @@ import { BotMonitoringDashboard } from "@/components/admin/BotMonitoringDashboar
 import { AIInsightsDashboard } from "@/components/admin/AIInsightsDashboard";
 import { SystemHealthCheck } from "@/components/admin/SystemHealthCheck";
 import { AdminOverview } from "@/components/admin/AdminOverview";
+import { OnboardingAnalytics } from "@/components/admin/OnboardingAnalytics";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
@@ -133,6 +134,8 @@ const AdminDashboard = () => {
         return <AdminAnalytics />;
       case 'platform-analytics':
         return <PlatformAnalytics />;
+      case 'onboarding':
+        return <OnboardingAnalytics />;
       case 'referrals':
         return <ReferralProgramDashboard />;
       case 'invoices':
