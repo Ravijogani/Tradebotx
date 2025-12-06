@@ -176,25 +176,25 @@ const AdminDashboard = () => {
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header */}
           <header className="sticky top-0 z-40 border-b border-border bg-card/80 backdrop-blur-lg">
-            <div className="flex items-center justify-between h-16 px-6">
-              <div className="flex items-center gap-4">
-                <SidebarTrigger className="-ml-2" />
-                <div>
-                  <h1 className="text-lg font-bold text-foreground">
+            <div className="flex items-center justify-between h-14 sm:h-16 px-3 sm:px-6">
+              <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                <SidebarTrigger className="-ml-1 sm:-ml-2" />
+                <div className="min-w-0">
+                  <h1 className="text-base sm:text-lg font-bold text-foreground truncate">
                     Admin Dashboard
                   </h1>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground truncate hidden sm:block">
                     {user?.email}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
                 <Button 
                   variant="outline" 
                   size="sm"
                   onClick={() => navigate("/dashboard")}
-                  className="gap-2 hover:bg-accent hover:text-accent-foreground transition-colors"
+                  className="gap-1 sm:gap-2 hover:bg-accent hover:text-accent-foreground transition-colors px-2 sm:px-3"
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   <span className="hidden sm:inline">User Dashboard</span>
@@ -203,7 +203,7 @@ const AdminDashboard = () => {
                   variant="ghost" 
                   size="sm" 
                   onClick={handleLogout}
-                  className="gap-2 hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  className="gap-1 sm:gap-2 hover:bg-destructive/10 hover:text-destructive transition-colors px-2 sm:px-3"
                 >
                   <LogOut className="w-4 h-4" />
                   <span className="hidden sm:inline">Logout</span>
@@ -214,7 +214,7 @@ const AdminDashboard = () => {
 
           {/* Main Content Area */}
           <main className="flex-1 overflow-auto">
-            <div className="container mx-auto p-6 space-y-6 animate-fade-in">
+            <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 animate-fade-in">
               {/* Welcome Banner */}
               {activeTab === 'ai-insights' && (
                 <Card className="border-none bg-gradient-to-br from-primary/10 via-accent/5 to-background shadow-glow">

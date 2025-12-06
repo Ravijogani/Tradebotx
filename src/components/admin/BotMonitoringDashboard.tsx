@@ -207,19 +207,20 @@ export const BotMonitoringDashboard = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Emergency Controls */}
       {runningBots.length > 0 && (
         <Alert>
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>
+          <AlertDescription className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <span className="text-sm">
               <strong>{runningBots.length}</strong> bot{runningBots.length > 1 ? 's' : ''} currently running
             </span>
             <Button
               variant="destructive"
               size="sm"
               onClick={handleEmergencyStopAll}
+              className="w-full sm:w-auto"
             >
               <Power className="w-4 h-4 mr-2" />
               Emergency Stop All
@@ -228,15 +229,15 @@ export const BotMonitoringDashboard = () => {
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Running Bots */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Bots</CardTitle>
-            <CardDescription>Currently running trading bots</CardDescription>
+        <Card className="min-w-0">
+          <CardHeader className="p-3 sm:p-6">
+            <CardTitle className="text-base sm:text-lg">Active Bots</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">Currently running trading bots</CardDescription>
           </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[500px]">
+          <CardContent className="p-3 sm:p-6 pt-0">
+            <ScrollArea className="h-[400px] sm:h-[500px]">
               {runningBots.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
                   No bots running
@@ -289,17 +290,17 @@ export const BotMonitoringDashboard = () => {
         </Card>
 
         {/* Bot Logs */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Bot Logs</CardTitle>
-            <CardDescription>
+        <Card className="min-w-0">
+          <CardHeader className="p-3 sm:p-6">
+            <CardTitle className="text-base sm:text-lg">Bot Logs</CardTitle>
+            <CardDescription className="text-xs sm:text-sm truncate">
               {selectedBot
-                ? `Logs for ${selectedBot.strategies?.name} - ${selectedBot.profiles?.full_name}`
+                ? `Logs for ${selectedBot.strategies?.name}`
                 : "Select a bot to view logs"}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[500px]">
+          <CardContent className="p-3 sm:p-6 pt-0">
+            <ScrollArea className="h-[400px] sm:h-[500px]">
               {!selectedBot ? (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-muted-foreground">Select a bot to view logs</p>

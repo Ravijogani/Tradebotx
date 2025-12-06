@@ -139,14 +139,14 @@ export const AdminOverview = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Admin Dashboard</h2>
-        <p className="text-muted-foreground">
+        <h2 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight">Admin Dashboard</h2>
+        <p className="text-sm sm:text-base text-muted-foreground">
           Overview of your platform's performance and health
         </p>
       </div>
 
       {/* Key Metrics */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Users</CardTitle>
@@ -201,7 +201,7 @@ export const AdminOverview = () => {
       </div>
 
       {/* System Health & Alerts */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -292,7 +292,7 @@ export const AdminOverview = () => {
       </div>
 
       {/* Recent Activity & Critical Issues */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Recent Admin Activity</CardTitle>
@@ -358,7 +358,7 @@ export const AdminOverview = () => {
           <CardDescription>Key metrics at a glance</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">User Growth Rate</p>
               <p className="text-2xl font-bold text-green-600">
