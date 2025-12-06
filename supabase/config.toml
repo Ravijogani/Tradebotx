@@ -92,3 +92,6 @@ verify_jwt = true
 
 [functions.check-withdrawal-milestones]
 verify_jwt = false
+
+[functions.encrypt-mt5-account]
+verify_jwt = true

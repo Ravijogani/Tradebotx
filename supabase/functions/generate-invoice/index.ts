@@ -13,6 +13,41 @@ serve(async (req) => {
   }
 
   try {
+    // Get authorization header
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      throw new Error('Authorization header required');
+    }
+
+    // Create client with user's JWT for authentication
+    const supabaseAuth = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: {
+          headers: { Authorization: authHeader }
+        }
+      }
+    );
+
+    // Verify user is authenticated and is an admin
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      throw new Error('Not authenticated');
+    }
+
+    // Check if user is admin
+    const { data: adminRole, error: roleError } = await supabaseAuth
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('role', 'admin')
+      .single();
+
+    if (roleError || !adminRole) {
+      throw new Error('Admin access required to generate invoices');
+    }
+
     const { user_id, subscription_id, amount, plan_name } = await req.json();
 
     if (!user_id || !subscription_id) {
@@ -22,11 +57,12 @@ serve(async (req) => {
       );
     }
 
+    // Use service role key for database operations
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Generating invoice for user ${user_id}, subscription ${subscription_id}`);
+    console.log(`Admin ${user.email} generating invoice for user ${user_id}, subscription ${subscription_id}`);
 
     // Get user profile
     const { data: profile, error: profileError } = await supabase
@@ -110,8 +146,8 @@ serve(async (req) => {
 </html>
     `;
 
-    // For now, store invoice HTML in storage (in a real app, you'd convert to PDF)
-    const invoiceFileName = `${invoiceNumber}.html`;
+    // Store invoice in user-specific folder for RLS
+    const invoiceFileName = `${user_id}/${invoiceNumber}.html`;
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from("invoices")
       .upload(invoiceFileName, new Blob([invoiceHtml], { type: "text/html" }), {
@@ -124,14 +160,19 @@ serve(async (req) => {
       throw uploadError;
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
+    // Generate a signed URL instead of public URL (valid for 7 days)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
       .from("invoices")
-      .getPublicUrl(invoiceFileName);
+      .createSignedUrl(invoiceFileName, 60 * 60 * 24 * 7); // 7 days
 
-    const invoiceUrl = urlData.publicUrl;
+    if (signedUrlError) {
+      console.error("Signed URL error:", signedUrlError);
+      throw signedUrlError;
+    }
 
-    console.log("Invoice generated:", invoiceUrl);
+    const invoiceUrl = signedUrlData.signedUrl;
+
+    console.log("Invoice generated with signed URL");
 
     // Send invoice email
     const emailContent = invoiceEmailContent(
