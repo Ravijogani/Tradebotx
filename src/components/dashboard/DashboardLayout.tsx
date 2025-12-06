@@ -33,6 +33,9 @@ import { QuickStrategyControl } from "./QuickStrategyControl";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
 import { TelegramFAB } from "@/components/TelegramFAB";
+import { MultiAccountManager } from "./MultiAccountManager";
+import { AdvancedAuditLogs } from "./AdvancedAuditLogs";
+import { WeeklyReportSettings } from "./WeeklyReportSettings";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -301,6 +304,42 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                     <p className="text-sm sm:text-base text-muted-foreground">Manage your plan and billing</p>
                   </div>
                   <SubscriptionManager />
+                </div>
+              )}
+
+              {activeTab === "multi-account" && (
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      Multi-Account Management
+                    </h1>
+                    <p className="text-sm sm:text-base text-muted-foreground">Manage multiple MT5 trading accounts</p>
+                  </div>
+                  <MultiAccountManager />
+                </div>
+              )}
+
+              {activeTab === "audit-logs" && (
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      Advanced Audit Logs
+                    </h1>
+                    <p className="text-sm sm:text-base text-muted-foreground">Complete history of all account actions</p>
+                  </div>
+                  <AdvancedAuditLogs />
+                </div>
+              )}
+
+              {activeTab === "email-reports" && (
+                <div className="animate-fade-in space-y-4 sm:space-y-6 w-full min-w-0">
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      Weekly Email Reports
+                    </h1>
+                    <p className="text-sm sm:text-base text-muted-foreground">Configure automated performance reports</p>
+                  </div>
+                  <WeeklyReportSettings />
                 </div>
               )}
             </div>

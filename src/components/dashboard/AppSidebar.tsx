@@ -1,4 +1,4 @@
-import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen } from "lucide-react";
+import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen, Wand2, Building2, Shield, Mail } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -44,6 +44,21 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
     { id: "reports", label: "Reports", icon: BarChart3, path: "/pl-reports" },
   ];
 
+  const enterpriseItems = [
+    { id: "strategy-builder", label: "Strategy Builder", icon: Wand2, path: "/strategy-builder" },
+    { id: "multi-account", label: "Multi-Account", icon: Building2, tab: "multi-account" },
+    { id: "audit-logs", label: "Audit Logs", icon: Shield, tab: "audit-logs" },
+    { id: "email-reports", label: "Email Reports", icon: Mail, tab: "email-reports" },
+  ];
+
+  const handleEnterpriseClick = (item: typeof enterpriseItems[0]) => {
+    if (item.path) {
+      navigate(item.path);
+    } else if (item.tab) {
+      onTabChange(item.tab);
+    }
+  };
+
   const handleQuickAccessClick = (path: string) => {
     navigate(path);
   };
@@ -86,6 +101,31 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
                     onClick={() => handleQuickAccessClick(item.path)}
+                    tooltip={isCollapsed ? item.label : undefined}
+                    className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
+                  >
+                    <item.icon className="w-5 h-5 flex-shrink-0" />
+                    {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarSeparator className="my-2" />
+
+        <SidebarGroup>
+          <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>
+            {!isCollapsed ? "Enterprise" : "Ent"}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="space-y-1">
+              {enterpriseItems.map((item) => (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton
+                    onClick={() => handleEnterpriseClick(item)}
+                    isActive={activeTab === item.id || activeTab === item.tab}
                     tooltip={isCollapsed ? item.label : undefined}
                     className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
                   >
