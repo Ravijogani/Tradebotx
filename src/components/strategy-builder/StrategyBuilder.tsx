@@ -21,6 +21,9 @@ import { BlockPalette } from "./BlockPalette";
 import { BlockConfigPanel } from "./BlockConfigPanel";
 import { StrategyValidator } from "./StrategyValidator";
 import { BacktestPanel } from "./BacktestPanel";
+import { AIStrategyAssistant } from "./AIStrategyAssistant";
+import { StrategyTemplates } from "./StrategyTemplates";
+import { StrategyMarketplace } from "./StrategyMarketplace";
 
 export interface StrategyBlock {
   id: string;
@@ -286,15 +289,46 @@ export const StrategyBuilder = () => {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel - Block Palette */}
-        <div className="w-64 border-r border-border flex flex-col">
-          <div className="p-3 border-b border-border">
-            <h3 className="font-medium text-sm">Blocks</h3>
-          </div>
-          <BlockPalette 
-            blocks={blocks} 
-            onDragStart={(block) => {}} 
-          />
+        {/* Left Panel - Block Palette, AI & Templates */}
+        <div className="w-72 border-r border-border flex flex-col">
+          <Tabs defaultValue="blocks" className="flex-1 flex flex-col">
+            <TabsList className="w-full grid grid-cols-3 rounded-none border-b border-border">
+              <TabsTrigger value="blocks" className="text-xs">Blocks</TabsTrigger>
+              <TabsTrigger value="ai" className="text-xs">AI</TabsTrigger>
+              <TabsTrigger value="templates" className="text-xs">Templates</TabsTrigger>
+            </TabsList>
+            <TabsContent value="blocks" className="flex-1 flex flex-col m-0">
+              <div className="p-3 border-b border-border">
+                <h3 className="font-medium text-sm">Drag & Drop Blocks</h3>
+              </div>
+              <BlockPalette 
+                blocks={blocks} 
+                onDragStart={(block) => {}} 
+              />
+            </TabsContent>
+            <TabsContent value="ai" className="flex-1 p-3 m-0 overflow-auto">
+              <AIStrategyAssistant 
+                availableBlocks={blocks}
+                onStrategyGenerated={(newBlocks) => {
+                  setCurrentStrategy(prev => ({
+                    ...prev,
+                    blocks: [...prev.blocks, ...newBlocks]
+                  }));
+                }}
+              />
+            </TabsContent>
+            <TabsContent value="templates" className="flex-1 p-3 m-0 overflow-auto">
+              <StrategyTemplates 
+                availableBlocks={blocks}
+                onTemplateSelect={(templateBlocks) => {
+                  setCurrentStrategy(prev => ({
+                    ...prev,
+                    blocks: templateBlocks
+                  }));
+                }}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* Center - Canvas */}
@@ -314,11 +348,12 @@ export const StrategyBuilder = () => {
         {/* Right Panel - Config, Backtest & Saved Strategies */}
         <div className="w-80 border-l border-border flex flex-col">
           <Tabs defaultValue="config" className="flex-1 flex flex-col">
-            <TabsList className="w-full grid grid-cols-4 rounded-none border-b border-border">
-              <TabsTrigger value="config">Config</TabsTrigger>
-              <TabsTrigger value="validate">Validate</TabsTrigger>
-              <TabsTrigger value="backtest">Backtest</TabsTrigger>
-              <TabsTrigger value="saved">Saved</TabsTrigger>
+            <TabsList className="w-full grid grid-cols-5 rounded-none border-b border-border">
+              <TabsTrigger value="config" className="text-xs">Config</TabsTrigger>
+              <TabsTrigger value="validate" className="text-xs">Validate</TabsTrigger>
+              <TabsTrigger value="backtest" className="text-xs">Backtest</TabsTrigger>
+              <TabsTrigger value="market" className="text-xs">Market</TabsTrigger>
+              <TabsTrigger value="saved" className="text-xs">Saved</TabsTrigger>
             </TabsList>
             <TabsContent value="config" className="flex-1 p-0 m-0">
               {selectedBlock ? (
@@ -341,6 +376,17 @@ export const StrategyBuilder = () => {
             </TabsContent>
             <TabsContent value="backtest" className="flex-1 p-0 m-0 overflow-auto">
               <BacktestPanel blocks={currentStrategy.blocks} strategyName={currentStrategy.name} />
+            </TabsContent>
+            <TabsContent value="market" className="flex-1 p-3 m-0 overflow-auto">
+              <StrategyMarketplace 
+                currentStrategy={currentStrategy}
+                onStrategyImport={(importedBlocks) => {
+                  setCurrentStrategy(prev => ({
+                    ...prev,
+                    blocks: importedBlocks
+                  }));
+                }}
+              />
             </TabsContent>
             <TabsContent value="saved" className="flex-1 p-0 m-0">
               <ScrollArea className="h-full">
