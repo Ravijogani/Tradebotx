@@ -23,6 +23,7 @@ import { AIInsightsDashboard } from "@/components/admin/AIInsightsDashboard";
 import { SystemHealthCheck } from "@/components/admin/SystemHealthCheck";
 import { AdminOverview } from "@/components/admin/AdminOverview";
 import { OnboardingAnalytics } from "@/components/admin/OnboardingAnalytics";
+import { CustomStrategyApproval } from "@/components/admin/CustomStrategyApproval";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const AdminDashboard = () => {
@@ -146,6 +147,8 @@ const AdminDashboard = () => {
         return <PlatformSettings />;
       case 'activity-logs':
         return <AdminActivityLogs />;
+      case 'custom-strategies':
+        return <CustomStrategyApproval />;
       default:
         return <AdminOverview />;
     }
