@@ -17,7 +17,8 @@ import {
   ChevronDown,
   Sparkles,
   HeartPulse,
-  UserPlus
+  UserPlus,
+  Wand2
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -48,6 +49,7 @@ const mainItems = [
 const managementItems = [
   { title: "Roles", path: "roles", icon: UserCog },
   { title: "Strategies", path: "strategies", icon: Zap },
+  { title: "Custom Strategies", path: "custom-strategies", icon: Wand2 },
   { title: "Plans", path: "subscriptions", icon: Package },
 ];
 

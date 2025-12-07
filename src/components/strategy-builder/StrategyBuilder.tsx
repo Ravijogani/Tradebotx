@@ -19,6 +19,8 @@ import {
 import { StrategyCanvas } from "./StrategyCanvas";
 import { BlockPalette } from "./BlockPalette";
 import { BlockConfigPanel } from "./BlockConfigPanel";
+import { StrategyValidator } from "./StrategyValidator";
+import { BacktestPanel } from "./BacktestPanel";
 
 export interface StrategyBlock {
   id: string;
@@ -309,11 +311,13 @@ export const StrategyBuilder = () => {
           />
         </div>
 
-        {/* Right Panel - Config & Saved Strategies */}
-        <div className="w-72 border-l border-border flex flex-col">
+        {/* Right Panel - Config, Backtest & Saved Strategies */}
+        <div className="w-80 border-l border-border flex flex-col">
           <Tabs defaultValue="config" className="flex-1 flex flex-col">
-            <TabsList className="w-full grid grid-cols-2 rounded-none border-b border-border">
+            <TabsList className="w-full grid grid-cols-4 rounded-none border-b border-border">
               <TabsTrigger value="config">Config</TabsTrigger>
+              <TabsTrigger value="validate">Validate</TabsTrigger>
+              <TabsTrigger value="backtest">Backtest</TabsTrigger>
               <TabsTrigger value="saved">Saved</TabsTrigger>
             </TabsList>
             <TabsContent value="config" className="flex-1 p-0 m-0">
@@ -331,6 +335,12 @@ export const StrategyBuilder = () => {
                   </div>
                 </div>
               )}
+            </TabsContent>
+            <TabsContent value="validate" className="flex-1 p-0 m-0 overflow-auto">
+              <StrategyValidator blocks={currentStrategy.blocks} />
+            </TabsContent>
+            <TabsContent value="backtest" className="flex-1 p-0 m-0 overflow-auto">
+              <BacktestPanel blocks={currentStrategy.blocks} strategyName={currentStrategy.name} />
             </TabsContent>
             <TabsContent value="saved" className="flex-1 p-0 m-0">
               <ScrollArea className="h-full">
