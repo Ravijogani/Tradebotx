@@ -95,3 +95,6 @@ verify_jwt = false
 
 [functions.encrypt-mt5-account]
 verify_jwt = true
+
+[functions.generate-strategy-code]
+verify_jwt = true
