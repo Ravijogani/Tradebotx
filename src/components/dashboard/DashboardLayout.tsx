@@ -29,7 +29,7 @@ import { BotStatusSync } from "./BotStatusSync";
 import { ActiveBotsCounter } from "./ActiveBotsCounter";
 import { StrategyPerformance } from "./StrategyPerformance";
 import { AIInsightsDashboard } from "./AIInsightsDashboard";
-import { QuickStrategyControl } from "./QuickStrategyControl";
+import { RunningBotsPanel } from "./RunningBotsPanel";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
 import { TelegramFAB } from "@/components/TelegramFAB";
@@ -190,8 +190,8 @@ export const DashboardLayout = ({ user }: { user: any }) => {
                   {/* Active Bots Counter */}
                   <ActiveBotsCounter />
                   
-                  {/* Quick Strategy Controls */}
-                  <QuickStrategyControl />
+                  {/* Running Bots Panel with Individual Controls */}
+                  <RunningBotsPanel />
                   
                   {/* Bot Health & Open Positions */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 w-full">
