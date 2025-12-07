@@ -98,3 +98,6 @@ verify_jwt = true
 
 [functions.generate-strategy-code]
 verify_jwt = true
+
+[functions.ai-strategy-assistant]
+verify_jwt = true
