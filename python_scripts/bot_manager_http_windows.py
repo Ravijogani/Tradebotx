@@ -190,19 +190,26 @@ def start_bot():
         user_bots = get_user_bots(user_id)
         logger.info(f"User {user_id} currently has {len(user_bots)} bot(s) running")
         
-        # Get bot directory and script
+        # Get bot directory and determine script from config
         bot_dir = Path(__file__).parent
-        bot_script = bot_dir / 'hybrid_trading_bot_multiuser.py'
+        
+        # Use script_path from config, fallback to default
+        script_name = config.get('script_path', 'hybrid_trading_bot_multiuser.py')
+        bot_script = bot_dir / script_name
         
         logger.info(f"Bot directory: {bot_dir}")
-        logger.info(f"Bot script: {bot_script}")
+        logger.info(f"Script from config: {script_name}")
+        logger.info(f"Bot script path: {bot_script}")
         logger.info(f"Bot script exists: {bot_script.exists()}")
         logger.info(f"Python executable: {sys.executable}")
         
         if not bot_script.exists():
             logger.error(f"❌ Bot script not found at {bot_script}")
-            logger.error("   Make sure 'hybrid_trading_bot_multiuser.py' is in the same directory as the manager.")
-            return jsonify({'error': f'Bot script not found at {bot_script}'}), 500
+            logger.error(f"   Requested script: {script_name}")
+            logger.error(f"   Available scripts in directory:")
+            for f in bot_dir.glob("*.py"):
+                logger.error(f"     - {f.name}")
+            return jsonify({'error': f'Bot script not found: {script_name}'}), 500
 
         # Build the command list with NAMED arguments
         logger.info("Building command list with named arguments...")
