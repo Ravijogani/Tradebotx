@@ -97,14 +97,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         throw new Error('Failed to send verification code');
       }
 
-      // Send welcome email after successful OTP verification
-      await supabase.functions.invoke('send-welcome-email', {
-        body: {
-          to: validated.email,
-          userName: validated.fullName
-        }
-      });
-
+      // Store email for OTP verification - welcome email will be sent AFTER verification
       setUserEmail(validated.email);
       setShowOTPVerification(true);
 
@@ -145,7 +138,19 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         onOpenChange={onOpenChange}
         email={userEmail}
         otpType="signup"
-        onVerified={() => {
+        onVerified={async () => {
+          // Send welcome email ONLY after successful OTP verification
+          try {
+            await supabase.functions.invoke('send-welcome-email', {
+              body: {
+                to: userEmail,
+                userName: formData.fullName
+              }
+            });
+          } catch (error) {
+            console.error('Failed to send welcome email:', error);
+          }
+          
           onOpenChange(false);
           toast({
             title: "Email verified!",
