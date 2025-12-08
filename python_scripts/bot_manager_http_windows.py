@@ -180,11 +180,31 @@ def start_bot():
         
         # Check if THIS specific strategy is already running for this user
         if bot_key in running_bots:
-            logger.warning(f"⚠️ Bot already running for key {bot_key}")
-            return jsonify({
-                'success': False,
-                'message': f'Bot already running for strategy {strategy_name}'
-            }), 400
+            existing_bot = running_bots[bot_key]
+            existing_pid = existing_bot.get('pid')
+            
+            # Verify the process is ACTUALLY still running
+            if existing_pid:
+                try:
+                    proc = psutil.Process(existing_pid)
+                    if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                        logger.warning(f"⚠️ Bot actually running for key {bot_key} (PID {existing_pid})")
+                        return jsonify({
+                            'success': False,
+                            'message': f'Bot already running for strategy {strategy_name}'
+                        }), 400
+                    else:
+                        logger.info(f"🔄 Stale bot entry for {bot_key} - process {existing_pid} is not running, cleaning up")
+                        del running_bots[bot_key]
+                except psutil.NoSuchProcess:
+                    logger.info(f"🔄 Stale bot entry for {bot_key} - process {existing_pid} no longer exists, cleaning up")
+                    del running_bots[bot_key]
+                except Exception as e:
+                    logger.warning(f"⚠️ Error checking process {existing_pid}: {e}, cleaning up entry")
+                    del running_bots[bot_key]
+            else:
+                logger.info(f"🔄 Bot entry for {bot_key} has no PID, cleaning up")
+                del running_bots[bot_key]
         
         # Log how many bots this user is already running
         user_bots = get_user_bots(user_id)
