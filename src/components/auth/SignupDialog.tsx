@@ -68,6 +68,17 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         return;
       }
 
+      // Determine plan type from planName prop
+      let selectedPlanType = 'free';
+      if (planName) {
+        const planLower = planName.toLowerCase();
+        if (planLower.includes('pro')) {
+          selectedPlanType = 'pro';
+        } else if (planLower.includes('enterprise')) {
+          selectedPlanType = 'enterprise';
+        }
+      }
+
       // Create user account (without auto-confirm)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: validated.email,
@@ -77,6 +88,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
             full_name: validated.fullName,
             phone: validated.phone,
             referral_code: validated.referralCode || null,
+            selected_plan: selectedPlanType, // Pass selected plan to trigger
           },
           emailRedirectTo: `${window.location.origin}/auth/login`,
         },
