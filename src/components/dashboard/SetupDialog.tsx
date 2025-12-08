@@ -133,6 +133,8 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
       toast.error("Please fill in all MT5 details");
       return;
     }
+    // For free plan: step 1 (broker) -> step 2 (MT5) -> step 3 (prefs)
+    // For paid plan: step 1 (MT5) -> step 2 (prefs)
     setStep(planType === 'free' ? 3 : 2);
   };
 
