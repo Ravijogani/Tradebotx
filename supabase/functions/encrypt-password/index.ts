@@ -48,6 +48,8 @@ serve(async (req) => {
         mt5_password: encryptedPassword,
         is_completed: true,
         submitted_for_approval_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id'
       })
       .select()
       .single();
