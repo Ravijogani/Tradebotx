@@ -7,7 +7,9 @@ const ENCRYPTION_KEY_ENV = 'ENCRYPTION_KEY';
 
 /**
  * Get or generate encryption key from environment
- * Key should be a base64-encoded 256-bit key
+ * Key can be either:
+ * 1. A base64-encoded 256-bit key
+ * 2. A plain string (will be hashed to create a 256-bit key)
  */
 async function getEncryptionKey(): Promise<CryptoKey> {
   const keyString = Deno.env.get(ENCRYPTION_KEY_ENV);
@@ -16,12 +18,33 @@ async function getEncryptionKey(): Promise<CryptoKey> {
     throw new Error('ENCRYPTION_KEY not configured in environment');
   }
 
-  // Decode base64 key
-  const keyData = Uint8Array.from(atob(keyString), c => c.charCodeAt(0));
+  let keyData: Uint8Array;
+
+  // Try to decode as base64 first
+  try {
+    // Check if it's valid base64 (only base64 chars)
+    if (/^[A-Za-z0-9+/]+=*$/.test(keyString) && keyString.length >= 32) {
+      keyData = Uint8Array.from(atob(keyString), c => c.charCodeAt(0));
+      // Ensure we have exactly 32 bytes for AES-256
+      if (keyData.length >= 32) {
+        keyData = keyData.slice(0, 32);
+      } else {
+        throw new Error('Key too short');
+      }
+    } else {
+      throw new Error('Not valid base64');
+    }
+  } catch {
+    // If not valid base64, hash the key string to get 256 bits
+    const encoder = new TextEncoder();
+    const keyBytes = encoder.encode(keyString);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', keyBytes);
+    keyData = new Uint8Array(hashBuffer);
+  }
   
   return await crypto.subtle.importKey(
     'raw',
-    keyData,
+    keyData.buffer as ArrayBuffer,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
