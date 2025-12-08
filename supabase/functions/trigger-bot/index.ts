@@ -45,6 +45,21 @@ serve(async (req) => {
       throw new Error('Account setup not approved');
     }
 
+    // Get strategy details including python script path
+    const { data: strategy, error: strategyError } = await supabaseClient
+      .from('strategies')
+      .select('python_script_path')
+      .eq('id', strategyId)
+      .single();
+
+    if (strategyError) {
+      console.warn('Could not fetch strategy details:', strategyError);
+    }
+
+    // Map strategy to the correct Python script
+    const scriptPath = strategy?.python_script_path || 'hybrid_trading_bot_multiuser.py';
+    console.log(`Strategy ${strategyName} will use script: ${scriptPath}`);
+
     // CRITICAL: Decrypt MT5 password before sending to bot
     // Handle both encrypted and plain text passwords for backwards compatibility
     let decryptedPassword: string;
@@ -68,11 +83,12 @@ serve(async (req) => {
       console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
     }
 
-    // Prepare bot configuration
+    // Prepare bot configuration with script path
     const botConfig = {
       user_id: user.id,
       strategy_id: strategyId,
       strategy_name: strategyName,
+      script_path: scriptPath,
       mt5_account: setup.mt5_account,
       mt5_password: decryptedPassword,
       mt5_server: setup.mt5_server,
