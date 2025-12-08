@@ -1,5 +1,5 @@
 import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen, Wand2, Building2, Shield, Mail } from "lucide-react";
-import { NavLink } from "@/components/NavLink";
+import { useEffect, useState } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -15,6 +15,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 interface AppSidebarProps {
   activeTab: string;
@@ -26,6 +27,29 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
   const isMobile = useIsMobile();
   const isCollapsed = state === "collapsed" && !isMobile;
   const navigate = useNavigate();
+  const [isEnterprise, setIsEnterprise] = useState(false);
+
+  useEffect(() => {
+    checkEnterprisePlan();
+  }, []);
+
+  const checkEnterprisePlan = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: subscription } = await supabase
+        .from("user_subscriptions")
+        .select("*, plans(*)")
+        .eq("user_id", user.id)
+        .single();
+
+      const planType = (subscription?.plans as any)?.plan_type;
+      setIsEnterprise(planType === "enterprise");
+    } catch (error) {
+      console.error("Error checking plan:", error);
+    }
+  };
 
   const mainNavItems = [
     { id: "dashboard", label: "Overview", icon: LayoutDashboard },
@@ -113,30 +137,34 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarSeparator className="my-2" />
+        {isEnterprise && (
+          <>
+            <SidebarSeparator className="my-2" />
 
-        <SidebarGroup>
-          <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>
-            {!isCollapsed ? "Enterprise" : "Ent"}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className="space-y-1">
-              {enterpriseItems.map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    onClick={() => handleEnterpriseClick(item)}
-                    isActive={activeTab === item.id || activeTab === item.tab}
-                    tooltip={isCollapsed ? item.label : undefined}
-                    className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
-                  >
-                    <item.icon className="w-5 h-5 flex-shrink-0" />
-                    {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel className={`text-xs font-semibold ${isCollapsed ? "justify-center px-2" : "px-3"}`}>
+                {!isCollapsed ? "Enterprise" : "Ent"}
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-1">
+                  {enterpriseItems.map((item) => (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton
+                        onClick={() => handleEnterpriseClick(item)}
+                        isActive={activeTab === item.id || activeTab === item.tab}
+                        tooltip={isCollapsed ? item.label : undefined}
+                        className="transition-all duration-200 hover:bg-sidebar-accent min-h-[44px]"
+                      >
+                        <item.icon className="w-5 h-5 flex-shrink-0" />
+                        {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
+        )}
 
         <SidebarSeparator className="my-2" />
 
