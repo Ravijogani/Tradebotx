@@ -1,13 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 /**
  * Background component that syncs bot health status with user_strategies
  * If bot crashes or goes stale, this updates the database to show correct button state
+ * Also syncs initial equity from MT5 heartbeat when first connected
  */
 export const BotStatusSync = () => {
   const { toast } = useToast();
+  const equitySyncedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const syncBotStatus = async () => {
@@ -26,10 +28,54 @@ export const BotStatusSync = () => {
       for (const strategy of strategies) {
         const { data: heartbeat } = await supabase
           .from("bot_heartbeats")
-          .select("last_heartbeat, status, pid")
+          .select("last_heartbeat, status, pid, balance, equity")
           .eq("user_id", strategy.user_id)
           .eq("strategy_id", strategy.strategy_id)
           .maybeSingle();
+
+        // Sync initial equity from MT5 when first heartbeat received
+        if (heartbeat && heartbeat.equity && heartbeat.equity > 0) {
+          const syncKey = `${strategy.user_id}_${strategy.strategy_id}`;
+          
+          if (!equitySyncedRef.current.has(syncKey)) {
+            // Check if strategy_performance has mismatched initial_balance
+            const { data: perf } = await supabase
+              .from("strategy_performance")
+              .select("initial_balance")
+              .eq("user_id", strategy.user_id)
+              .eq("strategy_id", strategy.strategy_id)
+              .maybeSingle();
+
+            // If initial_balance differs significantly from MT5 equity (more than 50% difference)
+            // This catches cases where user entered wrong account size
+            if (perf && Math.abs(perf.initial_balance - heartbeat.equity) > perf.initial_balance * 0.5) {
+              console.log(`💰 Syncing initial equity from MT5: ${heartbeat.equity} (was ${perf.initial_balance})`);
+              
+              // Update strategy_performance with correct initial balance from MT5
+              await supabase
+                .from("strategy_performance")
+                .update({ 
+                  initial_balance: heartbeat.equity,
+                  current_balance: heartbeat.equity + (perf.initial_balance > 0 ? 0 : 0) // Reset to actual equity
+                })
+                .eq("user_id", strategy.user_id)
+                .eq("strategy_id", strategy.strategy_id);
+
+              // Also update user_setup account_size to match reality
+              await supabase
+                .from("user_setup")
+                .update({ account_size: heartbeat.equity })
+                .eq("user_id", strategy.user_id);
+
+              toast({
+                title: "💰 Account Balance Synced",
+                description: `Initial balance updated to $${heartbeat.equity.toFixed(2)} from MT5`,
+              });
+            }
+            
+            equitySyncedRef.current.add(syncKey);
+          }
+        }
 
         if (!heartbeat) {
           // No heartbeat exists - check if it's a recent start
