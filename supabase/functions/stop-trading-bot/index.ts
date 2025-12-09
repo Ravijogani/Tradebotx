@@ -107,11 +107,25 @@ serve(async (req) => {
       console.warn('LIGHTSAIL_BOT_MANAGER_URL or BOT_MANAGER_SECRET not configured. Bot stop only updated database.');
     }
 
-    // Get user setup for notification
+    // Get user setup and profile for notifications
     const { data: setup } = await supabaseClient
       .from('user_setup')
       .select('telegram_chat_id')
       .eq('user_id', user.id)
+      .single();
+
+    const { data: profile } = await supabaseClient
+      .from('profiles')
+      .select('email')
+      .eq('id', user.id)
+      .single();
+
+    // Get strategy performance for email
+    const { data: perfData } = await supabaseClient
+      .from('strategy_performance')
+      .select('total_trades, total_profit_loss')
+      .eq('user_id', user.id)
+      .eq('strategy_id', userStrategy.strategy_id)
       .single();
 
     console.log(`Strategy stopped for user ${user.id}`);
@@ -132,13 +146,31 @@ serve(async (req) => {
       }
     });
 
-    // Send notification (if Telegram is configured)
+    // Send EMAIL notification for bot stop
+    if (profile?.email) {
+      try {
+        await supabaseClient.functions.invoke('send-bot-stopped', {
+          body: {
+            email: profile.email,
+            strategyName: userStrategy.strategies?.name || 'Unknown Strategy',
+            reason: 'User requested stop',
+            totalTrades: perfData?.total_trades || 0,
+            totalPnL: perfData?.total_profit_loss || 0
+          }
+        });
+        console.log(`Bot stopped email sent to ${profile.email}`);
+      } catch (emailError) {
+        console.error('Failed to send bot stopped email:', emailError);
+      }
+    }
+
+    // Send TELEGRAM notification (if configured)
     if (setup?.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
             chatId: setup.telegram_chat_id,
-            message: `⏹️ Trading bot stopped\n\nStrategy: ${userStrategy.strategies?.name}\nStopped at: ${new Date().toLocaleString()}`,
+            message: `⏹️ Trading bot stopped\n\nStrategy: ${userStrategy.strategies?.name}\nTotal Trades: ${perfData?.total_trades || 0}\nTotal P&L: $${(perfData?.total_profit_loss || 0).toFixed(2)}\nStopped at: ${new Date().toLocaleString()}`,
           }
         });
       } catch (telegramError) {
