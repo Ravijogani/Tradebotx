@@ -33,30 +33,35 @@ export const BotStatusSync = () => {
           .eq("strategy_id", strategy.strategy_id)
           .maybeSingle();
 
-        // Sync initial equity from MT5 when first heartbeat received
+        // ONLY sync initial equity from MT5 on FIRST run ever (when no trades have been made)
+        // This prevents resetting initial balance on bot restarts
         if (heartbeat && heartbeat.equity && heartbeat.equity > 0) {
           const syncKey = `${strategy.user_id}_${strategy.strategy_id}`;
           
           if (!equitySyncedRef.current.has(syncKey)) {
-            // Check if strategy_performance has mismatched initial_balance
+            // Check if strategy_performance exists AND has zero trades (first time running)
             const { data: perf } = await supabase
               .from("strategy_performance")
-              .select("initial_balance")
+              .select("initial_balance, total_trades")
               .eq("user_id", strategy.user_id)
               .eq("strategy_id", strategy.strategy_id)
               .maybeSingle();
 
-            // If initial_balance differs significantly from MT5 equity (more than 50% difference)
-            // This catches cases where user entered wrong account size
-            if (perf && Math.abs(perf.initial_balance - heartbeat.equity) > perf.initial_balance * 0.5) {
-              console.log(`💰 Syncing initial equity from MT5: ${heartbeat.equity} (was ${perf.initial_balance})`);
+            // ONLY update initial balance if:
+            // 1. Total trades is 0 (first time ever running - no trades made yet)
+            // 2. AND initial_balance differs significantly from MT5 equity (user entered wrong value)
+            const isFirstRun = perf && perf.total_trades === 0;
+            const hasMismatch = perf && Math.abs(perf.initial_balance - heartbeat.equity) > perf.initial_balance * 0.5;
+            
+            if (isFirstRun && hasMismatch) {
+              console.log(`💰 First run - syncing initial equity from MT5: ${heartbeat.equity} (was ${perf.initial_balance})`);
               
               // Update strategy_performance with correct initial balance from MT5
               await supabase
                 .from("strategy_performance")
                 .update({ 
                   initial_balance: heartbeat.equity,
-                  current_balance: heartbeat.equity + (perf.initial_balance > 0 ? 0 : 0) // Reset to actual equity
+                  current_balance: heartbeat.equity
                 })
                 .eq("user_id", strategy.user_id)
                 .eq("strategy_id", strategy.strategy_id);
@@ -71,6 +76,8 @@ export const BotStatusSync = () => {
                 title: "💰 Account Balance Synced",
                 description: `Initial balance updated to $${heartbeat.equity.toFixed(2)} from MT5`,
               });
+            } else if (!isFirstRun && hasMismatch) {
+              console.log(`ℹ️ Balance mismatch detected but trades exist (${perf?.total_trades}) - preserving initial balance for accurate P&L`);
             }
             
             equitySyncedRef.current.add(syncKey);

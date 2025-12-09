@@ -114,28 +114,42 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
     
-    // Initialize strategy performance record
-    await serviceClient
+    // Check if strategy_performance record already exists (to preserve initial_balance)
+    const { data: existingPerf } = await serviceClient
       .from('strategy_performance')
-      .upsert({
-        user_id: user.id,
-        strategy_id: strategyId,
-        initial_balance: setup.account_size || 10000,
-        current_balance: setup.account_size || 10000,
-        total_trades: 0,
-        winning_trades: 0,
-        losing_trades: 0,
-        total_profit_loss: 0,
-        win_rate: 0,
-        best_trade: 0,
-        worst_trade: 0,
-        avg_win: 0,
-        avg_loss: 0,
-      }, {
-        onConflict: 'user_id,strategy_id'
-      });
+      .select('id, initial_balance')
+      .eq('user_id', user.id)
+      .eq('strategy_id', strategyId)
+      .maybeSingle();
 
-    console.log(`Strategy performance initialized for user ${user.id}`);
+    // IMPORTANT: Only set initial_balance on FIRST bot start ever
+    // On restart, preserve the original initial_balance for accurate P&L tracking
+    if (!existingPerf) {
+      // First time starting this strategy - create new performance record
+      console.log(`First time starting strategy - setting initial balance to ${setup.account_size}`);
+      await serviceClient
+        .from('strategy_performance')
+        .insert({
+          user_id: user.id,
+          strategy_id: strategyId,
+          initial_balance: setup.account_size || 10000,
+          current_balance: setup.account_size || 10000,
+          total_trades: 0,
+          winning_trades: 0,
+          losing_trades: 0,
+          total_profit_loss: 0,
+          win_rate: 0,
+          best_trade: 0,
+          worst_trade: 0,
+          avg_win: 0,
+          avg_loss: 0,
+        });
+    } else {
+      console.log(`Strategy performance exists - preserving initial_balance: ${existingPerf.initial_balance}`);
+      // Don't reset anything - just log that we're restarting
+    }
+
+    console.log(`Strategy performance check complete for user ${user.id}`);
 
     // Log to audit trail
     await serviceClient.from('bot_audit_logs').insert({
@@ -165,7 +179,31 @@ serve(async (req) => {
 
     console.log(`Bot start command sent successfully:`, triggerResult);
 
-    // Send notification (if Telegram is configured)
+    // Get user profile for email
+    const { data: profile } = await supabaseClient
+      .from('profiles')
+      .select('email')
+      .eq('id', user.id)
+      .single();
+
+    // Send EMAIL notification for bot start
+    if (profile?.email) {
+      try {
+        await supabaseClient.functions.invoke('send-bot-start-alert', {
+          body: {
+            email: profile.email,
+            strategyName: strategyName,
+            accountSize: setup.account_size,
+            riskPerTrade: setup.risk_per_trade
+          }
+        });
+        console.log(`Bot start email sent to ${profile.email}`);
+      } catch (emailError) {
+        console.error('Failed to send bot start email:', emailError);
+      }
+    }
+
+    // Send TELEGRAM notification (if configured)
     if (setup.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
