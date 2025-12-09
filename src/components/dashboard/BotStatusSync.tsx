@@ -32,7 +32,20 @@ export const BotStatusSync = () => {
           .maybeSingle();
 
         if (!heartbeat) {
-          // No heartbeat exists - if strategy thinks it's running, mark as stopped
+          // No heartbeat exists - check if it's a recent start
+          if (strategy.status === 'starting' && strategy.started_at) {
+            const startedAt = new Date(strategy.started_at).getTime();
+            const now = Date.now();
+            const secondsSinceStart = (now - startedAt) / 1000;
+            
+            // Give 2 minutes for bot to spin up and send first heartbeat
+            if (secondsSinceStart < 120) {
+              console.log(`Strategy ${strategy.strategy_id} is starting, waiting for first heartbeat (${secondsSinceStart.toFixed(0)}s since start)`);
+              continue; // Don't mark as stopped yet
+            }
+          }
+          
+          // If running or starting for too long without heartbeat, mark as stopped
           if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
             console.log(`No heartbeat for strategy ${strategy.strategy_id}, marking as stopped`);
             await supabase
