@@ -146,10 +146,12 @@ export const BotStatusSync = () => {
           continue;
         }
 
-        // Heartbeat is stale or bot is stopped
+        // Heartbeat is stale or bot is stopped - BOT CRASHED
         if (!isHeartbeatFresh || !heartbeat.pid) {
           if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
-            console.log(`🛑 Bot stopped/stale for strategy ${strategy.strategy_id}`);
+            console.log(`🛑 Bot crashed/stale for strategy ${strategy.strategy_id}`);
+            
+            // Update database status
             await supabase
               .from("user_strategies")
               .update({
@@ -165,6 +167,44 @@ export const BotStatusSync = () => {
               .update({ pid: null, status: 'stopped' })
               .eq("user_id", strategy.user_id)
               .eq("strategy_id", strategy.strategy_id);
+
+            // Get strategy name for notification
+            const { data: strategyData } = await supabase
+              .from("strategies")
+              .select("name")
+              .eq("id", strategy.strategy_id)
+              .single();
+
+            // Get performance data for email
+            const { data: perfData } = await supabase
+              .from("strategy_performance")
+              .select("total_trades, total_profit_loss")
+              .eq("user_id", strategy.user_id)
+              .eq("strategy_id", strategy.strategy_id)
+              .single();
+
+            // Send crash notification email via edge function
+            try {
+              await supabase.functions.invoke('send-bot-stopped', {
+                body: {
+                  email: user.email,
+                  strategyName: strategyData?.name || 'Trading Bot',
+                  reason: 'Bot stopped responding (possible crash or connection issue)',
+                  totalTrades: perfData?.total_trades || 0,
+                  totalPnL: perfData?.total_profit_loss || 0
+                }
+              });
+              console.log(`📧 Crash notification email sent for strategy ${strategy.strategy_id}`);
+            } catch (emailError) {
+              console.error('Failed to send crash notification email:', emailError);
+            }
+
+            // Show toast to user
+            toast({
+              title: "⚠️ Bot Stopped",
+              description: `${strategyData?.name || 'Trading bot'} stopped unexpectedly. You've been notified via email.`,
+              variant: "destructive"
+            });
           }
         }
       }
