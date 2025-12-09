@@ -179,37 +179,17 @@ serve(async (req) => {
 
     console.log(`Bot start command sent successfully:`, triggerResult);
 
-    // Get user profile for email
-    const { data: profile } = await supabaseClient
-      .from('profiles')
-      .select('email')
-      .eq('id', user.id)
-      .single();
-
-    // Send EMAIL notification for bot start
-    if (profile?.email) {
-      try {
-        await supabaseClient.functions.invoke('send-bot-start-alert', {
-          body: {
-            email: profile.email,
-            strategyName: strategyName,
-            accountSize: setup.account_size,
-            riskPerTrade: setup.risk_per_trade
-          }
-        });
-        console.log(`Bot start email sent to ${profile.email}`);
-      } catch (emailError) {
-        console.error('Failed to send bot start email:', emailError);
-      }
-    }
-
-    // Send TELEGRAM notification (if configured)
+    // NOTE: Email notification is NOT sent here anymore
+    // It will be sent by the frontend BotStatusSync component when the bot 
+    // actually confirms it's running via heartbeat (to avoid false positives)
+    
+    // Send TELEGRAM notification immediately (if configured) - Telegram is instant feedback
     if (setup.telegram_chat_id && Deno.env.get('TELEGRAM_BOT_TOKEN')) {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
             chatId: setup.telegram_chat_id,
-            message: `🤖 Trading bot started!\n\nStrategy: ${strategyName}\nAccount: ${setup.mt5_account}\nServer: ${setup.mt5_server}`,
+            message: `⏳ Bot starting...\n\nStrategy: ${strategyName}\nAccount: ${setup.mt5_account}\nYou'll receive another notification when bot is confirmed running.`,
           }
         });
       } catch (telegramError) {

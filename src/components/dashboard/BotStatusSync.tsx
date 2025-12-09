@@ -6,10 +6,15 @@ import { useToast } from "@/hooks/use-toast";
  * Background component that syncs bot health status with user_strategies
  * If bot crashes or goes stale, this updates the database to show correct button state
  * Also syncs initial equity from MT5 heartbeat when first connected
+ * Sends email notifications ONLY when state is confirmed via heartbeat
  */
 export const BotStatusSync = () => {
   const { toast } = useToast();
   const equitySyncedRef = useRef<Set<string>>(new Set());
+  // Track which strategies we've sent "started" emails for (to avoid duplicates)
+  const startedEmailSentRef = useRef<Set<string>>(new Set());
+  // Track which strategies have been confirmed running (to know when to send crash emails)
+  const confirmedRunningRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const syncBotStatus = async () => {
@@ -125,6 +130,11 @@ export const BotStatusSync = () => {
         
         // Bot is actually running if heartbeat is fresh and has PID
         if (isHeartbeatFresh && heartbeat.pid && heartbeat.status === 'running') {
+          const strategyKey = `${strategy.user_id}_${strategy.strategy_id}`;
+          
+          // Mark this strategy as confirmed running
+          confirmedRunningRef.current.add(strategyKey);
+          
           // But database thinks it's stopped - FIX THIS
           if (!strategy.is_running || strategy.status !== 'running') {
             console.log(`✅ Bot is actually running but DB shows stopped - fixing for strategy ${strategy.strategy_id}`);
@@ -138,9 +148,40 @@ export const BotStatusSync = () => {
               })
               .eq("id", strategy.id);
             
+            // Send "Bot Started" email ONLY when we confirm it's running
+            // (not when user clicks button - this avoids false positive emails)
+            if (!startedEmailSentRef.current.has(strategyKey)) {
+              const { data: strategyData } = await supabase
+                .from("strategies")
+                .select("name")
+                .eq("id", strategy.strategy_id)
+                .single();
+
+              const { data: setupData } = await supabase
+                .from("user_setup")
+                .select("account_size, risk_per_trade")
+                .eq("user_id", strategy.user_id)
+                .single();
+
+              try {
+                await supabase.functions.invoke('send-bot-start-alert', {
+                  body: {
+                    email: user.email,
+                    strategyName: strategyData?.name || 'Trading Bot',
+                    accountSize: setupData?.account_size || 0,
+                    riskPerTrade: setupData?.risk_per_trade || 1
+                  }
+                });
+                console.log(`📧 Bot started email sent for strategy ${strategy.strategy_id}`);
+                startedEmailSentRef.current.add(strategyKey);
+              } catch (emailError) {
+                console.error('Failed to send bot started email:', emailError);
+              }
+            }
+            
             toast({
-              title: "✅ Bot Status Synced",
-              description: "Trading bot is running and connected.",
+              title: "✅ Bot Running",
+              description: "Trading bot confirmed running. Email notification sent.",
             });
           }
           continue;
@@ -149,6 +190,7 @@ export const BotStatusSync = () => {
         // Heartbeat is stale or bot is stopped - BOT CRASHED
         if (!isHeartbeatFresh || !heartbeat.pid) {
           if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
+            const strategyKey = `${strategy.user_id}_${strategy.strategy_id}`;
             console.log(`🛑 Bot crashed/stale for strategy ${strategy.strategy_id}`);
             
             // Update database status
@@ -175,36 +217,54 @@ export const BotStatusSync = () => {
               .eq("id", strategy.strategy_id)
               .single();
 
-            // Get performance data for email
-            const { data: perfData } = await supabase
-              .from("strategy_performance")
-              .select("total_trades, total_profit_loss")
-              .eq("user_id", strategy.user_id)
-              .eq("strategy_id", strategy.strategy_id)
-              .single();
+            // ONLY send crash email if bot was previously CONFIRMED running
+            // This prevents false "crash" emails when bot never started successfully
+            const wasConfirmedRunning = confirmedRunningRef.current.has(strategyKey);
+            
+            if (wasConfirmedRunning) {
+              // Get performance data for email
+              const { data: perfData } = await supabase
+                .from("strategy_performance")
+                .select("total_trades, total_profit_loss")
+                .eq("user_id", strategy.user_id)
+                .eq("strategy_id", strategy.strategy_id)
+                .single();
 
-            // Send crash notification email via edge function
-            try {
-              await supabase.functions.invoke('send-bot-stopped', {
-                body: {
-                  email: user.email,
-                  strategyName: strategyData?.name || 'Trading Bot',
-                  reason: 'Bot stopped responding (possible crash or connection issue)',
-                  totalTrades: perfData?.total_trades || 0,
-                  totalPnL: perfData?.total_profit_loss || 0
-                }
+              // Send crash notification email via edge function
+              try {
+                await supabase.functions.invoke('send-bot-stopped', {
+                  body: {
+                    email: user.email,
+                    strategyName: strategyData?.name || 'Trading Bot',
+                    reason: 'Bot stopped responding (possible crash or connection issue)',
+                    totalTrades: perfData?.total_trades || 0,
+                    totalPnL: perfData?.total_profit_loss || 0
+                  }
+                });
+                console.log(`📧 Crash notification email sent for strategy ${strategy.strategy_id}`);
+              } catch (emailError) {
+                console.error('Failed to send crash notification email:', emailError);
+              }
+
+              // Show toast to user
+              toast({
+                title: "⚠️ Bot Stopped",
+                description: `${strategyData?.name || 'Trading bot'} stopped unexpectedly. Email notification sent.`,
+                variant: "destructive"
               });
-              console.log(`📧 Crash notification email sent for strategy ${strategy.strategy_id}`);
-            } catch (emailError) {
-              console.error('Failed to send crash notification email:', emailError);
+              
+              // Clear the refs so new cycle can start fresh
+              confirmedRunningRef.current.delete(strategyKey);
+              startedEmailSentRef.current.delete(strategyKey);
+            } else {
+              // Bot never confirmed running - just show toast, no email
+              console.log(`ℹ️ Bot ${strategy.strategy_id} failed to start (was never confirmed running)`);
+              toast({
+                title: "⚠️ Bot Failed to Start",
+                description: `${strategyData?.name || 'Trading bot'} could not connect. Check server status.`,
+                variant: "destructive"
+              });
             }
-
-            // Show toast to user
-            toast({
-              title: "⚠️ Bot Stopped",
-              description: `${strategyData?.name || 'Trading bot'} stopped unexpectedly. You've been notified via email.`,
-              variant: "destructive"
-            });
           }
         }
       }
