@@ -112,39 +112,69 @@ serve(async (req) => {
         console.log(`Attempting HTTP to ${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`);
         console.log(`Bot manager auth: ${BOT_MANAGER_SECRET ? 'configured' : 'missing'}`);
         
-        const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${BOT_MANAGER_SECRET}` // Shared secret
-          },
-          body: JSON.stringify(botConfig)
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.warn(`Bot manager HTTP error (${response.status}): ${errorText}`);
-          throw new Error(`Bot manager returned ${response.status}`);
-        }
-
-        const result = await response.json();
-        console.log('Bot command sent via HTTP successfully:', result);
+        // Add timeout to prevent edge function from hanging
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
         
+        try {
+          const response = await fetch(`${LIGHTSAIL_BOT_MANAGER_URL}/bot/${action}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${BOT_MANAGER_SECRET}`
+            },
+            body: JSON.stringify(botConfig),
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Bot manager HTTP error (${response.status}): ${errorText}`);
+            throw new Error(`Bot manager returned ${response.status}: ${errorText}`);
+          }
+
+          const result = await response.json();
+          console.log('Bot command sent via HTTP successfully:', result);
+          
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: `Bot ${action} command sent successfully`,
+              method: 'http',
+              data: result
+            }),
+            {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        } catch (fetchError: any) {
+          clearTimeout(timeoutId);
+          
+          if (fetchError.name === 'AbortError') {
+            console.error(`Bot manager request timed out after 8 seconds`);
+            throw new Error('Bot manager request timed out - server may be down');
+          }
+          throw fetchError;
+        }
+      } catch (httpError: any) {
+        console.error(`Failed to reach bot manager via HTTP: ${httpError.message}`);
+        
+        // Return error immediately instead of falling back to queue silently
+        // This gives user clear feedback that bot manager is unreachable
         return new Response(
           JSON.stringify({
-            success: true,
-            message: `Bot ${action} command sent successfully`,
-            method: 'http',
-            data: result
+            success: false,
+            error: `Bot manager unreachable: ${httpError.message}. Please check if the trading server is running.`,
+            method: 'http_failed'
           }),
           {
-            status: 200,
+            status: 503,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           }
         );
-      } catch (httpError: any) {
-        console.warn(`Failed to reach bot manager via HTTP: ${httpError.message}. Falling back to database queue...`);
-        // Continue to database fallback below
       }
     }
 
