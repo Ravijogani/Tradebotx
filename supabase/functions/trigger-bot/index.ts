@@ -129,13 +129,62 @@ serve(async (req) => {
           
           clearTimeout(timeoutId);
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Bot manager HTTP error (${response.status}): ${errorText}`);
-            throw new Error(`Bot manager returned ${response.status}: ${errorText}`);
+          const responseText = await response.text();
+          let result;
+          try {
+            result = JSON.parse(responseText);
+          } catch {
+            result = { message: responseText };
           }
 
-          const result = await response.json();
+          // Handle "already running" as a success case - bot is in desired state
+          if (!response.ok) {
+            console.error(`Bot manager HTTP error (${response.status}): ${responseText}`);
+            
+            // Check if this is an "already running" error - treat as success
+            const isAlreadyRunning = responseText.toLowerCase().includes('already running');
+            
+            if (isAlreadyRunning && action === 'start') {
+              console.log('Bot already running on server - syncing state');
+              
+              // Create service client to update database state
+              const serviceClient = createClient(
+                Deno.env.get('SUPABASE_URL') ?? '',
+                Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+              );
+              
+              // Update user_strategies to reflect running state
+              await serviceClient
+                .from('user_strategies')
+                .upsert({
+                  user_id: user.id,
+                  strategy_id: strategyId,
+                  is_running: true,
+                  status: 'running',
+                  started_at: new Date().toISOString(),
+                  stopped_at: null,
+                }, {
+                  onConflict: 'user_id,strategy_id'
+                });
+              
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  message: 'Bot is already running - state synced',
+                  method: 'http',
+                  already_running: true,
+                  data: result
+                }),
+                {
+                  status: 200,
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                }
+              );
+            }
+            
+            throw new Error(`Bot manager returned ${response.status}: ${responseText}`);
+          }
+
           console.log('Bot command sent via HTTP successfully:', result);
           
           return new Response(
