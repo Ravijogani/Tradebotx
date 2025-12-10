@@ -174,7 +174,27 @@ serve(async (req) => {
 
     if (triggerError) {
       console.error('Failed to trigger bot:', triggerError);
-      throw new Error('Failed to start bot on remote server');
+      
+      // Try to get the actual error message from trigger-bot response
+      let errorMessage = 'Failed to start bot on remote server';
+      try {
+        if (triggerError.context && typeof triggerError.context.json === 'function') {
+          const errorBody = await triggerError.context.json();
+          if (errorBody?.error) {
+            errorMessage = errorBody.error;
+          }
+        }
+      } catch (parseError) {
+        console.error('Could not parse trigger error:', parseError);
+      }
+      
+      throw new Error(errorMessage);
+    }
+    
+    // Also check if trigger returned success: false
+    if (triggerResult && triggerResult.success === false) {
+      console.error('Trigger bot returned failure:', triggerResult);
+      throw new Error(triggerResult.error || 'Bot manager rejected the start request');
     }
 
     console.log(`Bot start command sent successfully:`, triggerResult);
