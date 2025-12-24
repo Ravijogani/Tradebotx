@@ -259,6 +259,7 @@ export type Database = {
         Row: {
           balance: number | null
           created_at: string
+          daily_trades: number | null
           equity: number | null
           error_message: string | null
           id: string
@@ -274,6 +275,7 @@ export type Database = {
         Insert: {
           balance?: number | null
           created_at?: string
+          daily_trades?: number | null
           equity?: number | null
           error_message?: string | null
           id?: string
@@ -289,6 +291,7 @@ export type Database = {
         Update: {
           balance?: number | null
           created_at?: string
+          daily_trades?: number | null
           equity?: number | null
           error_message?: string | null
           id?: string
