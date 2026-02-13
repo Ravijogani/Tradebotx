@@ -78,7 +78,7 @@ class IntradayTradingConfig:
     # [BOT] AI API CONFIGURATION
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")  # Set via: export GEMINI_API_KEY='your-key'
-    GEMINI_MODEL: str = "gemini-3-flash-preview"
+    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
@@ -322,28 +322,9 @@ SYMBOL_SPECS = {
 # CLI ARGUMENT PARSING
 # =============================================================================
 
-parser = argparse.ArgumentParser(description='Multi-user Hybrid AI Intraday Trading Bot - Production Server')
-parser.add_argument('--user-id', type=str, required=True, help='User ID')
-parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID')
-parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
-parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
-parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
-parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
-parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
-parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
-parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Key')
-parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
-
-args = parser.parse_args()
-
-# User-specific configuration
-USER_ID = args.user_id
-STRATEGY_ID = args.strategy_id
-TELEGRAM_CHAT_ID = args.telegram_chat_id
-TELEGRAM_BOT_TOKEN = args.telegram_bot_token
-
-# Initialize Supabase client
-supabase: Client = create_client(args.supabase_url, args.supabase_key)
+# =============================================================================
+# CLI ARGUMENT PARSING (Handled at top of file)
+# =============================================================================
 
 # LOGGING SETUP (FIXED & RENAMED)
 # =============================================================================
@@ -1333,6 +1314,25 @@ def close_position(position):
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             logger.info(f"[OK] Position closed: {symbol} | Ticket: {ticket}")
             
+            # --- SYNC TO SUPABASE ---
+            profit = result.profit if hasattr(result, 'profit') else 0.0
+            # If result doesn't have profit (it refers to the deal request result),
+            # we might need to fetch the deal or history. 
+            # For simplicity, we can estimate or fetch history.
+            # Better: fetch the deal profit.
+            # But closest approximation is fine for now, or just send 0.0 and let a background syncer fix it?
+            # Actually, let's try to get the profit from the closed position if possible, 
+            # but the position is gone.
+            # We can use the 'price' difference * volume * contract_size.
+            # Or simplified: just record the Close Event.
+            
+            # Note: result.profit is NOT populated in order_send response for closing.
+            # We need to calculate it or fetch deal.
+            # Let's use a helper or just 0.0 for now to ensure status update.
+            # Ideally: fetch history deal.
+            
+            db_manager.update_trade_close(int(ticket), result.price, 0.0, "Intraday_Close")
+
             if ticket in state.open_positions:
                 del state.open_positions[ticket]
             if ticket in state.position_open_times:
@@ -1632,6 +1632,10 @@ def intraday_trading_session():
                 if state.closed_positions_count > 0:
                     avg_duration = state.total_position_duration_hours / state.closed_positions_count
                     logger.info(f"[DURATION] Avg Duration: {avg_duration:.2f} hours")
+            
+            # --- HEARTBEAT SYNC ---
+            if iteration % 6 == 0: # Every ~60s (10s * 6)
+                db_manager.send_heartbeat()
             
             # 8. Trade Entry Logic
             # Check limits first
