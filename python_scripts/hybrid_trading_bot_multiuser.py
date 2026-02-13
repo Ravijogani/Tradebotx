@@ -333,7 +333,9 @@ def send_heartbeat(status: str = 'running', mt5_connected: bool = True, error_me
                 'error_message': error_message,
                 'pid': os.getpid(), # Always send PID for control
                 'balance': account_info.balance if account_info else 0.0,
-                'equity': account_info.equity if account_info else 0.0
+                'equity': account_info.equity if account_info else 0.0,
+                'daily_trades': getattr(state, 'daily_trades', 0),
+                'daily_pnl': getattr(state, 'daily_pnl', 0.0)
             }
 
             supabase.table('bot_heartbeats').upsert(
@@ -438,7 +440,7 @@ class SupabaseTradeDB:
             trades = supabase.table('trades').select('*').eq(
                 'user_id', USER_ID
             ).eq(
-                'ticket', str(ticket)
+                'ticket', int(ticket)
             ).eq('status', 'open').execute()
             
             if not trades.data:
