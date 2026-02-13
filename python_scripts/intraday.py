@@ -78,7 +78,7 @@ class IntradayTradingConfig:
     # [BOT] AI API CONFIGURATION
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")  # Set via: export GEMINI_API_KEY='your-key'
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
@@ -106,9 +106,9 @@ class IntradayTradingConfig:
     MAX_DAILY_TRADES: int = 5  # CRITICAL: Intraday (vs 20 in scalping)
     
     # INTRADAY EMERGENCY STOPS (Higher limits due to wider stops)
-    MAX_DAILY_LOSS_PERCENT: float = 8.0  # Increased from 4.0 for intraday
-    MAX_DRAWDOWN_PERCENT: float = 15.0  # Configurable max drawdown
-    MAX_RISK_PER_TRADE_PERCENT: float = 2.5  # Single trade risk cap
+    MAX_DAILY_LOSS_PERCENT: float = 20.0  # Increased from 4.0 for intraday
+    MAX_DRAWDOWN_PERCENT: float = 30.0  # Configurable max drawdown
+    MAX_RISK_PER_TRADE_PERCENT: float = 10.0  # Single trade risk cap
     ENABLE_DYNAMIC_EMERGENCY_STOPS: bool = True  # Adjust based on volatility
     
     # INTRADAY TIMEFRAMES
@@ -219,60 +219,61 @@ class SupabaseManager:
     
     def record_trade(self, ticket: int, symbol: str, direction: str, lot_size: float,
                     entry_price: float, sl: float, tp: float, strategy: str) -> None:
-        """Record new trade in Supabase"""
+        """Corrected Column Mapping for trades table"""
         try:
             trade_data = {
                 'user_id': self.user_id,
                 'strategy_id': self.strategy_id,
-                'ticket': ticket,
+                'ticket': int(ticket),
                 'symbol': symbol,
-                'direction': direction,
-                'lot_size': lot_size,
+                'trade_type': direction,  # Corrected from 'direction'
+                'quantity': lot_size,     # Corrected from 'lot_size'
                 'entry_price': entry_price,
-                'stop_loss': sl,
-                'take_profit': tp,
-                'strategy_name': strategy,
+                'status': 'open',          # Lowercase as required
                 'opened_at': datetime.now(timezone.utc).isoformat(),
-                'status': 'OPEN'
+                'metadata': {              # Extra fields moved to JSON metadata
+                    'stop_loss': sl,
+                    'take_profit': tp,
+                    'strategy_name': strategy
+                }
             }
-            
             self.client.table('trades').insert(trade_data).execute()
-            logger.info(f"[DB] Trade {ticket} recorded in Supabase")
-            
+            logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
-            logger.error(f"[DB ERROR] Failed to record trade: {e}")
+            logger.error(f"[DB ERROR] Trade sync failed: {e}")
     
     def update_trade_close(self, ticket: int, close_price: float, profit: float, status: str) -> None:
-        """Update closed trade in Supabase"""
+        """Corrected Column Mapping for closing trades"""
         try:
             update_data = {
-                'close_price': close_price,
-                'profit': profit,
+                'exit_price': float(close_price), # Corrected from 'close_price'
+                'profit_loss': float(profit),     # Corrected from 'profit'
                 'closed_at': datetime.now(timezone.utc).isoformat(),
-                'status': status
+                'status': 'closed'         # Lowercase as required
             }
-            
-            self.client.table('trades').update(update_data).eq('ticket', ticket).eq('user_id', self.user_id).execute()
-            logger.info(f"[DB] Trade {ticket} updated: {status} | Profit: ${profit:.2f}")
-            
+            self.client.table('trades').update(update_data).eq('ticket', int(ticket)).eq('user_id', self.user_id).execute()
         except Exception as e:
-            logger.error(f"[DB ERROR] Failed to update trade: {e}")
+            logger.error(f"[DB ERROR] Close update failed: {e}")
     
     def send_heartbeat(self) -> None:
-        """Send heartbeat to Supabase"""
+        """Corrected Heartbeat with required pid, balance, and equity"""
         try:
+            account_info = mt5.account_info()
             heartbeat_data = {
                 'user_id': self.user_id,
                 'strategy_id': self.strategy_id,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'status': 'RUNNING',
-                'open_positions': len(state.open_positions),
-                'daily_trades': state.daily_trades
+                'last_heartbeat': datetime.now(timezone.utc).isoformat(), # Corrected field
+                'status': 'running', # Lowercase
+                'mt5_connected': True if account_info else False,
+                'pid': os.getpid(),
+                'balance': account_info.balance if account_info else 0,
+                'equity': account_info.equity if account_info else 0
             }
-            
-            self.client.table('bot_heartbeats').upsert(heartbeat_data).execute()
-            logger.debug(f"[HEARTBEAT] Sent to Supabase")
-            
+            # Correct upsert with on_conflict
+            self.client.table('bot_heartbeats').upsert(
+                heartbeat_data, 
+                on_conflict='user_id,strategy_id'
+            ).execute()
         except Exception as e:
             logger.error(f"[HEARTBEAT ERROR] {e}")
 
@@ -1536,17 +1537,26 @@ def check_emergency_conditions(account_info) -> bool:
 
 def update_heartbeat(status='running', error_message=None):
     try:
+        # 🟢 FIX: Fetch account info locally first
+        acc = mt5.account_info()
+        current_bal = acc.balance if acc else 0.0
+        current_eq = acc.equity if acc else 0.0
+        is_connected = True if acc else False
+        
         current_pid = os.getpid() if status == 'running' else None
+        
         supabase.table('bot_heartbeats').upsert({
             'user_id': USER_ID,
             'strategy_id': STRATEGY_ID,
             'status': status,
             'last_heartbeat': datetime.now(timezone.utc).isoformat(),
             'pid': current_pid,
-            'balance': current_balance,
-            'equity': current_equity,
-            'mt5_connected': mt5_connected
+            'balance': current_bal,  # Use local variable
+            'equity': current_eq,    # Use local variable
+            'mt5_connected': is_connected, # Use local variable
+            'error_message': error_message
         }, on_conflict='user_id,strategy_id').execute()
+        
     except Exception as e:
         logger.error(f"Failed to update heartbeat: {e}")
 
