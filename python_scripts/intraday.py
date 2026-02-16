@@ -78,7 +78,7 @@ class IntradayTradingConfig:
     # [BOT] AI API CONFIGURATION
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")  # Set via: export GEMINI_API_KEY='your-key'
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-3.0-flash-exp"
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
@@ -98,15 +98,15 @@ class IntradayTradingConfig:
     
     # INTRADAY TRADING PARAMETERS
     SYMBOLS: List[str] = field(default_factory=lambda: [
-        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm',
+        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm', 'XAGUSDm',
         'BTCUSDm', 'ETHUSDm', 'USOILm', 'NZDUSDm',
         'USDCADm', 'AUDUSDm', 'USDCHFm', 'GBPJPYm'
     ])
-    MAX_CONCURRENT_TRADES: int = 2  # Reduced from 3 (intraday)
-    MAX_DAILY_TRADES: int = 5  # CRITICAL: Intraday (vs 20 in scalping)
+    MAX_CONCURRENT_TRADES: int = 5  # Reduced from 3 (intraday)
+    MAX_DAILY_TRADES: int = 10  # CRITICAL: Intraday (vs 20 in scalping)
     
     # INTRADAY EMERGENCY STOPS (Higher limits due to wider stops)
-    MAX_DAILY_LOSS_PERCENT: float = 20.0  # Increased from 4.0 for intraday
+    MAX_DAILY_LOSS_PERCENT: float = 25.0  # Increased from 4.0 for intraday
     MAX_DRAWDOWN_PERCENT: float = 30.0  # Configurable max drawdown
     MAX_RISK_PER_TRADE_PERCENT: float = 10.0  # Single trade risk cap
     ENABLE_DYNAMIC_EMERGENCY_STOPS: bool = True  # Adjust based on volatility
@@ -218,9 +218,12 @@ class SupabaseManager:
         self.strategy_id = STRATEGY_ID
     
     def record_trade(self, ticket: int, symbol: str, direction: str, lot_size: float,
-                    entry_price: float, sl: float, tp: float, strategy: str) -> None:
+                    entry_price: float, sl: float, tp: float, strategy: str, opened_at: datetime = None) -> None:
         """Corrected Column Mapping for trades table"""
         try:
+            if opened_at is None:
+                opened_at = datetime.now(timezone.utc)
+                
             trade_data = {
                 'user_id': self.user_id,
                 'strategy_id': self.strategy_id,
@@ -230,17 +233,33 @@ class SupabaseManager:
                 'quantity': lot_size,     # Corrected from 'lot_size'
                 'entry_price': entry_price,
                 'status': 'open',          # Lowercase as required
-                'opened_at': datetime.now(timezone.utc).isoformat(),
+                'opened_at': opened_at.isoformat(),
                 'metadata': {              # Extra fields moved to JSON metadata
                     'stop_loss': sl,
                     'take_profit': tp,
                     'strategy_name': strategy
                 }
             }
-            self.client.table('trades').insert(trade_data).execute()
+            # Use upsert to prevent duplicates during sync
+            self.client.table('trades').upsert(trade_data, on_conflict='ticket').execute()
             logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
             logger.error(f"[DB ERROR] Trade sync failed: {e}")
+
+    def get_open_tickets(self) -> List[int]:
+        """Fetch all currently open tickets from database"""
+        try:
+            response = self.client.table('trades').select('ticket') \
+                .eq('user_id', self.user_id) \
+                .eq('strategy_id', self.strategy_id) \
+                .eq('status', 'open').execute()
+            
+            if response.data:
+                return [item['ticket'] for item in response.data]
+            return []
+        except Exception as e:
+            logger.error(f"[DB ERROR] Failed to fetch open tickets: {e}")
+            return []
     
     def update_trade_close(self, ticket: int, close_price: float, profit: float, status: str) -> None:
         """Corrected Column Mapping for closing trades"""
@@ -306,8 +325,9 @@ SYMBOL_SPECS = {
     "GBPUSDm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "USDJPYm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "XAUUSDm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
-    "BTCUSDm": {"pip_size": 1.0, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
-    "ETHUSDm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    "XAGUSDm": {"pip_size": 0.001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
+    "BTCUSDTm": {"pip_size": 1.0, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    "ETHUSDTm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
     "USOILm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "NZDUSDm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "USDCADm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
@@ -726,9 +746,11 @@ def get_symbol_specs(symbol: str) -> Dict:
     
     static_spec = SYMBOL_SPECS.get(symbol)
     if static_spec:
-        if symbol in ['USDJPYm', 'GBPJPYm', 'XAUUSDm', 'ETHUSDm', 'USOILm']:
+        if any(s in symbol for s in ['USDJPY', 'GBPJPY', 'XAUUSD', 'ETHUSD', 'USOIL', 'XAGUSD']):
             static_spec['pip_size'] = 0.01
-        elif symbol == 'BTCUSDm':
+            if 'XAGUSD' in symbol:
+                static_spec['pip_size'] = 0.001
+        elif 'BTC' in symbol:
             static_spec['pip_size'] = 1.0
         else:
             static_spec['pip_size'] = 0.0001
@@ -946,13 +968,22 @@ def update_global_ai_context():
     """
     
     symbols_str = ", ".join(config.SYMBOLS)
-    prompt = f"Set intraday bias for: {symbols_str}"
+    prompt = f"Set intraday bias for provided symbols based on current market structure. Return JSON only."
     
-    response = ai_provider.call_ai(prompt, system_prompt, temperature=0.3, max_tokens=500, json_mode=True)
+    # INCREASED TOKENS to avoid truncation
+    response = ai_provider.call_ai(prompt, system_prompt, temperature=0.3, max_tokens=2000, json_mode=True)
     
     if response:
         try:
-            result = json.loads(response)
+            # CLEANUP: Remove markdown code blocks if present
+            cleaned_response = response.strip()
+            if cleaned_response.startswith("```"):
+                cleaned_response = cleaned_response.split("```")[1]
+                if cleaned_response.startswith("json"):
+                     cleaned_response = cleaned_response[4:]
+            cleaned_response = cleaned_response.strip()
+
+            result = json.loads(cleaned_response)
             state.approved_bias = result.get('symbol_bias', {})
             state.global_market_sentiment = result.get('sentiment', 'NEUTRAL')
             state.global_key_drivers = result.get('reasoning', 'N/A')
@@ -960,8 +991,11 @@ def update_global_ai_context():
             logger.info(f"[OK] BIAS UPDATED: {state.approved_bias}")
             state.last_global_context_update = datetime.now()
             
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI bias JSON: {e}")
+            logger.error(f"Raw Response: {response}") # Log raw for debugging
         except Exception as e:
-            logger.error(f"Failed to parse AI bias: {e}")
+            logger.error(f"Error processing AI bias: {e}")
 
 # =============================================================================
 # TRADE EXECUTION (Simplified for local testing)
@@ -1022,9 +1056,17 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
                 return False, f"Potential drawdown {potential_total_drawdown_pct:.2f}% would exceed limit {config.MAX_DRAWDOWN_PERCENT}%"
         
         # Check 4: Pip risk sanity check (avoid extreme SL distances)
-        max_pip_risk = 500  # Maximum 500 pips for major pairs
+        # Relaxed logic for Crypto/Metals
+        max_pip_risk = 500
+        if any(s in symbol for s in ["BTC", "ETH", "XAU", "XAG"]):
+            max_pip_risk = 25000 # Much higher limit for high-value assets
+            
         if 'm' in symbol.lower() and pip_risk > max_pip_risk:
-            return False, f"Pip risk {pip_risk:.1f} exceeds maximum {max_pip_risk} pips"
+             # Only log warning for crypto/metal 
+             if max_pip_risk > 500:
+                 logger.debug(f"[RISK] High pip count {pip_risk} for {symbol} (Allowed: {max_pip_risk})")
+             else:
+                return False, f"Pip risk {pip_risk:.1f} exceeds maximum {max_pip_risk} pips"
         
         # All checks passed
         logger.info(f"[RISK CHECK] Trade validated: Risk={actual_risk_percent:.2f}%, Pips={pip_risk:.1f}, Amount=${risk_amount:.2f}")
@@ -1113,9 +1155,11 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             state.position_open_times[ticket] = datetime.now(timezone.utc)
             state.daily_trades += 1
             
-            # --- SYNC TO SUPABASE (was missing!) ---
+            logger.info(f"[OK] TRADE OPENED: {symbol} {direction} | Lot: {lot_size} | SL: {stop_loss:.5f} | TP: {tp1:.5f}")
+            
+            # --- SYNC TO DATABASE ---
             db_manager.record_trade(
-                ticket=int(ticket),
+                ticket=ticket,
                 symbol=symbol,
                 direction=direction,
                 lot_size=lot_size,
@@ -1125,7 +1169,6 @@ def place_intraday_trade(signal: Dict, account_equity: float):
                 strategy=signal['strategy_name']
             )
             
-            logger.info(f"[OK] TRADE OPENED: {symbol} {direction} | Lot: {lot_size} | SL: {stop_loss:.5f} | TP: {tp1:.5f}")
             send_telegram_message(f" Trade opened: {symbol} {direction} | Lot: {lot_size}")
             return True
             
@@ -1327,23 +1370,19 @@ def close_position(position):
             logger.info(f"[OK] Position closed: {symbol} | Ticket: {ticket}")
             
             # --- SYNC TO SUPABASE ---
-            profit = result.profit if hasattr(result, 'profit') else 0.0
-            # If result doesn't have profit (it refers to the deal request result),
-            # we might need to fetch the deal or history. 
-            # For simplicity, we can estimate or fetch history.
-            # Better: fetch the deal profit.
-            # But closest approximation is fine for now, or just send 0.0 and let a background syncer fix it?
-            # Actually, let's try to get the profit from the closed position if possible, 
-            # but the position is gone.
-            # We can use the 'price' difference * volume * contract_size.
-            # Or simplified: just record the Close Event.
+            # --- SYNC TO SUPABASE ---
+            profit = 0.0
+            try:
+                if hasattr(result, 'deal') and result.deal > 0:
+                    deals = mt5.history_deals_get(ticket=result.deal)
+                    if deals and len(deals) > 0:
+                        profit = deals[0].profit
+                elif hasattr(result, 'profit'):
+                     profit = result.profit
+            except Exception as e:
+                logger.error(f"Error fetching close profit: {e}")
             
-            # Note: result.profit is NOT populated in order_send response for closing.
-            # We need to calculate it or fetch deal.
-            # Let's use a helper or just 0.0 for now to ensure status update.
-            # Ideally: fetch history deal.
-            
-            db_manager.update_trade_close(int(ticket), result.price, 0.0, "Intraday_Close")
+            db_manager.update_trade_close(int(ticket), result.price, profit, "Intraday_Close")
 
             if ticket in state.open_positions:
                 del state.open_positions[ticket]
@@ -1572,6 +1611,37 @@ def update_heartbeat(status='running', error_message=None):
     except Exception as e:
         logger.error(f"Failed to update heartbeat: {e}")
 
+def sync_active_positions_to_db():
+    """
+    Background process to ensure all local open positions exist in database
+    """
+    try:
+        if not state.open_positions:
+            return
+
+        # Get what DB thinks is open
+        db_open_tickets = set(db_manager.get_open_tickets())
+        
+        # Check active positions
+        for ticket, pos_info in state.open_positions.items():
+            if ticket not in db_open_tickets:
+                logger.warning(f"[SYNC] Syncing missing position {ticket} ({pos_info['symbol']}) to DB")
+                
+                db_manager.record_trade(
+                    ticket=ticket,
+                    symbol=pos_info['symbol'],
+                    direction=pos_info['direction'],
+                    lot_size=pos_info['lot_size'],
+                    entry_price=pos_info['entry_price'],
+                    sl=pos_info['stop_loss'],
+                    tp=pos_info['tp1'],
+                    strategy=pos_info.get('strategy', 'SYNCED'),
+                    opened_at=pos_info.get('opened_at')
+                )
+                
+    except Exception as e:
+        logger.error(f"[SYNC ERROR] Failed to sync positions: {e}")
+
 # =============================================================================
 # MAIN TRADING LOOP
 # =============================================================================
@@ -1648,6 +1718,10 @@ def intraday_trading_session():
             # --- HEARTBEAT SYNC ---
             if iteration % 6 == 0: # Every ~60s (10s * 6)
                 db_manager.send_heartbeat()
+                
+            # --- BACKGROUD POSITION SYNC ---
+            if iteration % 10 == 0: # Every ~5 mins
+                sync_active_positions_to_db()
             
             # 8. Trade Entry Logic
             # Check limits first
