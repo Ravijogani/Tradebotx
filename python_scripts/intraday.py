@@ -78,7 +78,7 @@ class IntradayTradingConfig:
     # [BOT] AI API CONFIGURATION
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")  # Set via: export GEMINI_API_KEY='your-key'
-    GEMINI_MODEL: str = "gemini-3.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
@@ -240,8 +240,8 @@ class SupabaseManager:
                     'strategy_name': strategy
                 }
             }
-            # Use upsert to prevent duplicates during sync (unique constraint on ticket+user_id)
-            self.client.table('trades').upsert(trade_data, on_conflict='ticket,user_id').execute()
+            # Use upsert to prevent duplicates during sync
+            self.client.table('trades').upsert(trade_data, on_conflict='ticket').execute()
             logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
             logger.error(f"[DB ERROR] Trade sync failed: {e}")
@@ -532,7 +532,7 @@ state = IntradayTradingState()
 class GeminiAIProvider:
     """Gemini AI Provider"""
     
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview"):
         self.api_key = api_key
         self.model = model
         if self.api_key:
