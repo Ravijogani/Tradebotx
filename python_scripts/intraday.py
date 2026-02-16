@@ -240,8 +240,8 @@ class SupabaseManager:
                     'strategy_name': strategy
                 }
             }
-            # Use upsert to prevent duplicates during sync
-            self.client.table('trades').upsert(trade_data, on_conflict='ticket').execute()
+            # Use upsert to prevent duplicates during sync (unique constraint on ticket+user_id)
+            self.client.table('trades').upsert(trade_data, on_conflict='ticket,user_id').execute()
             logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
             logger.error(f"[DB ERROR] Trade sync failed: {e}")
