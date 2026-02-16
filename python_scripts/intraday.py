@@ -1113,6 +1113,18 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             state.position_open_times[ticket] = datetime.now(timezone.utc)
             state.daily_trades += 1
             
+            # --- SYNC TO SUPABASE (was missing!) ---
+            db_manager.record_trade(
+                ticket=int(ticket),
+                symbol=symbol,
+                direction=direction,
+                lot_size=lot_size,
+                entry_price=entry_price,
+                sl=stop_loss,
+                tp=tp1,
+                strategy=signal['strategy_name']
+            )
+            
             logger.info(f"[OK] TRADE OPENED: {symbol} {direction} | Lot: {lot_size} | SL: {stop_loss:.5f} | TP: {tp1:.5f}")
             send_telegram_message(f" Trade opened: {symbol} {direction} | Lot: {lot_size}")
             return True
