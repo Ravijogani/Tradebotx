@@ -119,7 +119,7 @@ export const OpenPositions = () => {
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total P&L</div>
               <div className={`text-lg sm:text-2xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
-                {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
+                {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
               </div>
             </div>
           </div>
@@ -183,7 +183,7 @@ export const OpenPositions = () => {
 
                   <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:text-right border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-4">
                     <div className={`text-lg sm:text-xl font-bold ${currentProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
-                      {currentProfit >= 0 ? '+' : ''}₹{currentProfit.toFixed(2)}
+                      {currentProfit >= 0 ? '+' : ''}${currentProfit.toFixed(2)}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {new Date(position.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
