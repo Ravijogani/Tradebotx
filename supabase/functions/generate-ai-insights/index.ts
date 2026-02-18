@@ -36,7 +36,7 @@ serve(async (req) => {
       .from('trades')
       .select('*')
       .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
+      .order('opened_at', { ascending: false })
       .limit(50);
 
     const { data: strategies } = await supabaseClient
