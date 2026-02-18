@@ -119,9 +119,7 @@ const StrategyBuilderPage = () => {
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="min-h-screen flex w-full bg-background">
-        <AppSidebar activeTab="strategy-builder" onTabChange={(tab) => {
-          if (tab === "dashboard") navigate("/dashboard");
-        }} />
+        <AppSidebar activeTab="strategy-builder" onTabChange={(tab) => navigate(`/dashboard?tab=${tab}`)} />
         <main className="flex-1 flex flex-col">
           {/* Header */}
           <header className="h-16 border-b border-border flex items-center justify-between px-4 bg-card">
