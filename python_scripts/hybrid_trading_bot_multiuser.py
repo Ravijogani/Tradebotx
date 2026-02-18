@@ -443,7 +443,7 @@ class SupabaseTradeDB:
             }
             
             def insert_trade():
-                result = supabase.table('trades').insert(db_trade).execute()
+                result = supabase.table('trades').upsert(db_trade, on_conflict='ticket,user_id').execute()
                 logger.info(f"[DB] Trade {db_trade['ticket']} synced to dashboard")
             
             success = self._retry_operation("Trade logging", insert_trade)
@@ -591,7 +591,7 @@ class SupabaseTradeDB:
             
             try:
                 existing = supabase.table('trades').select('*').eq(
-                    'ticket', str(ticket)
+                    'ticket', int(ticket)
                 ).eq('user_id', USER_ID).execute()
                 
                 if existing.data:
@@ -630,7 +630,7 @@ class SupabaseTradeDB:
                     'status': 'closed',
                     'opened_at': (datetime.fromtimestamp(deal.time, timezone.utc) - timedelta(hours=1)).isoformat(), 
                     'closed_at': datetime.fromtimestamp(deal.time, timezone.utc).isoformat(),
-                    'ticket': str(ticket),
+                    'ticket': int(ticket),
                     'profit_loss': profit,
                     'metadata': {
                         'strategy_name': 'SYNCED',
@@ -640,7 +640,7 @@ class SupabaseTradeDB:
                     }
                 }
                 
-                supabase.table('trades').insert(db_trade).execute()
+                supabase.table('trades').upsert(db_trade, on_conflict='ticket,user_id').execute()
                 count += 1
                 
             except Exception as e:
@@ -714,7 +714,7 @@ class SupabaseTradeDB:
             result = supabase.table('trades').select('*').eq(
                 'user_id', USER_ID
             ).eq(
-                'ticket', str(ticket)
+                'ticket', int(ticket)
             ).execute()
             
             if not result.data or len(result.data) == 0:
@@ -749,7 +749,7 @@ class SupabaseTradeDB:
         """Update specific metadata fields without overwriting everything"""
         try:
             # 1. Get current metadata
-            res = supabase.table('trades').select('metadata').eq('ticket', str(ticket)).eq('user_id', USER_ID).execute()
+            res = supabase.table('trades').select('metadata').eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
             if not res.data: return False
             
             current_meta = res.data[0].get('metadata', {})
@@ -758,7 +758,7 @@ class SupabaseTradeDB:
             current_meta.update(updates)
             
             # 3. Save back
-            supabase.table('trades').update({'metadata': current_meta}).eq('ticket', str(ticket)).eq('user_id', USER_ID).execute()
+            supabase.table('trades').update({'metadata': current_meta}).eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
             return True
         except Exception as e:
             logger.error(f"Failed to update metadata for {ticket}: {e}")
@@ -3558,6 +3558,20 @@ def manage_all_positions():
             
             # LOG PROGRESS FOR EVERY POSITION
             logger.info(f"[PROG] {symbol} #{ticket}: Progress = {progress*100:.1f}% to TP (Dist: {current_dist:.5f}/{total_dist:.5f})")
+
+            # Update running P&L in database for real-time dashboard display
+            try:
+                running_profit = pos.profit
+                r_mult = current_dist / abs(entry_price - sl) if abs(entry_price - sl) > 0 else 0
+                res = supabase.table('trades').select('metadata').eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
+                if res.data:
+                    current_meta = res.data[0].get('metadata', {}) or {}
+                    current_meta['running_profit'] = round(running_profit, 2)
+                    current_meta['current_price'] = round(current_price, 5)
+                    current_meta['r_multiple'] = round(r_mult, 2)
+                    supabase.table('trades').update({'metadata': current_meta}).eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
+            except Exception as e:
+                logger.debug(f"[DB] Failed to update running P&L for #{ticket}: {e}")
 
             # Get regime
             regime = "TRENDING" 
