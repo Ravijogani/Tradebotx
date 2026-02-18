@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import logo from "@/assets/tradebotx-logo.png";
 import logoWhite from "@/assets/tradebotx-logo-white.png";
 import { useTheme } from "@/components/theme-provider";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
@@ -38,7 +38,9 @@ import { AdvancedAuditLogs } from "./AdvancedAuditLogs";
 import { WeeklyReportSettings } from "./WeeklyReportSettings";
 
 export const DashboardLayout = ({ user }: { user: any }) => {
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") || "dashboard";
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [accountSize, setAccountSize] = useState(10000);
   const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">("dark");
   const navigate = useNavigate();
@@ -106,7 +108,11 @@ export const DashboardLayout = ({ user }: { user: any }) => {
   // Handle tab changes with smooth scrolling
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
-    // Scroll to top when changing tabs
+    // Clear tab param from URL to keep it clean
+    if (searchParams.has("tab")) {
+      searchParams.delete("tab");
+      setSearchParams(searchParams, { replace: true });
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

@@ -447,7 +447,7 @@ export default function TradeJournal() {
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
-        <AppSidebar activeTab="journal" onTabChange={() => {}} />
+        <AppSidebar activeTab="journal" onTabChange={(tab) => navigate(`/dashboard?tab=${tab}`)} />
         <div className="flex-1 flex flex-col">
           {/* Header */}
           <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
