@@ -66,7 +66,7 @@ export const useRealtimeTrades = (userId: string) => {
             const profitLoss = payload.new.profit_loss || 0;
             toast({
               title: "Trade Closed",
-              description: `${payload.new.symbol}: ${profitLoss >= 0 ? '+' : ''}₹${profitLoss.toFixed(2)}`,
+              description: `${payload.new.symbol}: ${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`,
               variant: profitLoss >= 0 ? "default" : "destructive",
             });
           }
