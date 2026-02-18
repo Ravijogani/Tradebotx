@@ -13,16 +13,13 @@ export const OpenPositions = () => {
   useEffect(() => {
     loadPositions();
     
-    // Set up realtime subscription with throttling
-    let lastUpdateTime = 0;
-    const updateThrottle = 5000; // Only show toasts every 5 seconds
-    
+    // Set up realtime subscription for trade updates (running P&L)
     const setupRealtime = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const channel = supabase
-        .channel('open-positions-changes')
+        .channel('open-positions-realtime')
         .on(
           'postgres_changes',
           {
@@ -31,29 +28,27 @@ export const OpenPositions = () => {
             table: 'trades',
             filter: `user_id=eq.${user.id}`
           },
-          async (payload) => {
-            // Check if the change is related to open positions
-            const newStatus = (payload.new as any)?.status;
-            const oldStatus = (payload.old as any)?.status;
-            const isOpenRelated = newStatus === 'open' || oldStatus === 'open';
-            
-            if (!isOpenRelated) return;
+          (payload) => {
+            const newRecord = payload.new as any;
+            const oldRecord = payload.old as any;
 
-            console.log('Position change:', payload);
-            loadPositions();
-            
-            const now = Date.now();
-            const shouldShowToast = now - lastUpdateTime > updateThrottle;
-            
-            if (payload.eventType === 'INSERT') {
+            if (payload.eventType === 'INSERT' && newRecord?.status === 'open') {
+              // New open position
+              setPositions(prev => [newRecord, ...prev.filter(p => p.id !== newRecord.id)]);
               toast({
                 title: "New Position Opened",
-                description: `${payload.new.symbol} - ${payload.new.trade_type}`,
+                description: `${newRecord.symbol} - ${newRecord.trade_type}`,
               });
-              lastUpdateTime = now;
-            } else if (payload.eventType === 'UPDATE' && shouldShowToast) {
-              // Only show update toasts every 5 seconds to prevent spam
-              lastUpdateTime = now;
+            } else if (payload.eventType === 'UPDATE') {
+              if (newRecord?.status === 'open' || newRecord?.status === 'OPEN') {
+                // Update existing open position (running P&L update)
+                setPositions(prev =>
+                  prev.map(p => p.id === newRecord.id ? newRecord : p)
+                );
+              } else if ((newRecord?.status === 'closed') && (oldRecord?.status === 'open' || oldRecord?.status === 'OPEN')) {
+                // Position closed - remove from open list
+                setPositions(prev => prev.filter(p => p.id !== newRecord.id));
+              }
             }
           }
         )
@@ -95,16 +90,17 @@ export const OpenPositions = () => {
     }
 
     setPositions(data || []);
-    
-    // Calculate total P&L from running_profit in metadata
-    const total = (data || []).reduce((sum, pos) => {
+  };
+
+  // Recalculate total P&L whenever positions change
+  useEffect(() => {
+    const total = positions.reduce((sum, pos) => {
       const metadata = typeof pos.metadata === 'object' && pos.metadata !== null ? pos.metadata as any : {};
       const runningProfit = metadata.running_profit || pos.profit_loss || 0;
       return sum + runningProfit;
     }, 0);
-    console.log('[OpenPositions] Total P&L:', total);
     setTotalPnL(total);
-  };
+  }, [positions]);
 
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur-sm w-full min-w-0">
@@ -123,7 +119,7 @@ export const OpenPositions = () => {
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Total P&L</div>
               <div className={`text-lg sm:text-2xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
-                {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+                {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
               </div>
             </div>
           </div>
@@ -187,7 +183,7 @@ export const OpenPositions = () => {
 
                   <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:text-right border-t sm:border-t-0 sm:border-l border-border/30 pt-2 sm:pt-0 sm:pl-4">
                     <div className={`text-lg sm:text-xl font-bold ${currentProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
-                      {currentProfit >= 0 ? '+' : ''}${currentProfit.toFixed(2)}
+                      {currentProfit >= 0 ? '+' : ''}₹{currentProfit.toFixed(2)}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {new Date(position.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

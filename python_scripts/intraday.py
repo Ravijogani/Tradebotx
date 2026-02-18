@@ -248,7 +248,7 @@ class SupabaseManager:
                 }
             }
             # Use upsert to prevent duplicates during sync
-            self.client.table('trades').upsert(trade_data, on_conflict='ticket').execute()
+            self.client.table('trades').upsert(trade_data, on_conflict='ticket,user_id').execute()
             logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
             logger.error(f"[DB ERROR] Trade sync failed: {e}")
@@ -1336,6 +1336,22 @@ def manage_intraday_positions():
             risk_dist = point * 100 # Fallback 10 pips default
             
         r_multiple = current_profit_dist / risk_dist
+        
+        # === UPDATE RUNNING P&L IN DATABASE ===
+        try:
+            running_profit = pos.profit  # MT5's calculated profit for this position
+            db_manager.client.table('trades').update({
+                'metadata': {
+                    'stop_loss': pos.sl,
+                    'take_profit': pos.tp,
+                    'strategy_name': 'Intraday Core',
+                    'running_profit': round(running_profit, 2),
+                    'current_price': round(current_price, 5),
+                    'r_multiple': round(r_multiple, 2)
+                }
+            }).eq('ticket', int(ticket)).eq('user_id', db_manager.user_id).execute()
+        except Exception as e:
+            logger.error(f"[DB ERROR] Running P&L update failed for {symbol}: {e}")
         
         # 2. === BREAKEVEN LOGIC ===
         # Trigger: Profit >= 1.0 R (Configurable)
