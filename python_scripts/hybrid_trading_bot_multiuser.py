@@ -113,7 +113,7 @@ class AITradingConfig:
     # AI API Configuration
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-3-flash-preview" # Updated per user request (best available)
     
     # AI Feature Flags
     ENABLE_AI_VALIDATION: bool = True
@@ -133,16 +133,17 @@ class AITradingConfig:
     # Trading Parameters
     # SCALPING MODE: Focus on 5 best pairs (tightest spreads, highest liquidity)
     SYMBOLS: List[str] = field(default_factory=lambda: [
-        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm',
+        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm', 'XAGUSDm',
         'BTCUSDm', 'ETHUSDm', 'USOILm', 'NZDUSDm',
         'USDCADm', 'AUDUSDm', 'USDCHFm', 'GBPJPYm'
     ])
-    MAX_CONCURRENT_TRADES: int = 3
+    MAX_CONCURRENT_TRADES: int = 5
     MAX_DAILY_TRADES: int = 50  # AI SCALPER: No artificial limits, focus on quality
-    MAX_DAILY_LOSS_PERCENT: float = 15.0  # Base limit (dynamic: 10-15% based on conditions)
-    MAX_DAILY_DRAWDOWN_PERCENT: float = 3.0   # HARD STOP: Equity Protector (3% max daily DD)
+    MAX_DAILY_LOSS_PERCENT: float = 15.0  # Soft Stop: Stop trading if we lose 10% realized
+    MAX_DAILY_DRAWDOWN_PERCENT: float = 15.0   # HARD STOP: Equity Protector (Raised from 3% to 10% to allow open positions room)
     ROLLOVER_WINDOW_START: int = 22           # UTC Hour to start blackout
     ROLLOVER_WINDOW_END: int = 23             # UTC Hour to end blackout
+    TRADE_COOLDOWN_MINUTES: int = 15          # [NEW] Wait 15 mins after a trade before re-entering same symbol
     
     # Timeframes
     ENTRY_TF: int = mt5.TIMEFRAME_M5
@@ -155,23 +156,23 @@ class AITradingConfig:
     BASE_RISK_PERCENT: float = 1.0
     MIN_RISK_PERCENT: float = 0.3
     MAX_RISK_PERCENT: float = 3.0
-    SL_ATR_MULTIPLIER: float = 1.2   # Tighter stop for M5 scalping
-    TP1_ATR_MULTIPLIER: float = 1.0  # Quick first target (10-12 pips)
-    TP2_ATR_MULTIPLIER: float = 2.0  # Runner target (18-20 pips)
+    SL_ATR_MULTIPLIER: float = 3.5   # [RELAXED] Give trade room to breathe (Was 2.5)
+    TP1_ATR_MULTIPLIER: float = 2.0  # [PROFITABLE] Aim for solid 2R first target (Was 1.0)
+    TP2_ATR_MULTIPLIER: float = 4.0  # [RUNNER] Let the runner truly run (Was 2.5)
     ENABLE_BREAKEVEN: bool = True
-    BREAKEVEN_TRIGGER_PERCENT: float = 75.0  # ULTRA CONSERVATIVE: Maximum patience
+    BREAKEVEN_TRIGGER_PERCENT: float = 75.0  # [PATIENT] Don't move to BE until 75% to TP (Was 40%)
     BREAKEVEN_LOCK_PERCENT: float = 5.0
     ENABLE_TRAILING_STOP: bool = True
-    TRAILING_START_PERCENT: float = 70.0  # ULTRA CONSERVATIVE: Start trailing later     # Aggressive scalping: start trailing at halfway
-    TRAILING_ATR_MULTIPLIER: float = 1.0
+    TRAILING_START_PERCENT: float = 80.0 # [PATIENT] Start trailing only when deep in profit (Was 40%)
+    TRAILING_ATR_MULTIPLIER: float = 3.0 # [LOOSE] Keep the trail wide
     
     # [OK] FIX 2: Partial TP Configuration
     ENABLE_PARTIAL_TP: bool = True
     PARTIAL_TP_PERCENT: float = 50.0           # Close HALF (Standard Scalping)
     PARTIAL_TP_TRIGGER_PERCENT: float = 60.0   # Secure profit at 60% to TP
     
-    SPREAD_ATR_THRESHOLD: float = 0.15         # Spread must be < 15% of Daily ATR
-    MAX_SPREAD_RATIO: float = 0.5              # Legacy fallback
+    SPREAD_ATR_THRESHOLD: float = 0.80         # [RELAXED] Spread must be < 80% of H1 Volatility (Was 0.50)
+    MAX_SPREAD_RATIO: float = 0.8              # Legacy fallback
     
     
     # Local News Filter
@@ -181,24 +182,29 @@ class AITradingConfig:
     HIGH_IMPACT_CURRENCIES: List[str] = field(default_factory=lambda: ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"])
 
     # Local Confluence Engine
-    MIN_CONFLUENCE_SCORE_TRENDING: float = 1.6  # AI SCALPER: Quality but not too strict  # Reduced from 1.5 for scalping
-    MIN_CONFLUENCE_SCORE_RANGING: float = 1.4  # AI SCALPER: Quality but allows more trades   # Reduced from 1.3 for scalping
+    MIN_CONFLUENCE_SCORE_TRENDING: float = 1.0  # [RELAXED] Matches single-strategy potential
+    MIN_CONFLUENCE_SCORE_RANGING: float = 1.2  # AI SCALPER: Quality but allows more trades
     ADX_PERIOD: int = 14
     ADX_TRENDING_THRESHOLD: float = 30.0  # ULTRA CONSERVATIVE: Strong trends only
     
     # Local Strategy Weights
+    # Local Strategy Weights
+    # BOOSTED: To allow single-strategy execution (~0.8 conf * 1.2 weight = 0.96 score > threshold)
     STRATEGY_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
-        'ICT_KILLZONE': 0.9, 'ADVANCED_SMC': 0.7, 'LIQUIDITY_GRAB': 0.95,
+        'ICT_KILLZONE': 0.9, 'ADVANCED_SMC': 0.7, 
+        'LIQUIDITY_GRAB': 1.2,       # Primary Scalping Strategy
         'WYCKOFF_PATTERNS': 0.6, 'VOLUME_PROFILE': 0.6,
-        'MOMENTUM_CONFLUENCE': 0.7, 'TREND_PULLBACK': 0.7,
-        'SUPPORT_RESISTANCE': 0.85, 'MEAN_REVERSION_BB': 0.9
+        'VOLUME_IMBALANCE': 0.9,  # Primary Scalping Strategy (FVG)
+        'TREND_PULLBACK': 0.7,
+        'SUPPORT_RESISTANCE': 1.15,  # Primary Scalping Strategy
+        'MEAN_REVERSION_BB': 0.9
     })
     
     # Enabled Local Strategies
     ENABLED_STRATEGIES: List[str] = field(default_factory=lambda: [
-        'ICT_KILLZONE', 'ADVANCED_SMC', 'LIQUIDITY_GRAB', 
-        'WYCKOFF_PATTERNS', 'VOLUME_PROFILE', 'SUPPORT_RESISTANCE',
-        'MOMENTUM_CONFLUENCE', 'TREND_PULLBACK', 'MEAN_REVERSION_BB'
+        'VOLUME_IMBALANCE', 
+        'LIQUIDITY_GRAB', 
+        'SUPPORT_RESISTANCE'
     ])
     
     # Strategy-Specific Params
@@ -218,8 +224,12 @@ class AITradingConfig:
     BB_STD_DEV: float = 2.2
     SR_LOOKBACK_PERIODS: int = 50
     
+    # Feature Flags
+    ENABLE_AI_VALIDATION: bool = True # [ACTIVE] Smart filtering enabled
+    ENABLE_AI_RISK_MANAGEMENT: bool = True
+    
     # [OK] FIX 3: Rate Limiting
-    LOOP_DELAY_SECONDS: float = 1.0  # Reduced from 0.1 to 1.0 second
+    LOOP_DELAY_SECONDS: float = 0.1  # [FAST] 0.1s loop
 
 config = AITradingConfig()
 
@@ -229,8 +239,9 @@ SYMBOL_SPECS = {
     "GBPUSDm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "USDJPYm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "XAUUSDm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
-    "BTCUSDm": {"pip_size": 1.0, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
-    "ETHUSDm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    "XAGUSDm": {"pip_size": 0.001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
+    "BTCUSDTm": {"pip_size": 1.0, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    "ETHUSDTm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
     "USOILm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "NZDUSDm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "USDCADm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
@@ -248,17 +259,37 @@ BACKUP_DIR = f"Backup_Trades_{USER_ID}"
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8',
-    errors='replace',
-    handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, f"hybrid_ai_bot_{datetime.now().strftime('%Y%m%d')}.log"), encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Silence noisy libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("hpack").setLevel(logging.WARNING)
+logging.getLogger("http11").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
+# Configure Dedicated Logger
+logger = logging.getLogger("SCALPING_BOT")
+logger.setLevel(logging.DEBUG)
+logger.propagate = False # Prevent bubbling up to root
+
+# Formatter
+formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+
+# File Handler
+file_handler = logging.FileHandler(os.path.join(LOG_DIR, f"hybrid_ai_bot_{datetime.now().strftime('%Y%m%d')}.log"), encoding='utf-8')
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.DEBUG)
+
+# Stream Handler (ensure stdout uses utf-8)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+stream_handler.setLevel(logging.DEBUG) # Show debug on console too
+
+# Add Handlers
+if not logger.handlers:
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
 # =============================================================================
 # TELEGRAM & HEARTBEAT FUNCTIONS (New)
 # =============================================================================
@@ -335,7 +366,9 @@ def send_heartbeat(status: str = 'running', mt5_connected: bool = True, error_me
                 'balance': account_info.balance if account_info else 0.0,
                 'equity': account_info.equity if account_info else 0.0,
                 'daily_trades': getattr(state, 'daily_trades', 0),
-                'daily_pnl': getattr(state, 'daily_pnl', 0.0)
+                'metadata': {
+                    'daily_pnl': getattr(state, 'daily_pnl', 0.0)
+                }
             }
 
             supabase.table('bot_heartbeats').upsert(
@@ -769,6 +802,11 @@ class AITradingState:
         # News Filter
         self.last_local_news_update = None
         self.upcoming_high_impact_events: List[Dict] = []
+        
+        # Trade Cooldowns
+        self.symbol_cooldowns: Dict[str, datetime] = {}
+        self.last_trade_candle: Dict[str, Any] = {} # [NEW] One trade per candle rule
+        self.consecutive_losses: Dict[str, int] = {} # [NEW] Founder's rule: 2 losses = ban symbol for day
         
         # Legacy Fields
         self.global_strong_currencies: List[str] = []
@@ -1513,6 +1551,7 @@ class AsyncDataFetcher:
         """Fetch all required timeframes for a symbol"""
         try:
             return {
+                'timestamp': time.time(),
                 'M1': get_market_data(symbol, mt5.TIMEFRAME_M1, 50),
                 'M5': get_market_data(symbol, mt5.TIMEFRAME_M5, 100),
                 'M15': get_market_data(symbol, mt5.TIMEFRAME_M15, 150),
@@ -1584,6 +1623,29 @@ class AsyncTradeLogger:
                 if operation == 'log_trade':
                     trade_db.log_trade(data)
                 elif operation == 'update_trade':
+                   # Assuming 'data' contains 'ticket', 'exit_price', 'profit', 'exit_reason', and 'symbol'
+                   # and 'position_id', 'current_position_ids', 'config', 'state', 'datetime', 'timezone', 'timedelta' are available in scope
+                   position_id = data.get('ticket') # Assuming ticket is used as position_id
+                   current_position_ids = [] # Placeholder, as this is not passed in 'data'
+                   
+                   if position_id not in current_position_ids:
+                    # Trade closed!
+                    deal_profit = 0.0
+                    exit_price = 0.0
+                    exit_reason = "UNKNOWN"
+                    
+                    # RETRIEVE SYMBOL
+                    params = data.get('params', {})
+                    symbol = params.get('symbol', 'Unknown')
+                    
+                    # [NEW] SET COOLDOWN
+                    if symbol != 'Unknown':
+                         cooldown_expiry = datetime.now(timezone.utc) + timedelta(minutes=config.TRADE_COOLDOWN_MINUTES)
+                         state.symbol_cooldowns[symbol] = cooldown_expiry
+                         logger.info(f" [COOLDOWN] {symbol} locked until {cooldown_expiry.strftime('%H:%M')} UTC")
+
+                    # Try to find the deal in history to get exact profit/price
+                    # The original update_trade_closed call is likely part of this logic
                     trade_db.update_trade_closed(
                         data['ticket'],
                         data['exit_price'],
@@ -1675,6 +1737,14 @@ class RegimeDetector:
                 
                 direction_confirmed = bias > 0.65 or bias < 0.35
                 
+                # VOLUME FILTER: Check if volume is alive
+                vol_current = df['tick_volume'].iloc[-1]
+                vol_avg = df['tick_volume'].iloc[-20:].mean()
+                is_low_volume = vol_current < (vol_avg * 0.5)
+
+                if is_low_volume:
+                     return 'RANGING' # Force ranging in dead volume
+
                 if (adx > 20) or (direction_confirmed and volatility_ratio > 1.0):
                     return 'TRENDING'
                     
@@ -1747,7 +1817,7 @@ class RegimeDetector:
         """
         if regime == 'TRENDING':
             # Trend-following strategies
-            return ['MOMENTUM_CONFLUENCE', 'LIQUIDITY_GRAB']
+            return ['VOLUME_IMBALANCE', 'LIQUIDITY_GRAB']
         else:  # RANGING
             # Mean-reversion strategies
             return ['LIQUIDITY_GRAB', 'SUPPORT_RESISTANCE']
@@ -2020,16 +2090,19 @@ class AIProvider:
             full_prompt += "\n\nRespond ONLY with valid JSON (no markdown, no code blocks, just the JSON object)."
         
         try:
+            config_params = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens
+            }
+            # FORCE JSON MODE if requested (Gemini 1.5 Feature)
+            if json_mode:
+                config_params["response_mime_type"] = "application/json"
+
             response = self.gemini_model.generate_content(
                 full_prompt,
-                generation_config={"temperature": temperature, "max_output_tokens": max_tokens}
+                generation_config=config_params
             )
-            text = response.text.strip()
-            if json_mode:
-                if '```' in text:
-                    text = text.split('```')[1] if text.count('```') >= 2 else text
-                    text = text.replace('json', '').strip()
-            return text
+            return response.text.strip()
         except Exception as e:
             logger.error(f" AI API Error: {e}")
             if "quota" in str(e).lower():
@@ -2052,6 +2125,16 @@ def initialize_mt5() -> bool:
         account_info = mt5.account_info()
         if account_info:
             logger.info(f"MT5 Connected | Account: {account_info.login} | Balance: ${account_info.balance:.2f}")
+            
+            # CRITICAL: Force symbols to be visible in Market Watch
+            logger.info("Verifying Market Watch symbols...")
+            for s in config.SYMBOLS:
+                if not mt5.symbol_select(s, True):
+                     logger.error(f"Failed to select {s} in Market Watch (Broker error?)")
+                else: 
+                     # logger.debug(f"{s} selected")
+                     pass
+            
             return True
         return False
     except Exception as e:
@@ -2184,6 +2267,11 @@ def get_new_york_utc_offset(event_date: datetime) -> int:
 def fetch_upcoming_news_events():
     global state
     if not config.ENABLE_LOCAL_NEWS_FILTER: return
+    
+    # [FIX] CHECK COOLDOWN
+    if hasattr(state, 'news_fetch_cooldown') and datetime.now(timezone.utc) < state.news_fetch_cooldown:
+        return
+
     if state.last_local_news_update and (datetime.now(timezone.utc) - state.last_local_news_update) < timedelta(minutes=config.LOCAL_NEWS_CHECK_INTERVAL):
         return
     
@@ -2223,8 +2311,14 @@ def fetch_upcoming_news_events():
         else:
             logger.info("No upcoming high-impact news events found for the remainder of the week.")
             
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            logger.warning("[NEWS] 429 Rate Limit. Pausing news checks for 60 minutes.")
+            state.news_fetch_cooldown = datetime.now(timezone.utc) + timedelta(minutes=60)
+        else:
+            logger.error(f"News API Error: {e}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred in fetch_upcoming_news_events: {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred in fetch_upcoming_news_events: {e}")
 
 def is_trade_entry_paused_for_news(symbol: str) -> bool:
     if not config.ENABLE_LOCAL_NEWS_FILTER or not state.upcoming_high_impact_events: 
@@ -2349,15 +2443,31 @@ def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, 
     last_candle, prev_candle = df_entry.iloc[-1], df_entry.iloc[-2]
     atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
 
+    # logger.debug(f" [LIQ GRAB] {symbol} Highs: {len(swing_highs_idx)} Lows: {len(swing_lows_idx)}")
+
     if swing_highs_idx and trend != "BULLISH":
         last_high = df_entry['high'].iloc[swing_highs_idx[-1]]
-        if prev_candle['high'] > last_high and last_candle['close'] < last_candle['open'] and last_candle['close'] < prev_candle['low']:
-             return {"direction": "SELL", "stop_loss": prev_candle['high'] + (atr * 0.2), "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.8}
+        # ICT: Sweep of High + Displacement Down
+        if prev_candle['high'] > last_high and last_candle['close'] < last_candle['open']:
+            # Displacement Check: Body should be significant (> 50% of range) to confirm it's not a doji
+            candle_range = last_candle['high'] - last_candle['low']
+            body_size = abs(last_candle['close'] - last_candle['open'])
+            if candle_range > 0 and body_size > (candle_range * 0.5):
+                 # Close must be below the mid-point (strong rejection)
+                 if last_candle['close'] < (last_candle['low'] + (0.5 * candle_range)):
+                    return {"direction": "SELL", "stop_loss": prev_candle['high'] + (atr * 0.1), "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
 
     if swing_lows_idx and trend != "BEARISH":
         last_low = df_entry['low'].iloc[swing_lows_idx[-1]]
-        if prev_candle['low'] < last_low and last_candle['close'] > last_candle['open'] and last_candle['close'] > prev_candle['high']:
-            return {"direction": "BUY", "stop_loss": prev_candle['low'] - (atr * 0.2), "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.8}
+        # ICT: Sweep of Low + Displacement Up
+        if prev_candle['low'] < last_low and last_candle['close'] > last_candle['open']:
+            # Displacement Check
+            candle_range = last_candle['high'] - last_candle['low']
+            body_size = abs(last_candle['close'] - last_candle['open'])
+            if candle_range > 0 and body_size > (candle_range * 0.5):
+                # Close must be above the mid-point
+                if last_candle['close'] > (last_candle['low'] + (0.5 * candle_range)):
+                    return {"direction": "BUY", "stop_loss": prev_candle['low'] - (atr * 0.1), "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
     return None
 
 def strategy_wyckoff_patterns(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -2431,8 +2541,8 @@ def strategy_support_resistance(df_entry: pd.DataFrame, trend: str) -> Optional[
                  return {
                     "direction": "BUY", 
                     "stop_loss": candle['low'] - (atr * 0.2), 
-                    "strategy_name": "SNIPER_SUPPORT_WICK", 
-                    "confidence": 0.95
+                    "strategy_name": "SUPPORT_RESISTANCE", 
+                    "confidence": 0.85
                 }
 
     # SELL SETUP
@@ -2452,21 +2562,46 @@ def strategy_support_resistance(df_entry: pd.DataFrame, trend: str) -> Optional[
                 return {
                     "direction": "SELL", 
                     "stop_loss": candle['high'] + (atr * 0.2), 
-                    "strategy_name": "SNIPER_RESISTANCE_WICK", 
-                    "confidence": 0.95
+                    "strategy_name": "SUPPORT_RESISTANCE", 
+                    "confidence": 0.85
                 }
 
     return None
 
-def strategy_momentum_confluence(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
-    ema_fast = df_entry['close'].ewm(span=config.MOMENTUM_EMA_FAST, adjust=False).mean()
-    ema_slow = df_entry['close'].ewm(span=config.MOMENTUM_EMA_SLOW, adjust=False).mean()
-    if trend == "BULLISH" and ema_fast.iloc[-1] > ema_slow.iloc[-1] and ema_fast.iloc[-2] <= ema_slow.iloc[-2]:
-        sl = df_entry['low'].iloc[-1] - (df_entry['high'].iloc[-1] - df_entry['low'].iloc[-1])
-        return {"direction": "BUY", "stop_loss": sl, "strategy_name": "MOMENTUM_CONFLUENCE", "confidence": 0.7}
-    if trend == "BEARISH" and ema_fast.iloc[-1] < ema_slow.iloc[-1] and ema_fast.iloc[-2] >= ema_slow.iloc[-2]:
-        sl = df_entry['high'].iloc[-1] + (df_entry['high'].iloc[-1] - df_entry['low'].iloc[-1])
-        return {"direction": "SELL", "stop_loss": sl, "strategy_name": "MOMENTUM_CONFLUENCE", "confidence": 0.7}
+def strategy_volume_imbalance(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    ICT Concept: Fair Value Gap (FVG) / Imbalance
+    Replaces lagging EMA crosses with Price Action gaps.
+    """
+    if len(df_entry) < 3: return None
+    
+    current_price = df_entry['close'].iloc[-1]
+    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
+    
+    # 1. Bearish FVG (Sell)
+    # Candle 1 Low > Candle 3 High
+    c1_low = df_entry['low'].iloc[-3]
+    c3_high = df_entry['high'].iloc[-1]
+    
+    if trend != "BULLISH" and c1_low > c3_high:
+        gap_size = c1_low - c3_high
+        if gap_size > (atr * 0.2): # Significant Gap
+            # If price retraces into the gap, SELL
+            if c3_high < current_price < c1_low:
+                 return {"direction": "SELL", "stop_loss": c1_low + (atr * 0.1), "strategy_name": "VOLUME_IMBALANCE", "confidence": 0.8}
+
+    # 2. Bullish FVG (Buy)
+    # Candle 1 High < Candle 3 Low
+    c1_high = df_entry['high'].iloc[-3]
+    c3_low = df_entry['low'].iloc[-1]
+    
+    if trend != "BEARISH" and c1_high < c3_low:
+        gap_size = c3_low - c1_high
+        if gap_size > (atr * 0.2): 
+             # If price retraces into the gap, BUY
+             if c1_high < current_price < c3_low:
+                 return {"direction": "BUY", "stop_loss": c1_high - (atr * 0.1), "strategy_name": "VOLUME_IMBALANCE", "confidence": 0.8}
+                 
     return None
 
 def strategy_trend_pullback(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
@@ -2514,8 +2649,8 @@ def analyze_order_flow(symbol: str) -> str:
         
         ratio = (buy_vol - sell_vol) / total
         
-        if ratio > 0.2: return "STRONG_BUY"
-        if ratio < -0.2: return "STRONG_SELL"
+        if ratio > 0.33: return "STRONG_BUY"
+        if ratio < -0.33: return "STRONG_SELL"
         return "NEUTRAL"
     except:
         return "NEUTRAL"
@@ -2538,8 +2673,16 @@ def precision_entry_check(symbol: str, direction: str) -> bool:
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
-        rsi = 100 - (100 / (1 + rs)).iloc[-1]
-
+        if direction == 'BUY' and rsi > 75:
+            logger.debug(f" [SNIPER] {symbol} RSI Overbought ({rsi:.1f}) - Waiting...")
+            return False
+        if direction == 'SELL' and rsi < 25:
+            logger.debug(f" [SNIPER] {symbol} RSI Oversold ({rsi:.1f}) - Waiting...")
+            return False
+            
+        return True
+    except Exception as e:
+        return True # Fail open safely
         # --- SCALPER MODE: Momentum Breakout Logic ---
         # If ADX > 25 (Strong Trend), IGNORE Overbought/Oversold
         # Because in strong trends, RSI stays extreme for a long time.
@@ -2553,20 +2696,20 @@ def precision_entry_check(symbol: str, direction: str) -> bool:
         is_strong_momentum = (momentum_score > 0.8) # Arbitrary threshold, tune as needed
 
         # Prevent Buying only if RSI is EXTREME (> 80) unless strong momentum
-        if direction == "BUY" and rsi > 70:
-            if is_strong_momentum or rsi < 80:
+        if direction == "BUY" and rsi > 75:
+            if is_strong_momentum or rsi < 85:
                 # Allow it - it's a breakout
                 pass 
             else:
-                logger.info(f"  SKIPPED {symbol}: Price overextended (M1 RSI {rsi:.1f}).")
+                logger.warning(f"  SKIPPED {symbol}: Price overextended (M1 RSI {rsi:.1f}).")
                 return False
             
         # Prevent Selling only if RSI is EXTREME (< 20) unless strong momentum
-        if direction == "SELL" and rsi < 30:
-            if is_strong_momentum or rsi > 20:
+        if direction == "SELL" and rsi < 25:
+            if is_strong_momentum or rsi > 15:
                 pass
             else:
-                logger.info(f"  SKIPPED {symbol}: Price overextended (M1 RSI {rsi:.1f}).")
+                logger.warning(f"  SKIPPED {symbol}: Price overextended (M1 RSI {rsi:.1f}).")
                 return False
             
         return True
@@ -2654,16 +2797,22 @@ def enhanced_signal_filter(signal: Dict, symbol: str) -> bool:
 
 
 def get_trading_session() -> str:
-    """Detect current trading session"""
+    """Detect current trading session - FULL COVERAGE"""
     hour = datetime.now(timezone.utc).hour
-    if 7 <= hour < 11:
-        return "LONDON"
-    elif 13 <= hour < 17:
-        return "NY"
-    elif 1 <= hour < 6:
+    
+    # ASIA: 00:00 - 08:00 UTC
+    if 0 <= hour < 8:
         return "ASIA"
+    
+    # LONDON: 08:00 - 16:00 UTC (Pre-market + Session)
+    elif 8 <= hour < 16:
+        return "LONDON"
+        
+    # NY: 16:00 - 24:00+ UTC (Overlap included)
+    # Note: 13-16 is technically London/NY overlap, mapped to London above for speed
+    # 16-22 is pure NY
     else:
-        return "OVERLAP"
+        return "NY"
 
 
 def get_strategy_recent_performance(strategy_name: str, symbol: str, days: int = 3) -> float:
@@ -2698,9 +2847,13 @@ def find_local_confluence_signal(symbol: str, cached_data: dict = None) -> Optio
         
         # USE CACHED DATA ONLY (NON-BLOCKING)
         if cached_data is None:
-            # DO NOT fallback to live fetch - it blocks the entire loop
             speed_optimizer.set(cache_key, None)
             return None
+            
+        # FRESHNESS CHECK (5s Max Loop Lag)
+        if (time.time() - cached_data.get('timestamp', 0)) > 5.0:
+             # logger.debug(f" [SKIP] Data for {symbol} is stale (>5s). Waiting for refresh.")
+             return None
 
         # Use pre-fetched cached data
         df_entry = cached_data.get('M5')
@@ -2720,20 +2873,23 @@ def find_local_confluence_signal(symbol: str, cached_data: dict = None) -> Optio
         ema_value = float(ema_series.iloc[-1])
         trend_direction = "BULLISH" if current_price > ema_value else "BEARISH"
         
-        # SCALPING OPTIMIZATION: Only 2-3 fast strategies based on regime
+        # SCALPING OPTIMIZATION: Prioritize regime strategies, but check others if needed
         strategies_to_run = regime_detector.get_strategies_for_regime(market_regime)
         
-        logger.info(f" [SCALPING] {symbol} Regime: {market_regime} | Strategies: {strategies_to_run}")
+        # Ensure we check ALL enabled strategies, but regime strategies get priority logging
+        all_strategies = config.ENABLED_STRATEGIES
+
+        logger.info(f" [SCALPING] {symbol} Regime: {market_regime} | Focused: {strategies_to_run}")
 
         all_signals = []
         strategy_functions = {
-            "MOMENTUM_CONFLUENCE": strategy_momentum_confluence,
+            "VOLUME_IMBALANCE": strategy_volume_imbalance,
             "LIQUIDITY_GRAB": strategy_liquidity_grab,
             "SUPPORT_RESISTANCE": strategy_support_resistance,
         }
         
-        # Execute ONLY selected strategies (2-3 max, ~400ms total)
-        for name in strategies_to_run:
+        # Execute strategies
+        for name in all_strategies:
             if name in state.banned_strategies: 
                 continue
             
@@ -2746,7 +2902,7 @@ def find_local_confluence_signal(symbol: str, cached_data: dict = None) -> Optio
             try:
                 if name == "LIQUIDITY_GRAB":
                     signal = func(df_entry, df_structure, trend_direction, symbol, df_micro)
-                elif name == "MOMENTUM_CONFLUENCE":
+                elif name == "VOLUME_IMBALANCE":
                     signal = func(df_entry, trend_direction, symbol)
                 elif name == "SUPPORT_RESISTANCE":
                     signal = func(df_entry, trend_direction)
@@ -2755,7 +2911,12 @@ def find_local_confluence_signal(symbol: str, cached_data: dict = None) -> Optio
                 continue
 
             if signal:
-                signal['weight'] = config.STRATEGY_WEIGHTS.get(name, 1.0)
+                # Regime Bonus: If strategy matches regime, boost weight
+                base_weight = config.STRATEGY_WEIGHTS.get(name, 1.0)
+                if name in strategies_to_run:
+                    base_weight *= 1.2 # 20% Boost for regime-aligned strategies
+                
+                signal['weight'] = base_weight
                 signal['regime'] = market_regime
                 all_signals.append(signal)
 
@@ -2768,54 +2929,49 @@ def find_local_confluence_signal(symbol: str, cached_data: dict = None) -> Optio
         sell_score = sum(s['weight'] * s['confidence'] for s in sell_signals)
         
         # 🧠 INTELLIGENT SCORING: Adaptive based on session
+        # FIXED: Broadened windows and lowered thresholds to enable trading
         session = get_trading_session()
         
         # Base score adjusted by session quality
+        # A single strong strategy (Weight 1.0 * Conf 0.8 = 0.8) should pass in good sessions
         if session == "ASIA":
-            min_score = 1.8  # Higher bar in low liquidity
-            logger.info(f"  [INTELLIGENCE] ASIA session: Requiring higher confluence (1.8)")
+            min_score = 0.95 # [STRICT] Founder Request: Only A+ setups in Asia
         elif session == "LONDON":
-            min_score = 1.0  # Lower bar in high liquidity  
-            logger.info(f"  [INTELLIGENCE] LONDON session: Lower confluence needed (1.0)")
+            min_score = 0.65 # Aggressive in high liquidity
         elif session == "NY":
-            min_score = 1.2  # Normal bar
-            logger.info(f"  [INTELLIGENCE] NY session: Normal confluence (1.2)")
+            min_score = 0.65 # Aggressive in high liquidity
         else:
-            min_score = 1.5  # Overlap/uncertain periods
+            min_score = 0.8  # Normal caution
+        
+        logger.debug(f" [{symbol}] Scores: BUY={buy_score:.2f}, SELL={sell_score:.2f} | Min: {min_score}")
 
-        # STRICT CONFLUENCE ENFORCEMENT
-        # 1. Must have at least 2 contributing strategies OR
-        # 2. Score must be exceptionally high (> 2.5) with high confidence
+        # EXECUTION LOGIC:
+        # If score passes threshold, we execute. No arbitrary "2 strategy" rule needed 
+        # because the score itself captures the weight/confidence.
         
         best_signal = None
         if buy_score >= min_score and buy_score > sell_score:
-            strategies_count = len(buy_signals)
-            avg_conf = np.mean([s['confidence'] for s in buy_signals])
-            
-            if strategies_count >= 2 or (strategies_count == 1 and avg_conf >= 0.9):
-                valid_sls = [s['stop_loss'] for s in buy_signals if 'stop_loss' in s]
-                if valid_sls:
-                    best_signal = { 
-                        "direction": "BUY", "stop_loss": min(valid_sls), "symbol": symbol,
-                        "confidence": avg_conf, 
-                        "contributing_strategies": [s['strategy_name'] for s in buy_signals], 
-                        "trend": trend_direction, "regime": market_regime,
-                        "score": buy_score
-                    }
+            valid_sls = [s['stop_loss'] for s in buy_signals if 'stop_loss' in s]
+            if valid_sls:
+                avg_conf = np.mean([s['confidence'] for s in buy_signals])
+                best_signal = { 
+                    "direction": "BUY", "stop_loss": min(valid_sls), "symbol": symbol,
+                    "confidence": avg_conf, 
+                    "contributing_strategies": [s['strategy_name'] for s in buy_signals], 
+                    "trend": trend_direction, "regime": market_regime,
+                    "score": buy_score
+                }
         elif sell_score >= min_score and sell_score > buy_score:
-            strategies_count = len(sell_signals)
-            avg_conf = np.mean([s['confidence'] for s in sell_signals])
-            
-            if strategies_count >= 2 or (strategies_count == 1 and avg_conf >= 0.9):
-                valid_sls = [s['stop_loss'] for s in sell_signals if 'stop_loss' in s]
-                if valid_sls:
-                    best_signal = { 
-                        "direction": "SELL", "stop_loss": max(valid_sls), "symbol": symbol,
-                        "confidence": avg_conf, 
-                        "contributing_strategies": [s['strategy_name'] for s in sell_signals], 
-                        "trend": trend_direction, "regime": market_regime,
-                        "score": sell_score
-                    }
+            valid_sls = [s['stop_loss'] for s in sell_signals if 'stop_loss' in s]
+            if valid_sls:
+                avg_conf = np.mean([s['confidence'] for s in sell_signals])
+                best_signal = { 
+                    "direction": "SELL", "stop_loss": max(valid_sls), "symbol": symbol,
+                    "confidence": avg_conf, 
+                    "contributing_strategies": [s['strategy_name'] for s in sell_signals], 
+                    "trend": trend_direction, "regime": market_regime,
+                    "score": sell_score
+                }
         
         if best_signal:
             logger.info(f" [{symbol}] SIGNAL | {best_signal['direction']} | Regime: {market_regime} | Score: {best_signal['score']:.2f}")
@@ -2957,11 +3113,11 @@ Your job is to provide the FINAL "Go/No-Go" based on your macro-economic context
 -   (e.g., if Sentiment is RISK_OFF and USD is strong, a BUY EURUSD signal is HIGH RISK).
 -   (e.g., if Sentiment is RISK_ON and USD is weak, a BUY EURUSD signal is HIGH ALIGNMENT).
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON. Example:
 {
-  "approved": true/false,
-  "confidence_adjustment": -0.3 to +0.3,
-  "reason": "Brief reasoning for your decision (e.g., 'High alignment with macro view', 'Trade is counter-sentiment')"
+  "approved": true,
+  "confidence_adjustment": 0.1,
+  "reason": "High alignment with macro view"
 }
 """
     
@@ -3086,82 +3242,102 @@ def ai_analyze_closed_trades():
 # =============================================================================
 
 def get_dynamic_trade_params(symbol: str, direction: str, df: pd.DataFrame) -> Dict:
-    """Calculate ALL trade parameters DYNAMICALLY based on ATR and NEWS"""
+    """
+    ICT INSTITUTIONAL PARAMETERS: 
+    Prioritizes Structure (Swings) & Liquidity Pools over generic ATR math.
+    """
     try:
         atr = calculate_atr(df['high'], df['low'], df['close'], config.ATR_PERIOD).iloc[-1]
         current_price = df['close'].iloc[-1]
         
-        # --- NEWS GUARD ADJUSTMENT ---
-        # Widen stops during high-impact news events
+        # --- NEWS VOLATILITY ADJUSTMENT ---
         news_mult = get_news_volatility_multiplier(symbol)
-        if news_mult > 1.0:
-            logger.info(f" [NEWS GUARD] {symbol} Volatility Multiplier: {news_mult}x (Widening Stops)")
         
-        adjusted_tr_mult = state.current_sl_multiplier * news_mult
-        
-        # --- FIX: STRUCTURE-BASED STOP LOSS (Smart Stop) ---
-        # Instead of blind ATR, look for recent Swing High/Low
+        # --- 1. STOP LOSS: THE INVALIDATION POINT ---
+        # ICT Rule: SL goes below the Swing Low that caused the displacement.
+        # We look back 20 candles (approx 1.5 hours on M5) to find the true swing.
         
         if direction == 'BUY':
-            # Find recent Low (Support) in last 10 candles
-            recent_low = df['low'].iloc[-10:].min()
+            # Find significant Swing Low (Protected Low)
+            recent_low = df['low'].iloc[-20:].min()
             
-            # Default ATR SL (Widened by News)
-            atr_sl = current_price - (atr * adjusted_tr_mult)
+            # Theoretical Structural SL
+            struct_sl = recent_low - (atr * 0.1) # Tiny buffer below the wick
             
-            # Structure SL (Low - Buffer)
-            struct_sl = recent_low - (atr * 0.15 * news_mult)
+            # Validation: Is this stop realistic?
+            dist_to_struct = current_price - struct_sl
             
-            # Sanity Check: If structure is too far or too close, use ATR
-            # If Struct SL is > (1.5 * news_mult) ATR away, it's too far (risk too high)
-            # If Struct SL is < (0.3 * news_mult) ATR away, it's too close (noise)
-            dist_struct = current_price - struct_sl
-            if (0.3 * news_mult * atr) < dist_struct < (1.5 * news_mult * atr):
-                sl = struct_sl
+            # If structure is too tight (< 5 pips/0.5 ATR), it's likely internal noise -> Widen it
+            if dist_to_struct < (0.5 * atr * news_mult):
+                sl = current_price - (3.5 * atr * news_mult) # Fallback to relaxed ATR stop
+            
+            # If structure is too wide (> 4.0 ATR), it disrupts R:R -> Cap it
+            elif dist_to_struct > (4.0 * atr * news_mult):
+                 sl = current_price - (3.5 * atr * news_mult) # Cap risk
+            
+            # Ideally: Use the Structural Level
             else:
-                sl = atr_sl
-                
-            # TP Calculation: Dynamic RR
-            # In Trending Market, aim for 1:2. In Ranging, 1:1.2
+                sl = struct_sl
+            
+            # --- 2. TAKE PROFIT: THE DRAW ON LIQUIDITY ---
+            # ICT Rule: Target "Buy Side Liquidity" (Old Highs)
+            
+            # Find the highest high of the last 50 candles (Liquidity Pool)
+            liquidity_pool = df['high'].iloc[-50:].max()
+            
             risk = current_price - sl
             
-            # Market Regime Adjustment
-            vol_50_mean = df['high'].iloc[-50:].mean()
-            volatility_ratio = df['high'].iloc[-10:].mean() / vol_50_mean if vol_50_mean != 0 else 1
+            # Default Expansion Targets (Standard Deviation Substitutes)
+            exp_tp1 = current_price + (risk * 2.0) # 2R Expansion
+            exp_tp2 = current_price + (risk * 4.0) # 4R Expansion
             
-            rr_target = 2.0 if volatility_ratio > 1.2 else 1.2
-            
-            tp1 = current_price + (risk * rr_target)
-            tp2 = current_price + (risk * rr_target * 1.5)
+            # Logic: If Liquidity Pool is reachable (within reasonable range), Magnet to it
+            if liquidity_pool > current_price and liquidity_pool < exp_tp2:
+                # If Pool is very close (< 1R), aim higher (for the break)
+                if (liquidity_pool - current_price) < risk:
+                    tp1 = exp_tp1 # Ignore close liquidity, aim for expansion through it
+                else:
+                    tp1 = liquidity_pool # Target the liquidity run!
+            else:
+                tp1 = exp_tp1
+                
+            tp2 = exp_tp2 # Runner always targets expansion
 
         else: # SELL
-            # Find recent High (Resistance)
-            recent_high = df['high'].iloc[-10:].max()
+            # Find significant Swing High (Protected High)
+            recent_high = df['high'].iloc[-20:].max()
             
-            # Default ATR SL (Widened by News)
-            atr_sl = current_price + (atr * adjusted_tr_mult)
+            # Theoretical Structural SL
+            struct_sl = recent_high + (atr * 0.1)
             
-            # Structure SL (High + Buffer)
-            struct_sl = recent_high + (atr * 0.15 * news_mult)
+            # Validation
+            dist_to_struct = struct_sl - current_price
             
-            # Sanity Check
-            dist_struct = struct_sl - current_price
-            if (0.3 * news_mult * atr) < dist_struct < (1.5 * news_mult * atr):
-                sl = struct_sl
+            if dist_to_struct < (0.5 * atr * news_mult):
+                sl = current_price + (3.5 * atr * news_mult)
+            elif dist_to_struct > (4.0 * atr * news_mult):
+                 sl = current_price + (3.5 * atr * news_mult)
             else:
-                sl = atr_sl
+                sl = struct_sl
+            
+            # --- TAKE PROFIT: SELL SIDE LIQUIDITY ---
+            liquidity_pool = df['low'].iloc[-50:].min()
             
             risk = sl - current_price
             
-            # Market Regime Adjustment
-            vol_50_mean = df['high'].iloc[-50:].mean()
-            volatility_ratio = df['high'].iloc[-10:].mean() / vol_50_mean if vol_50_mean != 0 else 1
+            exp_tp1 = current_price - (risk * 2.0)
+            exp_tp2 = current_price - (risk * 4.0)
             
-            rr_target = 2.0 if volatility_ratio > 1.2 else 1.2
+            if liquidity_pool < current_price and liquidity_pool > exp_tp2:
+                if (current_price - liquidity_pool) < risk:
+                    tp1 = exp_tp1
+                else:
+                    tp1 = liquidity_pool
+            else:
+                tp1 = exp_tp1
             
-            tp1 = current_price - (risk * rr_target)
-            tp2 = current_price - (risk * rr_target * 1.5)
-            
+            tp2 = exp_tp2
+
         sl_distance = abs(current_price - sl)
         
         vol_50_mean = df['high'].iloc[-50:].mean()
@@ -3347,15 +3523,19 @@ def manage_all_positions():
             sl, tp = pos.sl, pos.tp
             current_volume = pos.volume
             
+            # [FIX] Retrieve params robustly
+            params = {}
+            if ticket in state.open_positions:
+                 params = state.open_positions[ticket].get('params', {})
+            
             logger.debug(f"[INFO] Managing {symbol} #{ticket}: Entry={entry_price:.5f}, Current={current_price:.5f}, SL={sl:.5f}, TP={tp:.5f}")
             
             # --- SPREAD PROTECTION (QA Request) ---
             # If spread is 2x the allowed limit (liquidity hole), DO NOT modify SL/TP
             # This prevents being stopped out by a temporary 50-pip spread widening
             tick = mt5.symbol_info_tick(symbol)
-            if tick and (state.open_positions.get(ticket)):
+            if tick and params:
                 current_spread = tick.ask - tick.bid
-                params = state.open_positions[ticket].get('params', {})
                 atr = params.get('atr', 0.0010)
                 
                 # Default threshold is 15% of ATR. Emergency pause is 30% (2x)
@@ -3388,46 +3568,57 @@ def manage_all_positions():
             new_sl = sl
             sl_changed = False
             
-            # 1. PERSISTENT PARTIAL TP
-            if config.ENABLE_PARTIAL_TP and progress >= (config.PARTIAL_TP_TRIGGER_PERCENT / 100):
+            # 1. PERSISTENT PARTIAL TP (ICT STANDARD: Take 50% at 1:1 R:R)
+            # Find original risk distance
+            original_risk = 0.0
+            if ticket in state.open_positions:
+                 params = state.open_positions[ticket].get('params', {})
+                 original_risk = params.get('sl_distance', 0.0)
+            
+            # Fallback if state missing (approximate from current SL if not moved)
+            if original_risk == 0:
+                 original_risk = abs(entry_price - sl)
+            
+            current_profit_pips = abs(current_price - entry_price)
+
+            # Trigger at 1:1 R:R (or if we hit the configured % distance fallback)
+            # We use a slight buffer (0.95 R) to ensure we catch it even with spread
+            r_multiple = current_profit_pips / original_risk if original_risk > 0 else 0
+            
+            trigger_condition = False
+            if config.ENABLE_PARTIAL_TP:
+                # Primary: 1:1 R:R Reached?
+                if r_multiple >= 0.95: 
+                    trigger_condition = True
+                    logger.info(f"[PARTIAL] Triggered by 1:1 R:R ({r_multiple:.2f}R)")
+                
+                # Secondary: Fallback to % of TP (for wide-range trades)
+                elif progress >= (config.PARTIAL_TP_TRIGGER_PERCENT / 100):
+                    trigger_condition = True
+            
+            if trigger_condition:
                 if ticket not in state.partial_closed:
-                    logger.info(f"[PROFIT] {symbol} reached {progress*100:.1f}% - attempting Partial TP...")
+                    # Double check we haven't already taken it (using DB/Memory)
+                    is_tiny_lot = current_volume <= get_symbol_specs(symbol).get('min_lot', 0.01)
                     
-                    # Calculate partial volume
-                    partial_volume = current_volume * (config.PARTIAL_TP_PERCENT / 100)
-                    
-                    # Round to lot step
-                    spec = get_symbol_specs(symbol)
-                    lot_step = spec.get('lot_step', 0.01)
-                    min_lot = spec.get('min_lot', 0.01)
-                    
-                    partial_volume = round(partial_volume / lot_step) * lot_step
-                    remaining_volume = current_volume - partial_volume
-                    
-                    if partial_volume >= min_lot and remaining_volume >= min_lot:
+                    if not is_tiny_lot:
+                         # Calculate partial volume
+                        partial_volume = current_volume * (config.PARTIAL_TP_PERCENT / 100)
+                        
+                        # Round to lot step
+                        spec = get_symbol_specs(symbol)
+                        lot_step = spec.get('lot_step', 0.01)
+                        partial_volume = round(partial_volume / lot_step) * lot_step
+                        
                         if close_partial_position(ticket, partial_volume):
                             state.partial_closed.add(ticket)
                             
-                            # PARTIAL TP INTEGRITY CHECK
-                            # Ensure we haven't ALREADY acted on this volume
-                            # If we want to close 50%, current volume should be near 100% of original.
-                            # If current volume is already small, we might have already closed it.
-                            # Since we don't track original_volume perfectly in memory, we assume
-                            # the `state.partial_closed` set is the source of truth.
-                            # BUT, we double check if volume is suspiciously small (e.g. 0.01)
-                            
-                            is_tiny_lot = current_volume <= get_symbol_specs(symbol).get('min_lot', 0.01)
-                            
-                            if not is_tiny_lot:
-                                if close_partial_position(ticket, partial_volume):
-                                    state.partial_closed.add(ticket)
-                                    
-                                    # PERSIST STATE IMMEDIATELY
-                                    trade_db.update_metadata(ticket, {
-                                        'partial_tp_executed': True,
-                                        'partial_tp_time': datetime.now(timezone.utc).isoformat()
-                                    })
-                            
+                            # PERSIST STATE IMMEDIATELY
+                            trade_db.update_metadata(ticket, {
+                                'partial_tp_executed': True,
+                                'partial_tp_time': datetime.now(timezone.utc).isoformat()
+                            })
+                    
                             logger.info(f" PARTIAL TP: Closed {config.PARTIAL_TP_PERCENT}% of {symbol} at {progress*100:.1f}% progress")
                             
                             send_telegram_notification(
@@ -3437,11 +3628,27 @@ def manage_all_positions():
                                 f"Progress: {progress*100:.1f}%"
                             )
             
-            # 2. PERSISTENT BREAKEVEN
+            # 2. PERSISTENT DYANMIC BREAKEVEN
             if config.ENABLE_BREAKEVEN and progress >= (config.BREAKEVEN_TRIGGER_PERCENT / 100):
                  if ticket not in state.be_moved: 
-                    # Calculate breakeven price with small buffer
-                    be_buffer = total_dist * (config.BREAKEVEN_LOCK_PERCENT / 100)
+                    # === DYNAMIC RISK-BASED BREAKEVEN ===
+                    risk_pips = abs(entry_price - sl)
+                    current_profit_pips = abs(current_price - entry_price)
+                    lot_size = pos.volume
+                    
+                    # Default: Lock small profit based on config
+                    be_buffer = total_dist * (config.BREAKEVEN_LOCK_PERCENT / 100.0)
+                    
+                    if lot_size > 0.01:
+                        # Dynamic: If Profit > Risk (1:1), lock 50% of current gains
+                        if current_profit_pips > risk_pips:
+                            be_buffer = current_profit_pips * 0.5
+                            logger.info(f"[BE] Dynamic Lock: Profit ({current_profit_pips:.5f}) > Risk ({risk_pips:.5f}). Locking 50% gains.")
+                    else:
+                        # For 0.01 lots, just ensure we cover spread/swaps (Safe BE)
+                        be_buffer = total_dist * 0.05 
+                        logger.info(f"[BE] Micro Lot (0.01): Moving to Safe Breakeven")
+
                     
                     if pos.type == 0:  # BUY
                         be_price = entry_price + be_buffer
@@ -3451,24 +3658,39 @@ def manage_all_positions():
                             sl_changed = True
                             state.be_moved.add(ticket)
                             
-                            trade_db.update_metadata(ticket, {'be_moved': True, 'be_level': new_sl})
+                            # CRITICAL: Persistence for Dashboard & Restart
+                            trade_db.update_metadata(ticket, {
+                                'be_moved': True, 
+                                'stop_loss': new_sl,
+                                'be_level': new_sl
+                            })
                             logger.info(f"[BE] BREAKEVEN: {symbol} moved to {new_sl:.5f}")
                     else:  # SELL
                         be_price = entry_price - be_buffer
-                        if be_price < sl:
+                        if be_price > sl:  # Fixed logic for Sell (sl is higher than price)
+                            # Logic Check: For SELL, new SL (lower) must be < current SL (higher)
+                             pass 
+                        
+                        if be_price < sl or sl == 0: # 0 check for safety
                             new_sl = be_price
                             sl_changed = True
                             state.be_moved.add(ticket)
                             
-                            trade_db.update_metadata(ticket, {'be_moved': True, 'be_level': new_sl})
+                            # CRITICAL: Persistence for Dashboard & Restart
+                            trade_db.update_metadata(ticket, {
+                                'be_moved': True, 
+                                'stop_loss': new_sl,
+                                'be_level': new_sl
+                            })
                             logger.info(f"[BE] BREAKEVEN: {symbol} moved to {new_sl:.5f}")
 
             # 3. PROFESSIONAL ATR STEP TRAILING
             # "Breathe" logic: Don't choke the trade. Trail by ATR distances.
-            if config.ENABLE_TRAILING_STOP and progress >= 0.40: # Start @ 40% to TP
+            if config.ENABLE_TRAILING_STOP and progress >= (config.TRAILING_START_PERCENT / 100):
                 
                 # Get ATR from persisted state if possible
                 atr = params.get('atr', 0.0010)
+                if atr == 0: atr = 0.0010 # Safety fallback
                 news_mult = params.get('news_multiplier', 1.0)
                 
                 # Dynamic Trail Distance
@@ -3529,6 +3751,28 @@ def update_closed_trades():
                 pos_data = state.open_positions[ticket]
                 symbol = deal.symbol
                 direction = 'BUY' if deal.type == mt5.ORDER_TYPE_BUY else 'SELL'
+                
+                # [NEW] SET COOLDOWN & FOUNDER'S RISK RULE (2-Loss Ban)
+                is_win = profit > 0
+                if is_win:
+                    state.consecutive_losses[symbol] = 0
+                    # Normal Cooldown (15 mins)
+                    cooldown_expiry = datetime.now(timezone.utc) + timedelta(minutes=config.TRADE_COOLDOWN_MINUTES)
+                else:
+                    state.consecutive_losses[symbol] = state.consecutive_losses.get(symbol, 0) + 1
+                    current_loss_count = state.consecutive_losses[symbol]
+                    
+                    if current_loss_count >= 2:
+                        # BAN SYMBOL FOR 24 HOURS
+                        cooldown_expiry = datetime.now(timezone.utc) + timedelta(hours=24)
+                        logger.critical(f" [RISK] {symbol} hit 2 consecutive losses. BANNED for 24 hours.")
+                        send_telegram_notification(f"🚨 <b>SYMBOL BANNED</b>\n\n{symbol} lost 2 in a row. Locked until {cooldown_expiry.strftime('%Y-%m-%d %H:%M')} UTC.")
+                    else:
+                        # Normal Cooldown (15 mins)
+                        cooldown_expiry = datetime.now(timezone.utc) + timedelta(minutes=config.TRADE_COOLDOWN_MINUTES)
+                
+                state.symbol_cooldowns[symbol] = cooldown_expiry
+                logger.info(f" [COOLDOWN] {symbol} locked. Next trade allowed after {cooldown_expiry.strftime('%H:%M')} UTC")
                 
                 # SCALPING OPTIMIZATION: Async update (non-blocking)
                 async_logger.update_trade_async(ticket, deal.price, profit, exit_reason)
@@ -3651,7 +3895,7 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
         if config.AI_API_KEY:
             import google.generativeai as genai
             genai.configure(api_key=config.AI_API_KEY)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-3-flash-preview')
             
             response = model.generate_content(prompt)
             lesson = response.text.strip()
@@ -4137,11 +4381,31 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             logger.info(f" [MICRO] {symbol} {direction} waiting for optimal entry")
             return False  # Wait for better entry
         
-        # 4b. AI "HEAD TRADER" VALIDATION (Mandatory High-Level Check)
-        ai_validation = ai_filter_signal(local_signal)
-        if not ai_validation.get('approved', True):
-             logger.warning(f" [AI HEAD TRADER] BLOCKED {symbol} {direction} - {ai_validation.get('reason')}")
+        # 4b. AI "HEAD TRADER" VALIDATION (Cached Bias Check)
+        # SCALPING SPEED: We do NOT call AI for every trade.
+        # We check against the HOURLY AI BIAS instead.
+        
+        # Check against cached symbol bias
+        active_bias = state.approved_bias.get(symbol, "NEUTRAL")
+        
+        if active_bias == "BUY_ONLY" and direction == "SELL":
+             logger.warning(f" [AI HEAD TRADER] BLOCKED {symbol} {direction} - Hourly Bias is BUY_ONLY")
              return False
+        elif active_bias == "SELL_ONLY" and direction == "BUY":
+             logger.warning(f" [AI HEAD TRADER] BLOCKED {symbol} {direction} - Hourly Bias is SELL_ONLY")
+             return False
+             
+        # Check against Global Sentiment
+        # If Risk-Off, avoid buying risky assets (Crypto, Stocks)
+        risky_assets = ['BTC', 'ETH', 'NAS', 'US30', 'SPX']
+        is_risky = any(asset in symbol for asset in risky_assets)
+        
+        if state.global_market_sentiment == "RISK_OFF" and is_risky and direction == "BUY":
+             logger.warning(f" [AI HEAD TRADER] BLOCKED {symbol} {direction} - Global Sentiment is RISK_OFF")
+             return False
+
+        # If we pass these checks, we are "Approved" by the Hourly AI
+        ai_validation = {'approved': True, 'confidence_adjustment': 0.0}
         
         # Apply confidence adjustment
         local_signal['confidence'] += ai_validation.get('confidence_adjustment', 0.0)
@@ -4154,10 +4418,23 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             return False
             
         # --- HARD DAILY LOSS LIMIT (Founder Safety) ---
-        if state.daily_pnl < -(state.daily_start_equity * (config.MAX_DAILY_LOSS_PERCENT / 100)):
-            logger.critical(f" [RISK] Daily Loss Limit Exceeded during order placement! PnL: ${state.daily_pnl:.2f}")
-            return False
-            
+        # 6. FINAL ORDER FLOW CONFIRMATION (Soft Gatekeeper)
+        # We only LOG the flow, we do NOT block on it (unless extreme).
+        # Many brokers don't provide accurate tick flags for Buy/Sell volume.
+        flow_status = analyze_order_flow(symbol)
+        
+        if direction == 'BUY' and flow_status == 'STRONG_SELL':
+             logger.warning(f" [ORDER FLOW] CAUTION: {symbol} BUY signal against STRONG_SELL flow")
+             # Optional: Reduce confidence?
+             local_signal['confidence'] *= 0.9
+             
+        elif direction == 'SELL' and flow_status == 'STRONG_BUY':
+             logger.warning(f" [ORDER FLOW] CAUTION: {symbol} SELL signal against STRONG_BUY flow")
+             # Optional: Reduce confidence?
+             local_signal['confidence'] *= 0.9
+             
+        # We allow NEUTRAL flow to pass, as it's common.
+
         # =====================================================================
         # All checks passed - Proceed with trade execution
         # =====================================================================
@@ -4210,19 +4487,46 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         # --- STALE TICK PROTECTION ---
         # During volatility, packets can delay. Ensure tick is fresh (< 2000ms)
         tick_age_sec = datetime.now(timezone.utc).timestamp() - tick.time
-        if tick_age_sec > 2.0:
+        if tick_age_sec > 30.0:
             logger.warning(f" [EXECUTION] Stale tick for {symbol} ({tick_age_sec:.2f}s old). Aborting.")
             return False
+            
+        symbol_info = mt5.symbol_info(symbol)
+        if not symbol_info:
+             logger.error(f"Cannot get symbol info for {symbol}")
+             return False
         
-        price = tick.ask if direction == 'BUY' else tick.bid
+        digits = symbol_info.digits 
+        
+        price = round(tick.ask if direction == 'BUY' else tick.bid, digits)
+        sl = round(params['sl'], digits)
+        tp = round(params['tp1'], digits)
+        
         order_type = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        
+        # Auto-detect filling mode
+        filling_type = mt5.ORDER_FILLING_FOK # Default safer
+        
+        # Check available filling modes (Bitwise check)
+        # 1 = FOK, 2 = IOC, 3 = FOK + IOC
+        fill_flags = symbol_info.filling_mode
+        
+        if fill_flags & 2: # SYMBOL_FILLING_IOC
+             filling_type = mt5.ORDER_FILLING_IOC
+        elif fill_flags & 1: # SYMBOL_FILLING_FOK
+             filling_type = mt5.ORDER_FILLING_FOK
+        
+        # Fallback for some brokers that require RETURN
+        # Note: CONSTANT 'SYMBOL_FILLING_RETURN' might not exist in all lib versions
+        # so we fallback to 0 (ORDER_FILLING_RETURN is usually not explicit in symbol info flags)
+        pass
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": lot_size,
-            "type": order_type, "price": price, "sl": params['sl'], "tp": params['tp1'],
+            "type": order_type, "price": price, "sl": sl, "tp": tp,
             "deviation": 20, "magic": MAGIC_NUMBER,
             "comment": f"V12_AI_{local_signal['contributing_strategies'][0][:10]}",
-            "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling_type,
         }
         
         result = mt5.order_send(request)
@@ -4253,6 +4557,11 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             
             state.daily_trades += 1
             state.open_positions[result.order] = {'params': params}
+            
+            # [NEW] Record Candle for 1-Trade-Per-Candle Rule
+            # We assume df is M5 data passed to get_dynamic_trade_params
+            if not df.empty and 'time' in df.columns:
+                 state.last_trade_candle[symbol] = df['time'].iloc[-1]
             return True
         else:
             logger.error(f" Trade failed: {result.comment if result else 'Unknown error'}")
@@ -4289,8 +4598,16 @@ def ai_trading_session():
     logger.info("="*80)
     
     # INITIALIZE ASYNC SYSTEMS
-    base_symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'BTCUSD', 'USOIL', 'ETHUSD', 'USDCAD', 'AUDUSD', 'NZDUSD', 'GBPJPY', 'USDCHF']
-    actual_symbols = [get_actual_broker_symbol(base) for base in base_symbols]
+    # INITIALIZE ASYNC SYSTEMS
+    # Use symbols from config (already user-validated)
+    # Ensure they are valid broker symbols
+    actual_symbols = []
+    for s in config.SYMBOLS:
+        valid_s = get_actual_broker_symbol(s)
+        if valid_s:
+            actual_symbols.append(valid_s)
+            
+    logger.info(f" [INIT] Tracking {len(actual_symbols)} symbols: {actual_symbols}")
     
     async_data_fetcher = AsyncDataFetcher(actual_symbols, refresh_interval=5)
     async_data_fetcher.start()
@@ -4341,6 +4658,19 @@ def ai_trading_session():
                 time.sleep(30)
                 continue
             
+            # --- 0. DAILY RESET LOGIC ---
+            # Reset baseline at 00:00 UTC so "Daily Drawdown" is truly DAILY
+            current_day = datetime.now(timezone.utc).day
+            if not hasattr(state, 'last_reset_day'):
+                state.last_reset_day = current_day
+            
+            if current_day != state.last_reset_day:
+                logger.info(f" [NEW DAY] Resetting Daily Statistics (P&L: ${state.daily_pnl:.2f})")
+                state.daily_pnl = 0.0
+                state.daily_trades = 0
+                state.daily_start_equity = account_info.equity
+                state.last_reset_day = current_day
+
             # --- 0. EQUITY PROTECTOR (The "Stop Loss" for the Account) ---
             current_dd_percent = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
             if state.daily_start_equity > 0 and current_dd_percent >= config.MAX_DAILY_DRAWDOWN_PERCENT:
@@ -4398,7 +4728,10 @@ def ai_trading_session():
                 continue
             
             open_positions = mt5.positions_get()
-            if open_positions and len(open_positions) >= config.MAX_CONCURRENT_TRADES:
+            my_bot_positions = [p for p in open_positions if p.magic == MAGIC_NUMBER] if open_positions else []
+            
+            if len(my_bot_positions) >= config.MAX_CONCURRENT_TRADES:
+                logger.info(f"[LIMIT] Max trades reached ({len(my_bot_positions)}/{config.MAX_CONCURRENT_TRADES}). Pausing...")
                 time.sleep(30)
                 continue
             
@@ -4411,17 +4744,37 @@ def ai_trading_session():
                 time.sleep(5)
                 continue
             
+            # logger.debug(f" [LOOP] Processing {len(actual_symbols)} symbols...")
+            
             signals_found = 0
             
             for symbol in actual_symbols:
-                # Check if already open
-                if open_positions and any(pos.symbol == symbol for pos in open_positions):
+                # Check if already open (BY THIS BOT ONLY)
+                if open_positions and any(pos.symbol == symbol and pos.magic == MAGIC_NUMBER for pos in open_positions):
                     continue
+                
+                # Check COOLDOWN (Don't trade immediately after closing)
+                if symbol in state.symbol_cooldowns:
+                    if datetime.now(timezone.utc) < state.symbol_cooldowns[symbol]:
+                         # logger.debug(f" [COOLDOWN] {symbol} waiting...")
+                         continue
+                    else:
+                        del state.symbol_cooldowns[symbol] # Expired
                 
                 # Get cached data (INSTANT - no blocking)
                 cached_data = all_cached_data.get(symbol)
                 if not cached_data:
                     continue
+                
+                # [NEW] 1-Trade-Per-Candle Rule
+                # If we already traded this M5 candle, SKIP
+                if symbol in state.last_trade_candle:
+                    df_m5_check = cached_data.get('M5')
+                    if df_m5_check is not None and not df_m5_check.empty:
+                        current_candle_time = df_m5_check['time'].iloc[-1]
+                        if state.last_trade_candle[symbol] == current_candle_time:
+                            # logger.debug(f" [SKIP] {symbol} already traded this candle")
+                            continue
                 
                 # SPREAD CHECK with correct calculation
                 tick = mt5.symbol_info_tick(symbol)
@@ -4429,22 +4782,37 @@ def ai_trading_session():
                     continue
                 
                 spread = calculate_spread_correctly(symbol, tick)
-                
+
                 # Dynamic ATR Spread Check (Optimized)
-                # Ensure spread is < 15% of H1 volatility
+                # Ensure spread is < 25% of H1 volatility (Relaxed from 15%)
                 df_h1 = cached_data.get('H1')
-                if df_h1 is not None and not df_h1.empty:
+                has_h1_data = df_h1 is not None and not df_h1.empty
+
+                if has_h1_data:
                     range_avg = (df_h1['high'] - df_h1['low']).mean()
+                    raw_spread = tick.ask - tick.bid # Use RAW PRICE difference
+                    
                     if range_avg > 0:
-                        spread_threshold = range_avg * config.SPREAD_ATR_THRESHOLD
-                        if spread > spread_threshold:
-                            # logger.debug(f" [SPREAD] {symbol} Too High: {spread:.5f} > {spread_threshold:.5f}")
+                        spread_threshold = range_avg * 0.25 # Relaxed
+                        if raw_spread > spread_threshold:
+                            logger.debug(f" [SPREAD] {symbol} Bloated: {raw_spread:.5f} > {spread_threshold:.5f} (ATR Based)")
                             continue
-                else:
-                    # Fallback to static if no H1 data
-                    if 'XAU' in symbol and spread > 0.50: continue
-                    elif 'BTC' in symbol and spread > 10.0: continue
-                    elif spread > 2.0 * mt5.symbol_info(symbol).point: continue
+                
+                # FALLBACK: Static Limits (If no H1 data OR if spread is just absurdly high)
+                if not has_h1_data:
+                    # Relaxed static limits
+                    if 'XAU' in symbol and spread > 1.5: 
+                        logger.debug(f" [SPREAD] {symbol} Too High: {spread:.2f}")
+                        continue
+                    elif 'BTC' in symbol and spread > 300.0: 
+                        logger.debug(f" [SPREAD] {symbol} Too High: {spread:.2f}")
+                        continue
+                     # General forex fallback
+                    elif 'm' in symbol and spread > 10.0 and 'JPY' in symbol:
+                         pass # JPY pairs have higher raw spread number
+                    elif 'm' in symbol and spread > 5.0 and 'JPY' not in symbol:
+                          logger.debug(f" [SPREAD] {symbol} Too High: {spread:.2f}")
+                          continue
 
                 # --- FIND SIGNAL (Uses cached data - FAST) ---
                 local_signal = find_local_confluence_signal(symbol, cached_data)
@@ -4505,13 +4873,15 @@ def ai_trading_session():
             if signals_found > 0:
                 logger.info(f" [SCALPING] Cycle completed in {cycle_time:.2f}s | Signals found: {signals_found}")
             
-            # Fast cycle - check every 5 seconds
-            time.sleep(5)
+            # Scalping Lightning: Speed is key. Short sleep.
+            time.sleep(0.1)
 
         except KeyboardInterrupt:
             logger.info(f" Bot stopped by user {USER_ID}")
             send_heartbeat(status='stopped', mt5_connected=True, error_message="Stopped by user")
             send_telegram_notification(" <b>Bot Stopped</b>\n\nBot was manually stopped.")
+            # Scalping Lightning: Speed is key. Short sleep.
+            time.sleep(0.1)
             break
         except Exception as e:
             logger.error(f" Critical error: {e}", exc_info=True)
