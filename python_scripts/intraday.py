@@ -125,17 +125,24 @@ class IntradayTradingConfig:
     MAX_RISK_PERCENT: float = 3.0
     
     # WIDER SL/TP FOR INTRADAY
-    SL_ATR_MULTIPLIER: float = 3.0  # Was 2.0 in scalping
-    TP1_ATR_MULTIPLIER: float = 6.0  # Was 3.0 in scalping
-    TP2_ATR_MULTIPLIER: float = 9.0  # Was 5.0 in scalping
+    SL_ATR_MULTIPLIER: float = 3.0
+    TP1_ATR_MULTIPLIER: float = 6.0
+    TP2_ATR_MULTIPLIER: float = 9.0
     
-    # Dynamic Trade Management
+    # -------------------------------------------------------------------------
+    # [UPDATED] RISK-BASED MANAGEMENT (R-MULTIPLES)
+    # Logic: Calculate Risk (Entry - SL).
+    # 1. Breakeven at 1.0R (plus buffer)
+    # 2. Trail after 1.5R (maintain 1.0R distance)
+    # -------------------------------------------------------------------------
     ENABLE_BREAKEVEN: bool = True
-    BREAKEVEN_TRIGGER_PERCENT: float = 50.0
-    BREAKEVEN_LOCK_PERCENT: float = 15.0
+    BREAKEVEN_TRIGGER_R: float = 1.0      # Trigger BE when profit >= 1.0 * Risk
+    BREAKEVEN_BUFFER_PIPS: float = 2.0    # Add small buffer to cover swaps/commissions
+    
     ENABLE_TRAILING_STOP: bool = True
-    TRAILING_START_PERCENT: float = 70.0
-    TRAILING_ATR_MULTIPLIER: float = 2.0
+    TRAILING_START_R: float = 2.0         # [LENIENT] Start trailing later (2.0R profit)
+    TRAILING_DISTANCE_R: float = 1.5      # [LENIENT] Keep wide gap (1.5R distance) to handle pullbacks
+    
     ENABLE_PARTIAL_TP: bool = True
     PARTIAL_TP_PERCENT: float = 50.0
     
@@ -240,8 +247,8 @@ class SupabaseManager:
                     'strategy_name': strategy
                 }
             }
-            # Use upsert to prevent duplicates during sync (unique constraint on ticket+user_id)
-            self.client.table('trades').upsert(trade_data, on_conflict='ticket,user_id').execute()
+            # Use upsert to prevent duplicates during sync
+            self.client.table('trades').upsert(trade_data, on_conflict='ticket').execute()
             logger.info(f"[DB] Trade {ticket} synced to dashboard")
         except Exception as e:
             logger.error(f"[DB ERROR] Trade sync failed: {e}")
@@ -275,24 +282,28 @@ class SupabaseManager:
             logger.error(f"[DB ERROR] Close update failed: {e}")
     
     def send_heartbeat(self) -> None:
-        """Corrected Heartbeat with required pid, balance, and equity"""
+        """Corrected Heartbeat with valid update logic"""
         try:
             account_info = mt5.account_info()
             heartbeat_data = {
                 'user_id': self.user_id,
                 'strategy_id': self.strategy_id,
-                'last_heartbeat': datetime.now(timezone.utc).isoformat(), # Corrected field
-                'status': 'running', # Lowercase
+                'last_heartbeat': datetime.now(timezone.utc).isoformat(),
+                'status': 'running',
                 'mt5_connected': True if account_info else False,
                 'pid': os.getpid(),
                 'balance': account_info.balance if account_info else 0,
                 'equity': account_info.equity if account_info else 0
             }
-            # Correct upsert with on_conflict
-            self.client.table('bot_heartbeats').upsert(
-                heartbeat_data, 
-                on_conflict='user_id,strategy_id'
-            ).execute()
+            
+            # Manual Upsert
+            existing = self.client.table('bot_heartbeats').select('user_id').eq('user_id', self.user_id).eq('strategy_id', self.strategy_id).execute()
+            
+            if existing.data:
+                self.client.table('bot_heartbeats').update(heartbeat_data).eq('user_id', self.user_id).eq('strategy_id', self.strategy_id).execute()
+            else:
+                self.client.table('bot_heartbeats').insert(heartbeat_data).execute()
+                
         except Exception as e:
             logger.error(f"[HEARTBEAT ERROR] {e}")
 
@@ -493,8 +504,8 @@ class IntradayTradingState:
         self.current_risk_percent: float = config.BASE_RISK_PERCENT
         self.current_sl_multiplier: float = config.SL_ATR_MULTIPLIER
         self.current_tp1_multiplier: float = config.TP1_ATR_MULTIPLIER
-        self.current_be_trigger: float = config.BREAKEVEN_TRIGGER_PERCENT
-        self.current_trailing_start: float = config.TRAILING_START_PERCENT
+        self.current_be_trigger_r: float = config.BREAKEVEN_TRIGGER_R
+        self.current_trailing_start_r: float = config.TRAILING_START_R
         
         # Trade management
         self.be_moved: set = set()
@@ -578,21 +589,7 @@ ai_provider = GeminiAIProvider(config.GEMINI_API_KEY, config.GEMINI_MODEL)
 # MT5 INITIALIZATION
 # =============================================================================
 
-def initialize_mt5() -> bool:
-    """Initialize MT5 connection"""
-    try:
-        if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
-            logger.error(f"MT5 initialization failed: {mt5.last_error()}")
-            return False
-        
-        account_info = mt5.account_info()
-        if account_info:
-            logger.info(f"[OK] MT5 Connected | Account: {account_info.login} | Balance: ${account_info.balance:.2f}")
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"MT5 init error: {e}")
-        return False
+
 
 # =============================================================================
 # MARKET DATA FUNCTIONS
@@ -847,6 +844,41 @@ def is_trade_entry_paused_for_news(symbol: str) -> bool:
     return False
 
 # =============================================================================
+# HIGHER TIMEFRAME ANALYSIS (Support/Resistance)
+# =============================================================================
+
+def get_major_support_resistance(symbol: str) -> Tuple[List[float], List[float]]:
+    """
+    Find major Support & Resistance levels on Daily Timeframe
+    Returns: (support_levels, resistance_levels)
+    """
+    try:
+        # Get Daily Data (enough to find swing points)
+        df_d1 = get_market_data(symbol, mt5.TIMEFRAME_D1, 100)
+        if df_d1 is None or len(df_d1) < 50:
+            return [], []
+            
+        # Use simple Pivot / Swing High-Low logic
+        highs, lows = identify_swing_highs_lows(df_d1, lookback=5)
+        
+        resistances = [df_d1['high'].iloc[i] for i in highs]
+        supports = [df_d1['low'].iloc[i] for i in lows]
+        
+        # Sort them and keep only the most recent/relevant ones
+        resistances = sorted(resistances)[-3:] # Top 3 highest
+        supports = sorted(supports)[:3]        # Bottom 3 lowest
+        
+        # Also include yesterday's High and Low (Classic S/R)
+        resistances.append(df_d1['high'].iloc[-2])
+        supports.append(df_d1['low'].iloc[-2])
+        
+        return supports, resistances
+
+    except Exception as e:
+        logger.error(f"Error getting S/R levels: {e}")
+        return [], []
+
+# =============================================================================
 # * INTRADAY STRATEGIES (Truncated for brevity - full implementations needed)
 # =============================================================================
 # Note: Include all strategy functions from the full intraday bot here
@@ -926,6 +958,60 @@ def find_intraday_confluence_signal(symbol: str) -> Optional[Dict[str, Any]]:
         signal = strategy_trend_following_h4(df_entry, df_structure, trend_direction, symbol, df_micro)
         
         if signal:
+            # --- NEW: HIGHER TIMEFRAME CHECKS ---
+            supports, resistances = get_major_support_resistance(symbol)
+            current_price = df_entry['close'].iloc[-1]
+            atr_d1 = calculate_atr(df_structure['high'], df_structure['low'], df_structure['close'], 14).iloc[-1]
+            min_dist = atr_d1 * 0.5 # Minimum distance required (0.5x Daily ATR)
+            
+            # Check 1: Buying into resistance?
+            if signal['direction'] == "BUY":
+                closest_resistance = min([r for r in resistances if r > current_price], default=float('inf'))
+                dist_to_res = closest_resistance - current_price
+                
+                if dist_to_res < min_dist:
+                    logger.warning(f"[HTF VETO] {symbol} BUY rejected. Too close to Daily Res: {closest_resistance:.5f} (Dist: {dist_to_res:.5f})")
+                    return None
+                    
+            # Check 2: Selling into support?
+            elif signal['direction'] == "SELL":
+                closest_support = max([s for s in supports if s < current_price], default=float('-inf'))
+                dist_to_sup = current_price - closest_support
+                
+                if dist_to_sup < min_dist:
+                    logger.warning(f"[HTF VETO] {symbol} SELL rejected. Too close to Daily Sup: {closest_support:.5f} (Dist: {dist_to_sup:.5f})")
+                    return None
+            
+            # Passed HTF Check
+        # Run primary strategy (TREND_FOLLOWING_H4)
+        signal = strategy_trend_following_h4(df_entry, df_structure, trend_direction, symbol, df_micro)
+        
+        if signal:
+            # --- NEW: HIGHER TIMEFRAME CHECKS ---
+            supports, resistances = get_major_support_resistance(symbol)
+            current_price = df_entry['close'].iloc[-1]
+            atr_d1 = calculate_atr(df_structure['high'], df_structure['low'], df_structure['close'], 14).iloc[-1]
+            min_dist = atr_d1 * 0.5 # Minimum distance required (0.5x Daily ATR)
+            
+            # Check 1: Buying into resistance?
+            if signal['direction'] == "BUY":
+                closest_resistance = min([r for r in resistances if r > current_price], default=float('inf'))
+                dist_to_res = closest_resistance - current_price
+                
+                if dist_to_res < min_dist:
+                    logger.warning(f"[HTF VETO] {symbol} BUY rejected. Too close to Daily Res: {closest_resistance:.5f} (Dist: {dist_to_res:.5f})")
+                    return None
+                    
+            # Check 2: Selling into support?
+            elif signal['direction'] == "SELL":
+                closest_support = max([s for s in supports if s < current_price], default=float('-inf'))
+                dist_to_sup = current_price - closest_support
+                
+                if dist_to_sup < min_dist:
+                    logger.warning(f"[HTF VETO] {symbol} SELL rejected. Too close to Daily Sup: {closest_support:.5f} (Dist: {dist_to_sup:.5f})")
+                    return None
+            
+            # Passed HTF Check
             signal['symbol'] = symbol
             signal['trend'] = trend_direction
             signal['regime'] = market_regime
@@ -1141,7 +1227,8 @@ def place_intraday_trade(signal: Dict, account_equity: float):
                 'symbol': symbol,
                 'direction': direction,
                 'entry_price': entry_price,
-                'stop_loss': stop_loss,
+                'initial_sl': stop_loss,    # * Store Initial SL for R-calc
+                'stop_loss': stop_loss,     # Current SL (updates)
                 'tp1': tp1,
                 'lot_size': lot_size,
                 'atr': atr,
@@ -1186,11 +1273,16 @@ def place_intraday_trade(signal: Dict, account_equity: float):
 
 def manage_intraday_positions():
     """
-    Manage open positions with comprehensive risk management
-    - Breakeven moves at 50% to TP
-    - Trailing stops at 70% to TP
-    - Partial TP at TP1
-    - Duration-based exits
+    Manage open positions using RISK-BASED Logic (R-Multiples).
+    
+    Refactored Logic:
+    1. Calculate Initial Risk (R) = abs(Entry - Initial_SL)
+    2. Breakeven: 
+       - Trigger: Current Profit >= 1.0 * R
+       - Action: Move SL to Entry + Buffer
+    3. Trailing:
+       - Trigger: Current Profit >= 1.5 * R
+       - Action: Trail SL at distance of 1.0 * R
     """
     positions = mt5.positions_get()
     if not positions:
@@ -1206,121 +1298,145 @@ def manage_intraday_positions():
         
         # Get position info from state
         if ticket not in state.open_positions:
-            logger.warning(f"[WARNING] Position {ticket} not in state - skipping management")
-            continue
+            # Try to recover rudimentary state if missing (e.g. from restart)
+            state.open_positions[ticket] = {
+                'symbol': symbol,
+                'direction': "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+                'entry_price': pos.price_open,
+                'initial_sl': pos.sl if pos.sl > 0 else (pos.price_open - 0.0050 if pos.type == mt5.POSITION_TYPE_BUY else pos.price_open + 0.0050), # Fallback estimate
+                'stop_loss': pos.sl,
+                'opened_at': datetime.now(timezone.utc),
+                'breakeven_done': False
+            }
         
         pos_info = state.open_positions[ticket]
         entry_price = pos_info['entry_price']
-        stop_loss = pos_info['stop_loss']
-        tp1 = pos_info['tp1']
+        current_sl = pos_info['stop_loss']
+        initial_sl = pos_info.get('initial_sl', current_sl) # Fallback to current if initial missing
         direction = pos_info['direction']
-        atr = pos_info.get('atr', 0.0)
         
-        # Get current price
+        # 0. GET CURRENT DATA
         tick = mt5.symbol_info_tick(symbol)
         if not tick:
             continue
         
         current_price = tick.bid if direction == "BUY" else tick.ask
+        point = mt5.symbol_info(symbol).point
         
-        # Calculate progress to TP
+        # 1. CALCULATE METRICS (in Price Distance)
         if direction == "BUY":
-            tp_distance = tp1 - entry_price
-            current_profit = current_price - entry_price
-        else:
-            tp_distance = entry_price - tp1
-            current_profit = entry_price - current_price
+            risk_dist = entry_price - initial_sl
+            current_profit_dist = current_price - entry_price
+        else: # SELL
+            risk_dist = initial_sl - entry_price
+            current_profit_dist = entry_price - current_price
+
+        # Sanity check for zero risk (prevent div/0 or logic errors)
+        if risk_dist <= 0:
+            risk_dist = point * 100 # Fallback 10 pips default
+            
+        r_multiple = current_profit_dist / risk_dist
         
-        if tp_distance <= 0:
-            continue
-        
-        progress_percent = (current_profit / tp_distance) * 100.0
-        
-        # === BREAKEVEN MANAGEMENT ===
+        # 2. === BREAKEVEN LOGIC ===
+        # Trigger: Profit >= 1.0 R (Configurable)
         if config.ENABLE_BREAKEVEN and not pos_info.get('breakeven_done', False):
-            if progress_percent >= config.BREAKEVEN_TRIGGER_PERCENT:
-                # Calculate breakeven price (entry + small profit lock)
-                lock_distance = tp_distance * (config.BREAKEVEN_LOCK_PERCENT / 100.0)
+            if r_multiple >= config.BREAKEVEN_TRIGGER_R:
+                logger.info(f"[MANAGE] {symbol} hit {r_multiple:.2f}R (> {config.BREAKEVEN_TRIGGER_R}R). Moving to Breakeven.")
+                
+                # Calculate BreakEven Price with Buffer
+                buffer_size = config.BREAKEVEN_BUFFER_PIPS * point # e.g. 2 pips * point
                 
                 if direction == "BUY":
-                    new_sl = entry_price + lock_distance
+                    new_sl = entry_price + buffer_size
+                    # Condition: New SL must be > Current SL
+                    should_update = new_sl > current_sl
                 else:
-                    new_sl = entry_price - lock_distance
+                    new_sl = entry_price - buffer_size
+                    # Condition: New SL must be < Current SL
+                    should_update = new_sl < current_sl
                 
-                # Only move if new SL is better than current
-                if (direction == "BUY" and new_sl > stop_loss) or \
-                   (direction == "SELL" and new_sl < stop_loss):
-                    
-                    logger.info(f"[BREAKEVEN] {symbol} at {progress_percent:.1f}% to TP - moving to breakeven")
-                    
+                if should_update:
                     if modify_position_sl(pos, new_sl):
                         pos_info['stop_loss'] = new_sl
                         pos_info['breakeven_done'] = True
-                        logger.info(f"[OK] Breakeven set: {symbol} | New SL: {new_sl:.5f} (locked +{lock_distance:.5f})")
-                        send_telegram_message(f" Breakeven activated: {symbol}")
+                        logger.info(f"[OK] Breakeven Set: {symbol} @ {new_sl:.5f} (Locking fees)")
+                        send_telegram_message(f"🛡️ Breakeven Secure: {symbol} (+{r_multiple:.1f}R)")
                     else:
-                        logger.warning(f"[WARNING] Failed to set breakeven for {symbol}")
-        
-        # === TRAILING STOP MANAGEMENT ===
-        if config.ENABLE_TRAILING_STOP and not pos_info.get('trailing_done', False):
-            if progress_percent >= config.TRAILING_START_PERCENT:
-                # Calculate trailing stop distance
-                trail_distance = atr * config.TRAILING_ATR_MULTIPLIER if atr > 0 else tp_distance * 0.3
+                        logger.error(f"[FAIL] Could not set Breakeven for {symbol}")
+
+        # 3. === TRAILING STOP LOGIC ===
+        # Trigger: Profit >= 1.5 R (Configurable)
+        # Type: Trail by fixed distance (e.g. 1.0 R)
+        if config.ENABLE_TRAILING_STOP:
+            if r_multiple >= config.TRAILING_START_R:
+                
+                # Desired Trail Distance = 1.0 R (gives room to breathe)
+                trail_distance = risk_dist * config.TRAILING_DISTANCE_R
                 
                 if direction == "BUY":
                     new_sl = current_price - trail_distance
-                else:
+                    should_update = new_sl > current_sl # Only move up
+                else: # SELL
                     new_sl = current_price + trail_distance
+                    should_update = new_sl < current_sl # Only move down
                 
-                # Only move if new SL is better than current
-                if (direction == "BUY" and new_sl > stop_loss) or \
-                   (direction == "SELL" and new_sl < stop_loss):
-                    
-                    logger.info(f"[TRAILING] {symbol} at {progress_percent:.1f}% to TP - activating trailing stop")
-                    
+                if should_update:
+                    # Execute Update
                     if modify_position_sl(pos, new_sl):
                         pos_info['stop_loss'] = new_sl
-                        pos_info['trailing_done'] = True
                         pos_info['trailing_active'] = True
-                        logger.info(f"[OK] Trailing stop set: {symbol} | New SL: {new_sl:.5f} (trailing by {trail_distance:.5f})")
-                        send_telegram_message(f"📈 Trailing stop activated: {symbol}")
-                    else:
-                        logger.warning(f"[WARNING] Failed to set trailing stop for {symbol}")
+                        logger.info(f"[TRAIL] {symbol} Trailing: {r_multiple:.2f}R | New SL: {new_sl:.5f} (Locked { (new_sl - entry_price)/risk_dist if direction=='BUY' else (entry_price - new_sl)/risk_dist :.1f}R)")
         
-        # === CONTINUE TRAILING (if already active) ===
-        elif pos_info.get('trailing_active', False):
-            trail_distance = atr * config.TRAILING_ATR_MULTIPLIER if atr > 0 else tp_distance * 0.3
-            
-            if direction == "BUY":
-                new_sl = current_price - trail_distance
-            else:
-                new_sl = current_price + trail_distance
-            
-            # Only update if price moved in our favor
-            if (direction == "BUY" and new_sl > stop_loss) or \
-               (direction == "SELL" and new_sl < stop_loss):
-                
-                if modify_position_sl(pos, new_sl):
-                    pos_info['stop_loss'] = new_sl
-                    logger.debug(f"[TRAILING] {symbol} SL updated: {new_sl:.5f}")
-        
-        # === DURATION-BASED EXIT ===
+        # 4. === DURATION EXIT ===
         if ticket in state.position_open_times:
             open_time = state.position_open_times[ticket]
             duration_hours = (datetime.now(timezone.utc) - open_time).total_seconds() / 3600
             
             if duration_hours >= config.MAX_POSITION_DURATION_HOURS:
-                logger.info(f"[TIME] Auto-closing {symbol} after {duration_hours:.1f} hours (max: {config.MAX_POSITION_DURATION_HOURS}h)")
+                logger.info(f"[TIME] Auto-closing {symbol} after {duration_hours:.1f} hours max duration")
                 close_position(pos)
+
+def initialize_mt5() -> bool:
+    """Initialize MT5 connection"""
+    try:
+        if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
+            logger.error(f"MT5 initialization failed: {mt5.last_error()}")
+            return False
+        
+        account_info = mt5.account_info()
+        if account_info:
+            logger.info(f"[OK] MT5 Connected | Account: {account_info.login} | Balance: ${account_info.balance:.2f}")
+            
+            # CRITICAL: Force symbols to be visible in Market Watch
+            logger.info("Verifying Market Watch symbols...")
+            for s in config.SYMBOLS:
+                if not mt5.symbol_select(s, True):
+                     logger.error(f"Failed to select {s} in Market Watch (Broker error?)")
+            
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"MT5 init error: {e}")
+        return False
+
 
 def modify_position_sl(position, new_sl: float) -> bool:
     """Modify position stop loss"""
     try:
+        # Get symbol info for digits
+        symbol_info = mt5.symbol_info(position.symbol)
+        if not symbol_info:
+             logger.error(f"Cannot get symbol info for {position.symbol}")
+             return False
+             
+        digits = symbol_info.digits
+        rounded_sl = round(new_sl, digits)
+        
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "symbol": position.symbol,
             "position": position.ticket,
-            "sl": new_sl,
+            "sl": rounded_sl,
             "tp": position.tp,
         }
         
@@ -1329,7 +1445,7 @@ def modify_position_sl(position, new_sl: float) -> bool:
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
             return True
         else:
-            logger.error(f"[ERROR] Failed to modify SL: {result.comment if result else 'No result'}")
+            logger.error(f"[ERROR] Failed to modify SL: {result.comment if result else 'No result'} ({result.retcode if result else '?'})")
             return False
             
     except Exception as e:
@@ -1440,6 +1556,7 @@ def recover_existing_positions():
                     'symbol': symbol,
                     'direction': direction,
                     'entry_price': pos.price_open,
+                    'initial_sl': pos.sl,       # * Store recovered SL as Initial
                     'stop_loss': pos.sl,
                     'tp1': pos.tp,
                     'lot_size': pos.volume,
