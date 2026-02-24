@@ -58,6 +58,8 @@ serve(async (req) => {
         .from('user_strategies')
         .update({
           is_running: false,
+          status: 'stopped',
+          bot_pid: null,
           stopped_at: new Date().toISOString(),
         })
         .eq('id', userStrategyId);
@@ -145,6 +147,12 @@ serve(async (req) => {
         timestamp: new Date().toISOString()
       }
     });
+
+    // Clear heartbeat so BotStatusSync doesn't re-mark as running
+    await serviceClient.from('bot_heartbeats')
+      .update({ status: 'stopped', pid: null })
+      .eq('user_id', user.id)
+      .eq('strategy_id', userStrategy.strategy_id);
 
     // Send EMAIL notification for bot stop
     if (profile?.email) {
