@@ -585,15 +585,40 @@ def get_user_bot_status(user_id):
         'bots': bots_status
     })
 
+@app.route('/mt5/instances', methods=['GET'])
+@require_auth
+def list_mt5_instances():
+    """List all provisioned MT5 instances and their status"""
+    instances = []
+    
+    if MT5_INSTANCES_DIR.exists():
+        for user_dir in MT5_INSTANCES_DIR.iterdir():
+            if user_dir.is_dir():
+                terminal_path = user_dir / "terminal64.exe"
+                instances.append({
+                    'folder_name': user_dir.name,
+                    'path': str(user_dir),
+                    'terminal_exists': terminal_path.exists(),
+                    'terminal_path': str(terminal_path) if terminal_path.exists() else None
+                })
+    
+    return jsonify({
+        'instances_dir': str(MT5_INSTANCES_DIR),
+        'instances_dir_exists': MT5_INSTANCES_DIR.exists(),
+        'total_instances': len(instances),
+        'instances': instances
+    })
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     logger.info("="*80)
-    logger.info(f"🚀 BOT MANAGER HTTP SERVER (Windows) - MULTI-BOT SUPPORT")
+    logger.info(f"🚀 BOT MANAGER HTTP SERVER (Windows) - MULTI-USER MT5 ISOLATION")
     logger.info(f"   Port: {port}")
     logger.info(f"   Host: 0.0.0.0 (all interfaces)")
+    logger.info(f"   MT5 Instances Dir: {MT5_INSTANCES_DIR}")
     logger.info(f"   Secret configured: {BOT_MANAGER_SECRET != 'your-secure-secret-here'}")
     logger.info(f"   Log file: bot_manager.log")
-    logger.info(f"   Multi-bot per user: ENABLED")
+    logger.info(f"   Multi-user MT5 isolation: ENABLED")
     logger.info("="*80)
     
     try:
