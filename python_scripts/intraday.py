@@ -46,12 +46,12 @@ parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID'
 parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
 parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
 parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
+parser.add_argument('--mt5-path', type=str, required=False, default=None, help='Path to user-specific MT5 terminal64.exe')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
 parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
 parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Key')
 parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
-
 
 args = parser.parse_args()
 
@@ -60,6 +60,13 @@ USER_ID = args.user_id
 STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
+MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
+
+# MAGIC NUMBER - Deterministic per user+strategy (no more hardcoded values)
+import hashlib
+MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
+print(f"[MAGIC] Intraday Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
+print(f"[MT5] Terminal path: {MT5_TERMINAL_PATH or 'default (system)'}")
 
 # Initialize Supabase client (Move this up too)
 supabase: Client = create_client(args.supabase_url, args.supabase_key)
@@ -2997,7 +3004,7 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             "sl": round(float(stop_loss), digits),
             "tp": round(float(tp1), digits),
             "deviation": 20,
-            "magic": 234001,
+            "magic": MAGIC_NUMBER,
             "comment": str(f"Intra_{signal['strategy_name']}")[:30],
         }
 
@@ -3105,7 +3112,7 @@ def manage_intraday_positions():
         symbol = pos.symbol
         
         # Skip if not our magic number
-        if hasattr(pos, 'magic') and pos.magic != 234001:
+        if hasattr(pos, 'magic') and pos.magic != MAGIC_NUMBER:
             continue
         
         # Get position info from state
@@ -3256,7 +3263,7 @@ def manage_intraday_positions():
                             "price":       current_price,
                             "position":    ticket,
                             "deviation":   20,
-                            "magic":       234001,
+                            "magic":       MAGIC_NUMBER,
                             "comment":     "PartialTP",
                             "type_filling": mt5.ORDER_FILLING_IOC,
                         }
@@ -3340,9 +3347,19 @@ def manage_intraday_positions():
                 close_position(pos)
                 
 def initialize_mt5() -> bool:
-    """Initialize MT5 connection"""
+    """Initialize MT5 connection with isolated terminal support"""
     try:
-        if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
+        # Build MT5 init kwargs - use isolated terminal if provided
+        mt5_kwargs = {
+            'login': config.MT5_LOGIN,
+            'password': config.MT5_PASSWORD,
+            'server': config.MT5_SERVER
+        }
+        if MT5_TERMINAL_PATH:
+            mt5_kwargs['path'] = MT5_TERMINAL_PATH
+            logger.info(f"Using isolated MT5 instance: {MT5_TERMINAL_PATH}")
+        
+        if not mt5.initialize(**mt5_kwargs):
             logger.error(f"MT5 initialization failed: {mt5.last_error()}")
             return False
         
@@ -3417,7 +3434,7 @@ def close_position(position):
             "position": ticket,
             "price": price,
             "deviation": 20,
-            "magic": 234001,
+            "magic": MAGIC_NUMBER,
             "comment": "Intraday_Close",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -3483,7 +3500,7 @@ def recover_existing_positions():
             symbol = pos.symbol
             
             # Track ALL positions for equity accuracy (not just our magic)
-            if hasattr(pos, 'magic') and pos.magic != 234001:
+            if hasattr(pos, 'magic') and pos.magic != MAGIC_NUMBER:
                 # External position (from manual trade or other bot)
                 ext_pnl = pos.profit
                 logger.warning(
@@ -3493,7 +3510,7 @@ def recover_existing_positions():
                 )
                 continue  # Don't manage it, just note it
 
-            if hasattr(pos, 'magic') and pos.magic == 234001:
+            if hasattr(pos, 'magic') and pos.magic == MAGIC_NUMBER:
                 # Reconstruct position info
                 direction = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
                 
@@ -3544,7 +3561,7 @@ def recover_existing_positions():
         
         # Log current exposure
         if recovered_count > 0:
-            total_exposure = sum(pos.profit for pos in positions if hasattr(pos, 'magic') and pos.magic == 234001)
+            total_exposure = sum(pos.profit for pos in positions if hasattr(pos, 'magic') and pos.magic == MAGIC_NUMBER)
             logger.info(f"[RECOVERY] Total P&L from recovered positions: ${total_exposure:.2f}")
             logger.info(f"[RECOVERY] These positions will now be managed (breakeven, trailing, session close)")
             
