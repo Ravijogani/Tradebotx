@@ -46,12 +46,12 @@ parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID'
 parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
 parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
 parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
+parser.add_argument('--mt5-path', type=str, required=False, default=None, help='Path to user-specific MT5 terminal64.exe')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
 parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
 parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Key')
 parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
-
 
 args = parser.parse_args()
 
@@ -60,6 +60,13 @@ USER_ID = args.user_id
 STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
+MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
+
+# MAGIC NUMBER - Deterministic per user+strategy (replaces hardcoded 234001)
+import hashlib
+MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
+print(f"[MAGIC] Intraday Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
+print(f"[MT5] Terminal path: {MT5_TERMINAL_PATH or 'default (system)'}")
 
 # Initialize Supabase client (Move this up too)
 supabase: Client = create_client(args.supabase_url, args.supabase_key)
