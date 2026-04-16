@@ -11,8 +11,8 @@ USAGE:
 ENVIRONMENT VARIABLES (set before running):
     SUPABASE_URL          - Your Supabase project URL
     SUPABASE_SERVICE_KEY  - Service role key (NOT anon key)
-    MT5_TEMPLATE_DIR      - Path to MT5 template (default: C:\trading-bot\MT5_Template)
-    MT5_INSTANCES_DIR     - Path to instances folder (default: C:\trading-bot\MT5_Instances)
+    MT5_TEMPLATE_DIR      - Path to MT5 template (default: C:\\trading-bot\\MT5_Template)
+    MT5_INSTANCES_DIR     - Path to instances folder (default: C:\\trading-bot\\MT5_Instances)
 
 SCHEDULE (optional):
     Use Windows Task Scheduler to run this every hour or on-demand.
