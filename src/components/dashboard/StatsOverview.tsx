@@ -16,7 +16,7 @@ export const StatsOverview = () => {
     loadStats();
 
     // Realtime subscription with debounce to prevent excessive reloads
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: ReturnType<typeof setTimeout>;
     
     const setupRealtime = async () => {
       const { data: { user } } = await supabase.auth.getUser();

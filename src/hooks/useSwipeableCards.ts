@@ -19,7 +19,7 @@ export const useSwipeableCards = ({
   const [currentX, setCurrentX] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const autoplayTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const goToCard = useCallback((index: number) => {
     if (index >= 0 && index < totalCards) {

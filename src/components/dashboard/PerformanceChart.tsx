@@ -16,7 +16,7 @@ export const PerformanceChart = () => {
     loadPerformanceData();
 
     // Debounce timer for real-time updates
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: ReturnType<typeof setTimeout>;
 
     const setupRealtime = async () => {
       const { data: { user } } = await supabase.auth.getUser();

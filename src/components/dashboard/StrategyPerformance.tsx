@@ -28,7 +28,7 @@ export const StrategyPerformance = () => {
     loadPerformances();
 
     // Debounce timer for real-time updates
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: ReturnType<typeof setTimeout>;
 
     // Real-time subscription for live performance updates with debouncing
     const channel = supabase

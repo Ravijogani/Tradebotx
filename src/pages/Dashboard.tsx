@@ -19,7 +19,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     let mounted = true;
-    let loadingTimeout: NodeJS.Timeout;
+    let loadingTimeout: ReturnType<typeof setTimeout>;
 
     const checkAuth = async () => {
       try {
