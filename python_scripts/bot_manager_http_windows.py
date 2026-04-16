@@ -267,10 +267,21 @@ def start_bot():
         script_name = config.get('script_path', 'hybrid_trading_bot_multiuser.py')
         bot_script = bot_dir / script_name
         
+        # Resolve user's isolated MT5 terminal path
+        mt5_path = get_mt5_terminal_path(user_id)
+        if not mt5_path:
+            logger.error(f"❌ No MT5 instance found for user {user_id}")
+            return jsonify({
+                'error': f'No MT5 instance provisioned for this user. '
+                         f'Admin needs to create a portable MT5 installation at '
+                         f'{MT5_INSTANCES_DIR / user_id[:8]}/terminal64.exe'
+            }), 500
+        
         logger.info(f"Bot directory: {bot_dir}")
         logger.info(f"Script from config: {script_name}")
         logger.info(f"Bot script path: {bot_script}")
         logger.info(f"Bot script exists: {bot_script.exists()}")
+        logger.info(f"MT5 terminal path: {mt5_path}")
         logger.info(f"Python executable: {sys.executable}")
         
         if not bot_script.exists():
@@ -291,6 +302,7 @@ def start_bot():
             '--mt5-login', str(config.get('mt5_account')),
             '--mt5-password', str(config.get('mt5_password')),
             '--mt5-server', str(config.get('mt5_server')),
+            '--mt5-path', mt5_path,  # CRITICAL: Isolated MT5 instance per user
             '--supabase-url', str(config.get('supabase_url')),
             '--supabase-key', str(config.get('supabase_service_key')),
             '--gemini-api-key', str(config.get('gemini_api_key'))
