@@ -1,7 +1,7 @@
 """
 Auto-Provision MT5 Instances from Database
 ===========================================
-Pulls all admin-approved users from Supabase, provisions MT5 instances
+Pulls all admin-approved users via edge function, provisions MT5 instances
 for any user that doesn't have one yet. Safe to run repeatedly — skips
 existing instances.
 
@@ -10,7 +10,7 @@ USAGE:
 
 ENVIRONMENT VARIABLES (set before running):
     SUPABASE_URL          - Your Supabase project URL
-    SUPABASE_SERVICE_KEY  - Service role key (NOT anon key)
+    BOT_MANAGER_SECRET    - Bot manager secret (shared with edge functions)
     MT5_TEMPLATE_DIR      - Path to MT5 template (default: C:\\trading-bot\\MT5_Template)
     MT5_INSTANCES_DIR     - Path to instances folder (default: C:\\trading-bot\\MT5_Instances)
 
@@ -27,7 +27,7 @@ from datetime import datetime
 
 # ── Configuration ──────────────────────────────────────────────────────────
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+BOT_MANAGER_SECRET = os.environ.get("BOT_MANAGER_SECRET", "")
 MT5_TEMPLATE_DIR = os.environ.get("MT5_TEMPLATE_DIR", r"C:\trading-bot\MT5_Template")
 MT5_INSTANCES_DIR = os.environ.get("MT5_INSTANCES_DIR", r"C:\trading-bot\MT5_Instances")
 
@@ -45,28 +45,23 @@ log = logging.getLogger(__name__)
 
 
 def get_approved_users():
-    """Fetch all admin-approved users from user_setup table."""
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        log.error("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+    """Fetch all admin-approved users via edge function."""
+    if not SUPABASE_URL or not BOT_MANAGER_SECRET:
+        log.error("SUPABASE_URL and BOT_MANAGER_SECRET must be set")
         sys.exit(1)
 
-    url = f"{SUPABASE_URL}/rest/v1/user_setup"
-    params = {
-        "select": "user_id",
-        "admin_approved": "eq.true",
-        "is_completed": "eq.true"
-    }
+    url = f"{SUPABASE_URL}/functions/v1/get-approved-users"
     headers = {
-        "apikey": SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "x-custom-auth": BOT_MANAGER_SECRET,
         "Content-Type": "application/json"
     }
 
     try:
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
-        users = resp.json()
-        log.info(f"Found {len(users)} approved users in database")
+        data = resp.json()
+        users = data.get("users", [])
+        log.info(f"Found {len(users)} approved users from edge function")
         return [u["user_id"] for u in users]
     except Exception as e:
         log.error(f"Failed to fetch users: {e}")
@@ -113,7 +108,7 @@ def main():
     # Create instances directory if needed
     os.makedirs(MT5_INSTANCES_DIR, exist_ok=True)
 
-    # Get approved users from database
+    # Get approved users via edge function
     approved_user_ids = get_approved_users()
 
     # Get existing instances (first 8 chars)
