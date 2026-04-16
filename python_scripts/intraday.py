@@ -62,7 +62,7 @@ TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
 MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
 
-# MAGIC NUMBER - Deterministic per user+strategy (replaces hardcoded 234001)
+# MAGIC NUMBER - Deterministic per user+strategy (replaces hardcoded MAGIC_NUMBER)
 import hashlib
 MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
 print(f"[MAGIC] Intraday Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
@@ -3004,7 +3004,7 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             "sl": round(float(stop_loss), digits),
             "tp": round(float(tp1), digits),
             "deviation": 20,
-            "magic": 234001,
+            "magic": MAGIC_NUMBER,
             "comment": str(f"Intra_{signal['strategy_name']}")[:30],
         }
 
@@ -3112,7 +3112,7 @@ def manage_intraday_positions():
         symbol = pos.symbol
         
         # Skip if not our magic number
-        if hasattr(pos, 'magic') and pos.magic != 234001:
+        if hasattr(pos, 'magic') and pos.magic != MAGIC_NUMBER:
             continue
         
         # Get position info from state
@@ -3263,7 +3263,7 @@ def manage_intraday_positions():
                             "price":       current_price,
                             "position":    ticket,
                             "deviation":   20,
-                            "magic":       234001,
+                            "magic":       MAGIC_NUMBER,
                             "comment":     "PartialTP",
                             "type_filling": mt5.ORDER_FILLING_IOC,
                         }
@@ -3434,7 +3434,7 @@ def close_position(position):
             "position": ticket,
             "price": price,
             "deviation": 20,
-            "magic": 234001,
+            "magic": MAGIC_NUMBER,
             "comment": "Intraday_Close",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -3500,7 +3500,7 @@ def recover_existing_positions():
             symbol = pos.symbol
             
             # Track ALL positions for equity accuracy (not just our magic)
-            if hasattr(pos, 'magic') and pos.magic != 234001:
+            if hasattr(pos, 'magic') and pos.magic != MAGIC_NUMBER:
                 # External position (from manual trade or other bot)
                 ext_pnl = pos.profit
                 logger.warning(
@@ -3510,7 +3510,7 @@ def recover_existing_positions():
                 )
                 continue  # Don't manage it, just note it
 
-            if hasattr(pos, 'magic') and pos.magic == 234001:
+            if hasattr(pos, 'magic') and pos.magic == MAGIC_NUMBER:
                 # Reconstruct position info
                 direction = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
                 
@@ -3561,7 +3561,7 @@ def recover_existing_positions():
         
         # Log current exposure
         if recovered_count > 0:
-            total_exposure = sum(pos.profit for pos in positions if hasattr(pos, 'magic') and pos.magic == 234001)
+            total_exposure = sum(pos.profit for pos in positions if hasattr(pos, 'magic') and pos.magic == MAGIC_NUMBER)
             logger.info(f"[RECOVERY] Total P&L from recovered positions: ${total_exposure:.2f}")
             logger.info(f"[RECOVERY] These positions will now be managed (breakeven, trailing, session close)")
             
