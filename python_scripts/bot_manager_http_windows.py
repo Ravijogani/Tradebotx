@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Log startup information
 logger.info("="*80)
-logger.info(f"BOT MANAGER STARTING - MULTI-BOT SUPPORT - {datetime.now()}")
+logger.info(f"BOT MANAGER STARTING - MULTI-USER MT5 ISOLATION - {datetime.now()}")
 logger.info(f"Python Version: {sys.version}")
 logger.info(f"Working Directory: {os.getcwd()}")
 logger.info(f"Script Location: {__file__}")
@@ -40,6 +40,56 @@ logger.info("="*80)
 
 # Store running bot processes - KEY: "user_id_strategy_id" for multi-bot support
 running_bots = {}
+
+# MT5 Instances Configuration
+# Each user gets their own portable MT5 installation under this directory
+# Structure: MT5_INSTANCES_DIR / <user_id_short> / terminal64.exe
+MT5_INSTANCES_DIR = Path(os.getenv('MT5_INSTANCES_DIR', r'C:\trading-bot\MT5_Instances'))
+logger.info(f"MT5 Instances Directory: {MT5_INSTANCES_DIR}")
+logger.info(f"MT5 Instances Directory exists: {MT5_INSTANCES_DIR.exists()}")
+
+def get_mt5_terminal_path(user_id: str) -> str:
+    """
+    Resolve the path to a user's isolated MT5 terminal64.exe.
+    
+    Directory structure:
+      C:\trading-bot\MT5_Instances\
+        <user_id_first8chars>\
+          terminal64.exe
+          
+    Uses first 8 chars of user_id as folder name for readability.
+    Falls back to full user_id if short version doesn't exist.
+    """
+    user_short = user_id[:8] if len(user_id) > 8 else user_id
+    
+    # Try short ID first (recommended naming)
+    user_mt5_dir = MT5_INSTANCES_DIR / user_short
+    terminal_path = user_mt5_dir / "terminal64.exe"
+    
+    if terminal_path.exists():
+        logger.info(f"Found MT5 instance for user {user_short}: {terminal_path}")
+        return str(terminal_path)
+    
+    # Try full user ID
+    user_mt5_dir_full = MT5_INSTANCES_DIR / user_id
+    terminal_path_full = user_mt5_dir_full / "terminal64.exe"
+    
+    if terminal_path_full.exists():
+        logger.info(f"Found MT5 instance for user {user_id}: {terminal_path_full}")
+        return str(terminal_path_full)
+    
+    # Try with "user_" prefix
+    user_mt5_dir_prefixed = MT5_INSTANCES_DIR / f"user_{user_short}"
+    terminal_path_prefixed = user_mt5_dir_prefixed / "terminal64.exe"
+    
+    if terminal_path_prefixed.exists():
+        logger.info(f"Found MT5 instance for user_{user_short}: {terminal_path_prefixed}")
+        return str(terminal_path_prefixed)
+    
+    logger.error(f"❌ No MT5 instance found for user {user_id}")
+    logger.error(f"   Searched: {user_mt5_dir}, {user_mt5_dir_full}, {user_mt5_dir_prefixed}")
+    logger.error(f"   Please create a portable MT5 installation at one of these paths")
+    return None
 
 # Security: Shared secret for authentication
 BOT_MANAGER_SECRET = os.getenv('BOT_MANAGER_SECRET', 'your-secure-secret-here')
@@ -217,10 +267,21 @@ def start_bot():
         script_name = config.get('script_path', 'hybrid_trading_bot_multiuser.py')
         bot_script = bot_dir / script_name
         
+        # Resolve user's isolated MT5 terminal path
+        mt5_path = get_mt5_terminal_path(user_id)
+        if not mt5_path:
+            logger.error(f"❌ No MT5 instance found for user {user_id}")
+            return jsonify({
+                'error': f'No MT5 instance provisioned for this user. '
+                         f'Admin needs to create a portable MT5 installation at '
+                         f'{MT5_INSTANCES_DIR / user_id[:8]}/terminal64.exe'
+            }), 500
+        
         logger.info(f"Bot directory: {bot_dir}")
         logger.info(f"Script from config: {script_name}")
         logger.info(f"Bot script path: {bot_script}")
         logger.info(f"Bot script exists: {bot_script.exists()}")
+        logger.info(f"MT5 terminal path: {mt5_path}")
         logger.info(f"Python executable: {sys.executable}")
         
         if not bot_script.exists():
@@ -241,6 +302,7 @@ def start_bot():
             '--mt5-login', str(config.get('mt5_account')),
             '--mt5-password', str(config.get('mt5_password')),
             '--mt5-server', str(config.get('mt5_server')),
+            '--mt5-path', mt5_path,  # CRITICAL: Isolated MT5 instance per user
             '--supabase-url', str(config.get('supabase_url')),
             '--supabase-key', str(config.get('supabase_service_key')),
             '--gemini-api-key', str(config.get('gemini_api_key'))
@@ -523,15 +585,40 @@ def get_user_bot_status(user_id):
         'bots': bots_status
     })
 
+@app.route('/mt5/instances', methods=['GET'])
+@require_auth
+def list_mt5_instances():
+    """List all provisioned MT5 instances and their status"""
+    instances = []
+    
+    if MT5_INSTANCES_DIR.exists():
+        for user_dir in MT5_INSTANCES_DIR.iterdir():
+            if user_dir.is_dir():
+                terminal_path = user_dir / "terminal64.exe"
+                instances.append({
+                    'folder_name': user_dir.name,
+                    'path': str(user_dir),
+                    'terminal_exists': terminal_path.exists(),
+                    'terminal_path': str(terminal_path) if terminal_path.exists() else None
+                })
+    
+    return jsonify({
+        'instances_dir': str(MT5_INSTANCES_DIR),
+        'instances_dir_exists': MT5_INSTANCES_DIR.exists(),
+        'total_instances': len(instances),
+        'instances': instances
+    })
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     logger.info("="*80)
-    logger.info(f"🚀 BOT MANAGER HTTP SERVER (Windows) - MULTI-BOT SUPPORT")
+    logger.info(f"🚀 BOT MANAGER HTTP SERVER (Windows) - MULTI-USER MT5 ISOLATION")
     logger.info(f"   Port: {port}")
     logger.info(f"   Host: 0.0.0.0 (all interfaces)")
+    logger.info(f"   MT5 Instances Dir: {MT5_INSTANCES_DIR}")
     logger.info(f"   Secret configured: {BOT_MANAGER_SECRET != 'your-secure-secret-here'}")
     logger.info(f"   Log file: bot_manager.log")
-    logger.info(f"   Multi-bot per user: ENABLED")
+    logger.info(f"   Multi-user MT5 isolation: ENABLED")
     logger.info("="*80)
     
     try:

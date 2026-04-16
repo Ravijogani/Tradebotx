@@ -69,6 +69,7 @@ parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID'
 parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
 parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
 parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
+parser.add_argument('--mt5-path', type=str, required=False, help='Path to user-specific MT5 terminal64.exe (for multi-user isolation)')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
 parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
@@ -83,9 +84,15 @@ USER_ID = args.user_id
 STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
+MT5_TERMINAL_PATH = args.mt5_path  # Path to user's isolated MT5 terminal64.exe
 
-# MAGIC NUMBER MANAGEMENT
-MAGIC_NUMBER = args.magic_number if args.magic_number else 234005
+# MAGIC NUMBER MANAGEMENT - Auto-generate unique magic per user+strategy if not provided
+if args.magic_number:
+    MAGIC_NUMBER = args.magic_number
+else:
+    # Generate deterministic magic number from user_id + strategy_id
+    hash_input = f"{USER_ID}_{STRATEGY_ID}"
+    MAGIC_NUMBER = int(hashlib.md5(hash_input.encode()).hexdigest()[:6], 16) % 900000 + 100000
 print(f"[MAGIC] Using Magic number: {MAGIC_NUMBER}")
 
 # Initialize Supabase client
@@ -2118,8 +2125,17 @@ ai_provider = AIProvider()
 
 def initialize_mt5() -> bool:
     try:
-        # <-- Uses config values set by CLI args
-        if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
+        # Build MT5 init kwargs - use isolated terminal path if provided
+        mt5_kwargs = {
+            'login': config.MT5_LOGIN,
+            'password': config.MT5_PASSWORD,
+            'server': config.MT5_SERVER,
+        }
+        if MT5_TERMINAL_PATH:
+            mt5_kwargs['path'] = MT5_TERMINAL_PATH
+            logger.info(f"Using isolated MT5 instance: {MT5_TERMINAL_PATH}")
+        
+        if not mt5.initialize(**mt5_kwargs):
             logger.error(f"MT5 initialization failed: {mt5.last_error()}")
             return False
         account_info = mt5.account_info()
