@@ -3347,9 +3347,19 @@ def manage_intraday_positions():
                 close_position(pos)
                 
 def initialize_mt5() -> bool:
-    """Initialize MT5 connection"""
+    """Initialize MT5 connection with isolated terminal support"""
     try:
-        if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
+        # Build MT5 init kwargs - use isolated terminal if provided
+        mt5_kwargs = {
+            'login': config.MT5_LOGIN,
+            'password': config.MT5_PASSWORD,
+            'server': config.MT5_SERVER
+        }
+        if MT5_TERMINAL_PATH:
+            mt5_kwargs['path'] = MT5_TERMINAL_PATH
+            logger.info(f"Using isolated MT5 instance: {MT5_TERMINAL_PATH}")
+        
+        if not mt5.initialize(**mt5_kwargs):
             logger.error(f"MT5 initialization failed: {mt5.last_error()}")
             return False
         
