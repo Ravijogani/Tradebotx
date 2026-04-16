@@ -62,7 +62,7 @@ TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
 MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
 
-# MAGIC NUMBER - Deterministic per user+strategy (replaces hardcoded MAGIC_NUMBER)
+# MAGIC NUMBER - Deterministic per user+strategy (no more hardcoded values)
 import hashlib
 MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
 print(f"[MAGIC] Intraday Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
