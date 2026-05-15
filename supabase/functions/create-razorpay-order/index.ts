@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { getAuthUser, unauthorized, forbidden } from "../_shared/auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,6 +14,10 @@ serve(async (req) => {
   }
 
   try {
+    // Require authenticated user
+    const authUser = await getAuthUser(req);
+    if (!authUser) return unauthorized(corsHeaders);
+
     // Validate input
     const requestSchema = z.object({
       amount: z.number().positive(),
@@ -21,6 +26,9 @@ serve(async (req) => {
     });
     
     const { amount, planId, userId } = requestSchema.parse(await req.json());
+
+    // Caller must own the order they are creating
+    if (userId !== authUser.id) return forbidden(corsHeaders);
 
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL');

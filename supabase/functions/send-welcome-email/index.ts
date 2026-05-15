@@ -3,6 +3,8 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { getEmailTemplate, welcomeEmailContent } from "../_shared/email-templates.ts";
 import { handleError } from "../_shared/error-handler.ts";
 
+import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -14,6 +16,18 @@ serve(async (req) => {
   }
 
   try {
+    // Auth: allow authenticated user whose email matches `to`, or server-side calls with CRON_SECRET
+    if (!isCronAuthorized(req)) {
+      const authUser = await getAuthUser(req);
+      if (!authUser) return unauthorized(corsHeaders);
+      const body = await req.clone().json().catch(() => ({}));
+      const targetEmail = (body as any).to;
+      if (typeof targetEmail === 'string' && targetEmail.toLowerCase() !== (authUser.email || '').toLowerCase()) {
+        return forbidden(corsHeaders);
+      }
+    }
+    // --- AUTH OK ---
+
     const { to, userName } = await req.json();
 
     if (!to || !userName) {

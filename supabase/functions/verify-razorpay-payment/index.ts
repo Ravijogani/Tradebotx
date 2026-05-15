@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createHmac } from "https://deno.land/std@0.177.0/node/crypto.ts";
 import { handleError } from "../_shared/error-handler.ts";
+import { getAuthUser, unauthorized, forbidden } from "../_shared/auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,7 +15,13 @@ serve(async (req) => {
   }
 
   try {
+    const authUser = await getAuthUser(req);
+    if (!authUser) return unauthorized(corsHeaders);
+
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, userId, planId } = await req.json();
+
+    // Caller must own the subscription being upgraded — prevents cross-user replay attacks
+    if (userId !== authUser.id) return forbidden(corsHeaders);
 
     const razorpayKeySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
 

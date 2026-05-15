@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 
+import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -18,6 +20,16 @@ serve(async (req) => {
   }
 
   try {
+    // Auth: server-side calls with CRON_SECRET, or an admin user JWT
+    if (!isCronAuthorized(req)) {
+      const authUser = await getAuthUser(req);
+      if (!authUser) return unauthorized(corsHeaders);
+      const { userHasRole } = await import("../_shared/auth.ts");
+      const isAdmin = await userHasRole(authUser.id, 'admin');
+      if (!isAdmin) return forbidden(corsHeaders);
+    }
+    // --- AUTH OK ---
+
     const { email, userName, planName, daysLeft }: TrialExpiryRequest = await req.json();
 
     const smtpFrom = Deno.env.get('SMTP_FROM') || 'noreply@algotradex.com';
