@@ -18,12 +18,4 @@ Disallow: /admin/
 Disallow: /dashboard/
 Disallow: /api/
 
-# Allow specific public pages
-Allow: /
-Allow: /pricing
-Allow: /docs
-Allow: /terms
-Allow: /privacy
-Allow: /disclaimer
-
-Sitemap: https://tradebotx.com/sitemap.xml
+Sitemap: https://tradebotx.pro/sitemap.xml
