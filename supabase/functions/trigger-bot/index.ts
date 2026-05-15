@@ -231,13 +231,28 @@ serve(async (req) => {
     // Store command in database for bot manager to poll
     console.log(`Queueing bot ${action} command in database for user ${user.id}`);
     
+    const { config: _omit, ...safeConfig } = botConfig as any;
+    const safeQueueConfig = {
+      user_id: botConfig.user_id,
+      strategy_id: botConfig.strategy_id,
+      strategy_name: botConfig.strategy_name,
+      script_path: botConfig.script_path,
+      mt5_account: botConfig.mt5_account,
+      mt5_server: botConfig.mt5_server,
+      account_size: botConfig.account_size,
+      risk_per_trade: botConfig.risk_per_trade,
+      max_positions: botConfig.max_positions,
+      telegram_chat_id: botConfig.telegram_chat_id,
+      action: botConfig.action,
+    };
+
     const { data: queuedCommand, error: queueError } = await supabaseClient
       .from('bot_commands')
       .insert({
         user_id: user.id,
         strategy_id: strategyId,
         action: action,
-        config: botConfig,
+        config: safeQueueConfig,
         status: 'pending'
       })
       .select()
