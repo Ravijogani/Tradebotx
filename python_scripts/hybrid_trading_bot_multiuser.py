@@ -670,8 +670,8 @@ class AITradingConfig:
     #
     SYMBOLS: List[str] = field(default_factory=lambda: [
         'XAGUSDm', 'XAUUSDm',
-        'BTCUSDm', 'ETHUSDm', 'USOILm'
-    ])
+        'BTCUSDm', 'USOILm'
+    ])  # ETHUSDm removed -- too illiquid/volatile for this scalping strategy
     SYMBOL_MIN_EQUITY: dict = field(default_factory=lambda: {
         'BTCUSDm':  50,    # viable at ~$50+ (ATR SL ~$1 at 0.01 lot)
         'USOILm':   150,   # viable at ~$150+ (ATR SL ~$1.50)
@@ -738,9 +738,9 @@ class AITradingConfig:
 
     # ?? SCALPING QUALITY FILTERS (NEW) ???????????????????????????????????????
     SCALP_MIN_ADX: float = 14.0             # 18 = balanced: catches trending moves, filters ranging chop
-    SCALP_MIN_VOL_RATIO: float = 0.8        # Min tick-vol vs 20-bar average (was 1.2 -- too strict, relaxed)
-    SCALP_RSI_MIN: float = 25.0             # FIX: was 28 -- too tight; Gold at RSI 26 is still in a valid SELL zone
-    SCALP_RSI_MAX: float = 75.0             # FIX: was 72 -- Gold RSI 73 can still deliver strong BUY moves
+    SCALP_MIN_VOL_RATIO: float = 0.4  # 0.8 was blocking all post-NY sessions (natural volume drop)        # Min tick-vol vs 20-bar average (was 1.2 -- too strict, relaxed)
+    SCALP_RSI_MIN: float = 10.0  # effective lower bound (RSI 10-20 = extreme chasing, rare)             # FIX: was 28 -- too tight; Gold at RSI 26 is still in a valid SELL zone
+    SCALP_RSI_MAX: float = 90.0  # effective upper bound (RSI > 90 = extreme chasing, rare)             # FIX: was 72 -- Gold RSI 73 can still deliver strong BUY moves
     SCALP_FORCE_KILL_ZONE: bool = False      # FIX: Disabled -- IST morning (10AM) = 04:30 UTC = outside London/NY
     # Active trading allowed during ANY session when ADX/volume confirm momentum
     SCALP_MIN_ATR_SL_MULT: float = 0.10  # 0.1x ATR: minimal noise buffer. SL is structural (wick), not ATR-based.
@@ -846,6 +846,33 @@ file_handler.setFormatter(formatter)
 file_handler.setLevel(logging.INFO)   # INFO only -- no per-cycle debug spam
 
 # Stream Handler (ensure stdout uses utf-8)
+
+class _DedupFilter(logging.Filter):
+    """Suppress identical log messages repeated within 30 seconds."""
+    def __init__(self, window_secs=30):
+        super().__init__()
+        self._seen   = {}
+        self._counts = {}
+        self._window = window_secs
+        self._always = {'TRADE OPENED','TRADE CLOSED','EMERGENCY','CRITICAL',
+                        'ERROR','QUOTA','BREAKEVEN','TRAILING','AOX L','[SSM]',
+                        'SWAPPY','SHAAKUNI found','NEWS VETO'}
+    def filter(self, record):
+        msg = record.getMessage()
+        if any(k in msg for k in self._always): return True
+        if record.levelno >= logging.WARNING: return True
+        now  = time.time()
+        key  = msg[:80]
+        last = self._seen.get(key, 0)
+        if now - last < self._window:
+            self._counts[key] = self._counts.get(key, 0) + 1
+            return False
+        cnt = self._counts.pop(key, 0)
+        if cnt > 0:
+            record.msg = f"[x{cnt+1} in {self._window}s] {record.msg}"
+        self._seen[key] = now
+        return True
+
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(formatter)
 stream_handler.setLevel(logging.INFO)   # INFO: see setups and trade decisions
@@ -854,6 +881,7 @@ stream_handler.setLevel(logging.INFO)   # INFO: see setups and trade decisions
 if not logger.handlers:
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
+logger.addFilter(_DedupFilter(window_secs=30))
 # =============================================================================
 # TELEGRAM & HEARTBEAT FUNCTIONS (New)
 # =============================================================================
@@ -2656,7 +2684,7 @@ class MarketConditionAnalyzer:
             h4_regime = MarketConditionAnalyzer.calculate_market_regime(multi_tf_data['H4'])
             analysis['h4_regime'] = h4_regime
             if h4_regime == "TRENDING": score += 40
-            elif h4_regime == "RANGING": score += 25
+            elif h4_regime == "RANGING": score += 10  # ranging is below-average, not +25
         
         # 2. H1 Context (Intermediate Trend)
         if 'H1' in multi_tf_data:
@@ -3541,8 +3569,8 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str) -> dict:
         if direction == 'BUY':
             # Two green candles then one red pullback
             # Threshold 0.25/0.20: realistic for M5 scalping candles (Asian session has small candles)
-            c1_green = is_green(c1) and body_pct(c1) >= 0.25
-            c2_green = is_green(c2) and body_pct(c2) >= 0.20
+            c1_green = is_green(c1) and 0.70 <= body_pct(c1) <= 0.80 and body(c1) >= avg_body * 0.5
+            c2_green = is_green(c2) and 0.70 <= body_pct(c2) <= 0.80
             # C2 low >= C1 low: higher lows = trend intact
             higher_low = c2['low'] >= c1['low'] * 0.9995
             # C3 red but fails to close below C1 low (bears rejected)
@@ -3557,17 +3585,25 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str) -> dict:
                 if body(c2) > avg_body * 1.1: strength += 0.10
                 if body(c3) < avg_body * 0.7: strength += 0.10  # small pullback = weak bears
                 entry_level = c3['close']  # enter at close of C3
+                # Buy Stop trigger = above the 3-candle high (not C3 close)
+                _setup_high = max(float(c1['high']), float(c2['high']), float(c3['high']))
+                _setup_low  = min(float(c1['low']),  float(c2['low']),  float(c3['low']))
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BULL",
                     "strength": min(1.0, strength),
-                    "entry_level": entry_level,
-                    "reason": (f"Swappy BUY: 2 green legs, C3 red pullback holds above "
-                               f"C1.low({c1['low']:.4f}). Trend intact.")
+                    "entry_level": entry_level,       # C3 close = initial reference
+                    "stop_entry":  _setup_high,        # Buy Stop: place order above this
+                    "setup_high":  _setup_high,
+                    "setup_low":   _setup_low,
+                    "expiry_candles": 5,               # cancel if not triggered in 5 candles
+                    "order_type": "BUY_STOP",
+                    "reason": (f"Swappy BUY: 2 green legs (body70%), C3 red holds above "
+                               f"C1.low({c1['low']:.4f}). Buy Stop at {_setup_high:.4f}.")
                 }
 
         elif direction == 'SELL':
-            c1_red = is_red(c1) and body_pct(c1) >= 0.25
-            c2_red = is_red(c2) and body_pct(c2) >= 0.20
+            c1_red = is_red(c1) and 0.70 <= body_pct(c1) <= 0.80 and body(c1) >= avg_body * 0.5
+            c2_red = is_red(c2) and 0.70 <= body_pct(c2) <= 0.80
             lower_high = c2['high'] <= c1['high'] * 1.0005
             c3_green = is_green(c3)
             c3_holds = c3['close'] < c1['high']
@@ -3579,12 +3615,19 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str) -> dict:
                 if body(c2) > avg_body * 1.1: strength += 0.10
                 if body(c3) < avg_body * 0.7: strength += 0.10
                 entry_level = c3['close']
+                _setup_high = max(float(c1['high']), float(c2['high']), float(c3['high']))
+                _setup_low  = min(float(c1['low']),  float(c2['low']),  float(c3['low']))
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BEAR",
                     "strength": min(1.0, strength),
                     "entry_level": entry_level,
-                    "reason": (f"Swappy SELL: 2 red legs, C3 green pullback holds below "
-                               f"C1.high({c1['high']:.4f}). Trend intact.")
+                    "stop_entry":  _setup_low,         # Sell Stop: place order below this
+                    "setup_high":  _setup_high,
+                    "setup_low":   _setup_low,
+                    "expiry_candles": 5,
+                    "order_type": "SELL_STOP",
+                    "reason": (f"Swappy SELL: 2 red legs (body70%), C3 green holds below "
+                               f"C1.high({c1['high']:.4f}). Sell Stop at {_setup_low:.4f}.")
                 }
 
         return {**empty, "reason": "Swappy conditions not met"}
@@ -3768,7 +3811,10 @@ def strategy_liquidity_fvg_engine(symbol: str, df_entry: pd.DataFrame, df_struct
             # ---- BUY SETUP: Sweep Low -> Green Displacement -> FVG Retest ----
             if c_disp['close'] > c_disp['open']:  # Green (bullish) displacement
                 # Sweep check: the displacement candle or previous one swept recent_low
-                swept = (c_disp['low'] < recent_low or c_before['low'] < recent_low)
+                # STRICT SWEEP: wick breaks level AND body closes above it
+                sweep_by_disp   = c_disp['low'] < recent_low and c_disp['close'] >= recent_low
+                sweep_by_before = c_before['low'] < recent_low and c_before['close'] >= recent_low
+                swept = sweep_by_disp or sweep_by_before
                 if not swept: continue
 
                 # FVG: gap between c_before high and first candle above displacement low
@@ -3834,7 +3880,10 @@ def strategy_liquidity_fvg_engine(symbol: str, df_entry: pd.DataFrame, df_struct
 
             # ---- SELL SETUP: Sweep High -> Red Displacement -> FVG Retest ----
             if c_disp['close'] < c_disp['open']:  # Red (bearish) displacement
-                swept = (c_disp['high'] > recent_high or c_before['high'] > recent_high)
+                # STRICT SWEEP: wick breaks level AND body closes below it
+                sweep_by_disp   = c_disp['high'] > recent_high and c_disp['close'] <= recent_high
+                sweep_by_before = c_before['high'] > recent_high and c_before['close'] <= recent_high
+                swept = sweep_by_disp or sweep_by_before
                 if not swept: continue
 
                 fvg_top    = c_before['low']    # top of the bearish FVG
@@ -4933,15 +4982,15 @@ def check_scalping_quality(symbol: str, direction: str, df_m5: pd.DataFrame, df_
                 rsi = float((100 - (100 / (1 + rs))).iloc[-1])
 
                 if direction == 'BUY':
-                    if rsi < config.SCALP_RSI_MIN:
-                        return False, f"RSI too low for BUY ({rsi:.1f} < {config.SCALP_RSI_MIN})"
-                    if rsi > 78:   # Overbought: don't buy into exhaustion
-                        return False, f"RSI overbought for BUY ({rsi:.1f} > 78)"
+                    # Only block if OVERBOUGHT (chasing extended move)
+                    # RSI < 30 = OVERSOLD = institutional discount = valid scalp, DO NOT block
+                    if rsi > 82:
+                        return False, f"RSI overbought for BUY ({rsi:.1f} > 82) -- chasing"
                 elif direction == 'SELL':
-                    if rsi > config.SCALP_RSI_MAX:
-                        return False, f"RSI too high for SELL ({rsi:.1f} > {config.SCALP_RSI_MAX})"
-                    if rsi < 22:   # Oversold: don't sell into exhaustion
-                        return False, f"RSI oversold for SELL ({rsi:.1f} < 22)"
+                    # Only block if OVERSOLD (chasing extended down move)
+                    # RSI > 70 = OVERBOUGHT = institutional premium = valid scalp, DO NOT block
+                    if rsi < 18:
+                        return False, f"RSI oversold for SELL ({rsi:.1f} < 18) -- chasing"
         except Exception:
             pass
 
@@ -4973,7 +5022,7 @@ def check_scalping_quality(symbol: str, direction: str, df_m5: pd.DataFrame, df_
         return True, "CHECK_ERROR"  # Don't over-block on errors
 
 
-def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float = 0.0) -> dict:
+def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float = 0.0, range_scalp_mode: bool = False, ema50_tp_hint: float = None) -> dict:
     """
     SMART TP CALCULATION -- SL is passed in from the strategy that fired.
     
@@ -5151,7 +5200,7 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
 
 
 def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
-                          entry_price: float, strategy_type: str = 'EMA') -> dict:
+                          entry_price: float, strategy_type: str = 'EMA', range_scalp_mode: bool = False) -> dict:
     """
     STRUCTURAL SL/TP -- nearest valid POI, not fixed RR multiples.
 
@@ -5303,6 +5352,28 @@ def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
         rr1 = abs(entry_price - tp1_struct) / sl_dist if sl_dist > 0 else 0
         rr2 = abs(entry_price - tp2_struct) / sl_dist if sl_dist > 0 else 0
 
+        # Hard minimum RR 1.2:1 -- auto-adjust TP to structural 1.5x SL
+        if rr1 < 1.2 and sl_dist > 0:
+            logger.warning(f"[RR GATE] {symbol} {direction}: RR={rr1:.2f} < 1.2 -- adjusting TP1 to 1.5x SL")
+            tp1_struct = (entry_price + sl_dist * 1.5) if direction == 'BUY' else (entry_price - sl_dist * 1.5)
+            rr1 = 1.5
+
+        # RANGE SCALP MODE: constrain TP1 to nearest H4 range boundary
+        # In H4-ranging market, price will likely reverse at the range edge
+        # Using the structural swing TP still works -- it naturally points to the boundary
+        # But if TP1 > 2.5x SL, cap it (don't expect range continuation)
+        if range_scalp_mode:
+            sl_dist_check = abs(entry_price - sl)
+            tp1_dist_check = abs(entry_price - tp1_struct)
+            if sl_dist_check > 0 and tp1_dist_check / sl_dist_check > 2.5:
+                # Cap at 2.5x SL in range scalp mode (don't overshoot range boundary)
+                tp1_struct = (entry_price + sl_dist_check * 2.0) if direction == 'BUY' else (entry_price - sl_dist_check * 2.0)
+                logger.debug(f"[RANGE SCALP] {symbol}: TP1 capped at 2.0x SL (range boundary)")
+            # TP2 capped at 3.0x SL (don't chase range breakout that may not happen)
+            tp2_dist_check = abs(entry_price - tp2_struct)
+            if sl_dist_check > 0 and tp2_dist_check / sl_dist_check > 3.5:
+                tp2_struct = (entry_price + sl_dist_check * 3.0) if direction == 'BUY' else (entry_price - sl_dist_check * 3.0)
+
         logger.info(
             f"[STRUCT SL/TP] {symbol} {direction}: "
             f"SL={sl:.4f}({sl_label}) "
@@ -5310,6 +5381,21 @@ def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
             f"TP2={tp2_struct:.4f}(RR {rr2:.1f}x) "
             f"SL_dist={sl_dist:.4f} ATR={atr_m5:.4f}"
         )
+
+        # EMA50 TP override: if signal suggested 50 EMA as TP (doc rule)
+        if ema50_tp_hint is not None and ema50_tp_hint > 0:
+            ema_tp_dist = abs(entry_price - ema50_tp_hint)
+            ema_tp_rr   = ema_tp_dist / sl_dist if sl_dist > 0 else 0
+            # Use EMA50 TP if it gives at least 1.2:1 RR and is in the correct direction
+            if ema_tp_rr >= 1.2:
+                if direction == 'BUY' and ema50_tp_hint > entry_price:
+                    tp1_struct = ema50_tp_hint
+                    rr1 = ema_tp_rr
+                    logger.debug(f"[TP] {symbol}: using 50 EMA={ema50_tp_hint:.4f} as TP1 (RR {rr1:.1f}x)")
+                elif direction == 'SELL' and ema50_tp_hint < entry_price:
+                    tp1_struct = ema50_tp_hint
+                    rr1 = ema_tp_rr
+                    logger.debug(f"[TP] {symbol}: using 50 EMA={ema50_tp_hint:.4f} as TP1 (RR {rr1:.1f}x)")
 
         result.update({
             'sl': sl, 'tp1': tp1_struct, 'tp2': tp2_struct,
@@ -5766,7 +5852,63 @@ def manage_all_positions():
             # Stage 3 (>=2.0R): Trail at 70% of gains -- lock most, let rest run
             # Trail only ADVANCES (never moves SL backward)
             # BE only fires ONCE per trade (be_moved flag prevents re-trigger)
+            # STRATEGY EXCEPTIONS:
+            #   AOX   -> bypass entirely; TPs are SD-level based (set on entry)
+            #   SWAPPY -> bypass Stage 1/2; only BE at 2R, let run to 3R+ min
             # =========================================================
+
+            _strategy_type = params.get('strategy_type', 'GENERIC')
+
+            # -- AOX: SD-based TPs were set at entry; do NOT trail-stop them early.
+            # The MT5 TP handles partial exits; we only protect with BE at 1R.
+            if _strategy_type == 'AOX':
+                if r_multiple >= 1.0 and ticket not in state.be_moved:
+                    _dig_aox = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+                    _be_aox  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_aox)
+                    _be_aox_rounded = round(_be_aox, _dig_aox)
+                    _sl_rounded = round(sl, _dig_aox)
+                    _can_be = (is_buy and _be_aox_rounded > _sl_rounded) or (not is_buy and _be_aox_rounded < _sl_rounded)
+                    if _can_be:
+                        logger.info(f"[AOX TRAIL] {symbol} #{ticket}: BE only -- SD TPs handle profit target (r={r_multiple:.2f}R)")
+                        if modify_position(ticket, _be_aox, tp):
+                            state.be_moved.add(ticket)
+                            try: trade_db.update_metadata(ticket, {'be_moved': True})
+                            except Exception: pass
+                    else:
+                        state.be_moved.add(ticket)
+                        try: trade_db.update_metadata(ticket, {'be_moved': True})
+                        except Exception: pass
+                continue  # AOX exits via MT5 TP levels set on entry, not trailing
+
+            # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening. BE at 2R only.
+            if _strategy_type == 'SWAPPY':
+                if r_multiple >= 2.0 and ticket not in state.be_moved:
+                    _dig_sw = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+                    _be_sw  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_sw)
+                    _be_sw_r = round(_be_sw, _dig_sw)
+                    _sl_r_sw = round(sl, _dig_sw)
+                    _can_sw = (is_buy and _be_sw_r > _sl_r_sw) or (not is_buy and _be_sw_r < _sl_r_sw)
+                    if _can_sw:
+                        logger.info(f"[SWAPPY TRAIL] {symbol} #{ticket}: BE at 2R -- holding to 3R+ min (r={r_multiple:.2f}R)")
+                        if modify_position(ticket, _be_sw, tp):
+                            state.be_moved.add(ticket)
+                            try: trade_db.update_metadata(ticket, {'be_moved': True})
+                            except Exception: pass
+                    else:
+                        state.be_moved.add(ticket)
+                        try: trade_db.update_metadata(ticket, {'be_moved': True})
+                        except Exception: pass
+                elif r_multiple >= 3.0 and ticket in state.be_moved:
+                    # At 3R+ trail tightly at 85% to protect the minimum target
+                    locked_dist = current_profit_dist * 0.85
+                    trail_sl = (entry_price + locked_dist) if is_buy else (entry_price - locked_dist)
+                    trail_sl_safe = (trail_sl - _min_buffer) if is_buy else (trail_sl + _min_buffer)
+                    _dig_sw3 = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+                    can_adv = (is_buy and trail_sl_safe > sl) or (not is_buy and trail_sl_safe < sl)
+                    if can_adv:
+                        logger.info(f"[SWAPPY TRAIL3R] {symbol} #{ticket}: 85% lock at r={r_multiple:.2f}R (holding 3R+)")
+                        modify_position(ticket, round(trail_sl_safe, _dig_sw3), tp)
+                continue  # SWAPPY uses above logic only
 
             sl_dist = abs(entry_price - params.get('initial_sl', sl))
             if sl_dist == 0:
@@ -5787,15 +5929,17 @@ def manage_all_positions():
             # ------------------------------------------------------------------
             if r_multiple >= 1.0 and ticket not in state.be_moved:
                 be_price = (entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer)
-                # Only move if new SL is better than current SL
-                can_move = (is_buy and be_price > sl) or (not is_buy and be_price < sl)
+                _dig_be = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+                be_price_rounded = round(be_price, _dig_be)
+                sl_rounded = round(sl, _dig_be)
+                # Only move if new SL is meaningfully better AFTER rounding (prevents MT5 "No changes" spam)
+                can_move = (is_buy and be_price_rounded > sl_rounded) or (not is_buy and be_price_rounded < sl_rounded)
                 if can_move:
                     logger.info(
                         f"[TRAIL STAGE1] {symbol} #{ticket}: BREAKEVEN "
-                        f"SL {sl:.5f} -> {be_price:.5f} (r={r_multiple:.2f}R)"
+                        f"SL {sl:.5f} -> {be_price_rounded:.5f} (r={r_multiple:.2f}R)"
                     )
-                    _dig_be = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    if modify_position(ticket, round(be_price, _dig_be), tp):
+                    if modify_position(ticket, be_price_rounded, tp):
                         state.be_moved.add(ticket)
                         params['initial_sl'] = params.get('initial_sl', sl)
                         state.open_positions[ticket]['params'] = params
@@ -5808,6 +5952,22 @@ def manage_all_positions():
                             f"SL moved to entry -- ZERO RISK now\n"
                             f"Profit locked: $0 minimum | R achieved: {r_multiple:.1f}R"
                         )
+                    else:
+                        # Modify failed (SL already at BE after rounding) -- mark done to stop spam
+                        logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: modify failed, SL already at BE, marking done")
+                        state.be_moved.add(ticket)
+                        try:
+                            trade_db.update_metadata(ticket, {'be_moved': True})
+                        except Exception:
+                            pass
+                else:
+                    # SL already at or past BE (restored without flag, or tiny float diff)
+                    logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: SL already past BE ({sl_rounded}), marking done silently")
+                    state.be_moved.add(ticket)
+                    try:
+                        trade_db.update_metadata(ticket, {'be_moved': True})
+                    except Exception:
+                        pass
 
             # ------------------------------------------------------------------
             # STAGE 3 checked FIRST: TIGHT TRAIL AT 70% OF GAINS (>= 2.0R)
@@ -6473,7 +6633,10 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         
         # Pass signal_sl from strategy into params so TP is derived from it
         signal_sl_from_trigger = local_signal.get('stop_loss', 0.0) or 0.0
-        params = get_dynamic_trade_params(symbol, direction, df, signal_sl=signal_sl_from_trigger)
+        _range_scalp = local_signal.get('_range_scalp_mode', False)
+        _ema50_tp    = local_signal.get('ema50_tp', None)
+        params = get_dynamic_trade_params(symbol, direction, df, signal_sl=signal_sl_from_trigger,
+                                          range_scalp_mode=_range_scalp, ema50_tp_hint=_ema50_tp)
         if not params:
             logger.warning(f"[EXEC] {symbol}: get_dynamic_trade_params returned empty")
             return False
@@ -6737,18 +6900,22 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             if not hasattr(state, '_session_losses'): state._session_losses = 0
             
             # Pass Edge parameters into state management
+            _strat_t = local_signal.get('strategy_type', 'GENERIC')
+            _aox_fib = local_signal.get('aox_fib', None)   # SD levels for AOX TP management
             state.open_positions[result.order] = {
                 'params': {
-                    'sl':          sl,
-                    'tp':          tp,
-                    'initial_sl':  sl,           # Preserved for r_multiple calculation
-                    'edge_score':  edge_score,
-                    'is_runner':   False,
+                    'sl':            sl,
+                    'tp':            tp,
+                    'initial_sl':    sl,           # Preserved for r_multiple calculation
+                    'edge_score':    edge_score,
+                    'is_runner':     False,
                     'runner_eligible': local_signal.get('runner_eligible', False),
                     'exit_aggressiveness': local_signal.get('exit_aggressiveness', 'NORMAL'),
-                    'entry_price': final_entry,
-                    'open_time':   time.time(),  # For instant-SL spike detection
-                    'symbol':      symbol,
+                    'entry_price':   final_entry,
+                    'open_time':     time.time(),  # For instant-SL spike detection
+                    'symbol':        symbol,
+                    'strategy_type': _strat_t,     # CRITICAL: needed for strategy-specific management
+                    'aox_fib':       _aox_fib,     # AOX SD levels: tp1_near/tp1_far/tp2_near/tp2_mid/tp2_far
                 }
             }
             return True
@@ -6766,6 +6933,1395 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
 # =============================================================================
 # MAIN TRADING LOOP (HYBRID ARCHITECTURE)
 # =============================================================================
+
+# 
+# INSTITUTIONAL TIME HELPERS (DST-aware, NY time)
+# 
+
+def _ny_to_utc_minutes(h_ny: int, m_ny: int) -> int:
+    """Convert NY (EDT/EST) time to UTC minutes-since-midnight, DST-aware."""
+    now  = datetime.now(timezone.utc)
+    year = now.year
+    mar1 = datetime(year, 3, 1)
+    dst_start = mar1 + timedelta(days=(6 - mar1.weekday()) % 7 + 7)  # 2nd Sunday March
+    nov1 = datetime(year, 11, 1)
+    dst_end = nov1 + timedelta(days=(6 - nov1.weekday()) % 7)         # 1st Sunday November
+    is_edt = dst_start.date() <= now.date() < dst_end.date()
+    offset = 4 if is_edt else 5  # EDT=UTC-4, EST=UTC-5
+    return (h_ny * 60 + m_ny + offset * 60) % (24 * 60)
+
+
+def get_active_macro_window() -> Optional[str]:
+    """
+    ICT NY Macro Windows (EST, DST-aware).
+    These are 20-minute windows when institutional algorithms execute.
+
+    From the strategy document:
+      8:50 - 9:10 AM EST    NY_PRE_OPEN
+      9:50 - 10:10 AM EST   NY_AM_MACRO_1  (Silver Bullet -- highest prob)
+      10:50 - 11:10 AM EST  NY_AM_MACRO_2
+      1:50 - 2:10 PM EST    NY_PM_MACRO
+    """
+    now_utc = datetime.now(timezone.utc)
+    t_utc   = now_utc.hour * 60 + now_utc.minute
+
+    ny_windows = [
+        (8*60+50,  9*60+10,  "NY_PRE_OPEN"),
+        (9*60+50,  10*60+10, "NY_AM_MACRO_1"),   # Silver Bullet
+        (10*60+50, 11*60+10, "NY_AM_MACRO_2"),
+        (13*60+50, 14*60+10, "NY_PM_MACRO"),
+    ]
+    for ny_s, ny_e, name in ny_windows:
+        utc_s = _ny_to_utc_minutes(ny_s // 60, ny_s % 60)
+        utc_e = _ny_to_utc_minutes(ny_e // 60, ny_e % 60)
+        if utc_s <= t_utc < utc_e:
+            return name
+    return None
+
+
+def is_am_h4_candle() -> bool:
+    """
+    Trade only AM H4 candles (1AM/5AM/9AM EST -- AM candles).
+    Skip PM candles (1PM/5PM/9PM EST).
+    """
+    now_utc = datetime.now(timezone.utc)
+    t_utc   = now_utc.hour * 60 + now_utc.minute
+    am_start = _ny_to_utc_minutes(1,  0)
+    am_end   = _ny_to_utc_minutes(13, 0)
+    if am_start < am_end:
+        return am_start <= t_utc < am_end
+    return t_utc >= am_start or t_utc < am_end
+
+
+def get_true_day_open(symbol: str) -> Optional[float]:
+    """
+    True Day Open (TDO): price at midnight EST (12:00 AM New York time).
+    Used for Discount/Premium filter:
+      - Price below TDO = Discount zone  prioritize BUY (AOX Long)
+      - Price above TDO = Premium zone   prioritize SELL (AOX Short)
+    """
+    try:
+        # Midnight EST in UTC
+        midnight_utc = _ny_to_utc_minutes(0, 0)  # minutes since midnight UTC
+        now_utc = datetime.now(timezone.utc)
+        now_mins = now_utc.hour * 60 + now_utc.minute
+
+        # Build datetime for today's midnight EST
+        offset_hours = midnight_utc // 60  # UTC hour when NY midnight occurred
+        today = now_utc.date()
+        if now_mins < midnight_utc:   # midnight hasn't happened yet today in UTC
+            today = today - timedelta(days=1)
+        midnight_dt = datetime(today.year, today.month, today.day,
+                               offset_hours, 0, tzinfo=timezone.utc)
+
+        # Get M5 candle at midnight
+        rates = mt5.copy_rates_from(symbol, mt5.TIMEFRAME_M5,
+                                    midnight_dt, 3)
+        if rates is not None and len(rates) > 0:
+            return float(rates[0]['open'])
+    except Exception as e:
+        logger.debug(f"TDO {symbol}: {e}")
+    return None
+
+
+
+# 
+# SHAAKUNI SSM (Sweep Method) -- Dedicated Module
+# Strict MTF implementation per the strategy document:
+#   HTF (H1/H4): Liquidity sweep -- wick breaks prev high/low,
+#                body CLOSES back inside (not a breakout)
+#   LTF (M5):    Find extreme unmitigated OB within swept leg
+#   Entry:       Limit order at extreme OB level
+#   SL:          Beyond OB + spread buffer
+#   TP:          Opposing liquidity (the swept candle's high/low)
+# 
+
+# 
+# AOX POSITION LAYERING STATE
+# Tracks each symbol's 3-phase AOX entry progression
+# 
+
+def get_aox_state(symbol: str) -> dict:
+    """Get or initialize AOX layering state for a symbol."""
+    if not hasattr(state, 'aox_states'):
+        state.aox_states = {}
+    if symbol not in state.aox_states:
+        state.aox_states[symbol] = {
+            'phase': 0,        # 0=watching, 1=layer1_placed, 2=layer2_placed, 3=complete
+            'spike': None,
+            'fib': None,
+            'direction': None,
+            'layer1_ticket': None,
+            'layer2_ticket': None,
+            'layer3_ticket': None,
+            'fpfvg': None,     # First Presented FVG level
+        }
+    return state.aox_states[symbol]
+
+
+def reset_aox_state(symbol: str):
+    """Reset AOX state after completion or invalidation."""
+    if hasattr(state, 'aox_states') and symbol in state.aox_states:
+        state.aox_states[symbol] = {
+            'phase': 0, 'spike': None, 'fib': None, 'direction': None,
+            'layer1_ticket': None, 'layer2_ticket': None, 'layer3_ticket': None,
+            'fpfvg': None,
+        }
+
+
+def detect_fpfvg(df_m1: 'pd.DataFrame', direction: str) -> float:
+    """
+    First Presented Fair Value Gap (FPFVG):
+    The first FVG that appears on M1 after the AOX setup forms.
+    FVG = gap between candle[i-1].high and candle[i+1].low (bullish FVG)
+          or candle[i-1].low and candle[i+1].high (bearish FVG)
+    Returns the FVG midpoint or 0 if not found.
+    """
+    if df_m1 is None or len(df_m1) < 5: return 0.0
+    try:
+        for i in range(len(df_m1)-3, 1, -1):
+            c_before = df_m1.iloc[i-1]
+            c_mid    = df_m1.iloc[i]
+            c_after  = df_m1.iloc[i+1]
+            if direction == 'BUY':
+                # Bullish FVG: gap between c_before.high and c_after.low
+                if float(c_before['high']) < float(c_after['low']):
+                    gap_mid = (float(c_before['high']) + float(c_after['low'])) / 2
+                    return gap_mid
+            else:
+                # Bearish FVG: gap between c_before.low and c_after.high
+                if float(c_before['low']) > float(c_after['high']):
+                    gap_mid = (float(c_before['low']) + float(c_after['high'])) / 2
+                    return gap_mid
+    except Exception:
+        pass
+    return 0.0
+
+
+def execute_aox_layer(symbol: str, direction: str, entry_price: float,
+                      sl: float, tp: float, risk_fraction: float,
+                      layer_name: str, account_equity: float) -> int:
+    """
+    Place one AOX layer with fractional risk allocation.
+    risk_fraction: 0.25 for Layer 1&2, 0.50 for Layer 3
+    Returns MT5 ticket or 0 on failure.
+    """
+    try:
+        sym_info = mt5.symbol_info(symbol)
+        if not sym_info: return 0
+        tick = mt5.symbol_info_tick(symbol)
+        if not tick: return 0
+
+        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0) * risk_fraction
+        sl_dist     = abs(entry_price - sl)
+        if sl_dist <= 0: return 0
+
+        tick_val  = sym_info.trade_tick_value
+        tick_size = sym_info.trade_tick_size
+        if tick_val and tick_val > 0 and tick_size > 0:
+            pip_value = (tick_val / tick_size) * sym_info.point
+            lot_raw   = risk_amount / max(sl_dist * (pip_value / sym_info.point), 0.001)
+        else:
+            lot_raw = risk_amount / max(sl_dist * 10, 0.001)
+
+        lot_step = sym_info.volume_step
+        lot_size = max(sym_info.volume_min, min(
+            round(lot_raw / lot_step) * lot_step, sym_info.volume_max))
+
+        mode = sym_info.filling_mode
+        fill = (mt5.ORDER_FILLING_FOK if mode & 1 else
+                mt5.ORDER_FILLING_IOC if mode & 2 else
+                mt5.ORDER_FILLING_RETURN)
+
+        order_type = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        price      = tick.ask if direction == 'BUY' else tick.bid
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL, "symbol": symbol,
+            "volume": lot_size, "type": order_type, "price": price,
+            "sl": sl, "tp": tp, "deviation": 20,
+            "magic": MAGIC_NUMBER,
+            "comment": f"AOX_{layer_name}_{risk_fraction:.0%}",
+            "type_filling": fill,
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(
+                f"[AOX {layer_name}] {symbol} {direction}: "
+                f"lot={lot_size} ({risk_fraction:.0%} risk) "
+                f"entry={price:.4f} sl={sl:.4f} tp={tp:.4f}"
+            )
+            state.daily_trades += 1
+            # Store strategy_type in open_positions so manage_all_positions routes correctly
+            if not hasattr(state, 'open_positions'): state.open_positions = {}
+            state.open_positions[result.order] = {
+                'params': {
+                    'sl': sl, 'tp': tp, 'initial_sl': sl,
+                    'entry_price': price, 'symbol': symbol,
+                    'strategy_type': 'AOX',
+                    'open_time': time.time(),
+                    'is_runner': False,
+                    'edge_score': 75.0,
+                    'exit_aggressiveness': 'HOLD',  # AOX holds to SD levels
+                }
+            }
+            return result.order
+        else:
+            logger.warning(f"[AOX {layer_name}] {symbol}: failed retcode={result.retcode if result else 'None'}")
+    except Exception as e:
+        logger.error(f"[AOX {layer_name}] {symbol}: {e}")
+    return 0
+
+
+def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
+                           df_m1: 'pd.DataFrame', effective_trend: str,
+                           account_equity: float) -> bool:
+    """
+    Full AOX 25/25/50 layered execution engine.
+    Called every iteration. Manages state across phases.
+
+    Layer 1 (25%): Price taps -2.0 to -2.5 SD zone
+    Layer 2 (25%): SMT divergence confirmed + FPFVG sweep (Turtle Soup)
+    Layer 3 (50%): Mitigation/Breaker block after reversal begins
+
+    Returns True if any layer was executed this iteration.
+    """
+    aox_st = get_aox_state(symbol)
+    executed = False
+
+    try:
+        atr = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
+        cur_price = float(df_m5['close'].iloc[-1])
+
+        #  PHASE 0: Waiting for spike + SD zone tap 
+        if aox_st['phase'] == 0:
+            spike = detect_manipulation_spike(df_m5, atr)
+            if not spike: return False
+            fib = compute_aox_fibonacci(spike)
+            direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
+
+            # Check effective trend alignment
+            if effective_trend != 'NEUTRAL':
+                if direction == 'BUY' and effective_trend == 'BEARISH': return False
+                if direction == 'SELL' and effective_trend == 'BULLISH': return False
+
+            # Check SD zone: price must be at -2.0 to -2.5 SD (minor) OR -4.0 to -4.5 SD (major reversal)
+            reached_sd2 = spike.get('reached_sd2', False)
+            reached_sd4 = spike.get('reached_sd4', False)
+            if not reached_sd2 and not reached_sd4:
+                return False
+            # SD4 major reversal zone = higher conviction, larger L1 allocation
+            _l1_alloc = 0.35 if reached_sd4 else 0.25
+            if reached_sd4:
+                logger.info(f"[AOX L1] {symbol}: SD4 MAJOR reversal zone -- using {_l1_alloc*100:.0f}% allocation")
+
+            # Check sniper zone
+            in_sniper = fib['sniper_entry'] <= cur_price <= fib['sniper_top']
+            if not in_sniper: return False
+
+            # TDO filter
+            tdo = get_true_day_open(symbol)
+            if tdo and tdo > 0:
+                if direction == 'BUY' and cur_price > tdo: return False
+                if direction == 'SELL' and cur_price < tdo: return False
+
+            # Macro window: HARD GATE -- AOX only executes during institutional 20-min windows
+            macro = get_active_macro_window()
+            if not macro:
+                logger.debug(f"[AOX L1] {symbol}: outside macro window -- skip (wait for 8:50/9:50/10:50/13:50 EST)")
+                return False
+            logger.info(f"[AOX L1] {symbol}: macro window active: {macro}")
+
+            # LAYER 1: at SD tap (25% minor zone, 35% major reversal zone)
+            sl1 = fib['sl_level'] + (0.001 if direction == 'SELL' else -0.001)
+            tp1 = fib['tp2_mid']
+            ticket1 = execute_aox_layer(symbol, direction, cur_price,
+                                         sl1, tp1, _l1_alloc, "L1_SD_TAP", account_equity)
+            if ticket1:
+                aox_st.update({
+                    'phase': 1, 'spike': spike, 'fib': fib,
+                    'direction': direction, 'layer1_ticket': ticket1
+                })
+                logger.info(f"[AOX L1] {symbol}: 25% placed @ SD tap | macro={macro}")
+                executed = True
+
+        #  PHASE 1: Waiting for SMT + FPFVG (Turtle Soup) 
+        elif aox_st['phase'] == 1:
+            direction = aox_st['direction']
+            spike     = aox_st['spike']
+            fib       = aox_st['fib']
+
+            # Check SMT divergence
+            smt_ok = check_smt_divergence(symbol, spike['type'])
+            if not smt_ok: return False
+
+            # CISD on M1
+            cisd = detect_cisd_trigger(df_m1, direction)
+            if not cisd: return False
+
+            # Find FPFVG (First Presented FVG) on M1 for Turtle Soup
+            fpfvg = detect_fpfvg(df_m1, direction)
+            if fpfvg == 0.0: return False
+
+            # LAYER 2: 25% at SMT confirmation + FVG
+            sl2 = fib['sl_level']
+            tp2 = fib['tp1_near']   # TP1 at 1.47 (first partial)
+            ticket2 = execute_aox_layer(symbol, direction, cur_price,
+                                         sl2, tp2, 0.25, "L2_TURTLE", account_equity)
+            if ticket2:
+                aox_st['phase'] = 2
+                aox_st['layer2_ticket'] = ticket2
+                aox_st['fpfvg'] = fpfvg
+                logger.info(f"[AOX L2] {symbol}: 25% placed @ SMT+FPFVG | fpfvg={fpfvg:.4f}")
+                executed = True
+
+        #  PHASE 2: Waiting for Mitigation Block (Hippo) 
+        elif aox_st['phase'] == 2:
+            direction = aox_st['direction']
+            fib       = aox_st['fib']
+
+            # Hippo: price has reversed and is now at a mitigation/breaker block
+            # Detect: price pulled back to the FPFVG area and is rejecting
+            fpfvg = aox_st.get('fpfvg', 0)
+            if fpfvg == 0: return False
+
+            fvg_dist = abs(cur_price - fpfvg)
+            near_fvg = fvg_dist <= atr * 1.5
+
+            # Confirm reversal direction is holding
+            ema9 = float(df_m5['close'].ewm(span=9, adjust=False).mean().iloc[-1])
+            reversal_holding = (direction == 'BUY'  and cur_price > ema9) or                                (direction == 'SELL' and cur_price < ema9)
+
+            if not (near_fvg and reversal_holding): return False
+
+            # LAYER 3: 50% at Hippo/Mitigation block
+            sl3 = fib['sl_level']
+            tp3 = fib['tp2_far']   # Final target: 2.64 level
+            ticket3 = execute_aox_layer(symbol, direction, cur_price,
+                                         sl3, tp3, 0.50, "L3_HIPPO", account_equity)
+            if ticket3:
+                aox_st['phase'] = 3
+                aox_st['layer3_ticket'] = ticket3
+                logger.info(f"[AOX L3] {symbol}: 50% placed @ Hippo | Full position active")
+                executed = True
+                # Mark complete -- reset after 2 hours or when all positions close
+                state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    except Exception as e:
+        logger.error(f"[AOX LAYERED] {symbol}: {e}")
+        import traceback
+        logger.debug(traceback.format_exc()[-300:])
+
+    return executed
+
+
+class ShaakuniSSM:
+    """
+    Dedicated Shaakuni SSM (Sweep Method) implementation.
+    Strictly enforces the document rules for HTF sweep detection
+    and LTF extreme OB entry.
+    """
+
+    @staticmethod
+    def detect_htf_sweep(df_htf: 'pd.DataFrame', direction: str) -> dict:
+        """
+        STRICT sweep detection on H1 or H4.
+
+        Bullish sweep (look for BUY):
+          HTF candle low < previous candle low (wick swept sell-side liquidity)
+          AND HTF candle close >= previous candle low (body closed back above)
+           Indicates institutional buy orders absorbed the sell liquidity
+
+        Bearish sweep (look for SELL):
+          HTF candle high > previous candle high (wick swept buy-side liquidity)
+          AND HTF candle close <= previous candle high (body closed back below)
+
+        Returns sweep info dict or empty dict.
+        """
+        empty = {}
+        if df_htf is None or len(df_htf) < 4:
+            return empty
+        try:
+            # Check last 3 HTF candles for a sweep
+            for i in range(-2, -5, -1):
+                c_curr = df_htf.iloc[i]       # candidate sweep candle
+                c_prev = df_htf.iloc[i - 1]   # reference candle
+
+                if direction == 'BUY':
+                    # Wick breaks prev low, body closes above it
+                    wick_swept = float(c_curr['low'])   < float(c_prev['low'])
+                    body_inside = float(c_curr['close']) >= float(c_prev['low'])
+                    if wick_swept and body_inside:
+                        return {
+                            'type':          'BULLISH_SWEEP',
+                            'swept_low':     float(c_prev['low']),
+                            'candle_low':    float(c_curr['low']),
+                            'candle_high':   float(c_curr['high']),
+                            'candle_close':  float(c_curr['close']),
+                            'tp_target':     float(c_curr['high']),  # TP = swept candle high
+                            'swept_at':      i,
+                        }
+
+                elif direction == 'SELL':
+                    wick_swept  = float(c_curr['high'])  > float(c_prev['high'])
+                    body_inside = float(c_curr['close']) <= float(c_prev['high'])
+                    if wick_swept and body_inside:
+                        return {
+                            'type':          'BEARISH_SWEEP',
+                            'swept_high':    float(c_prev['high']),
+                            'candle_high':   float(c_curr['high']),
+                            'candle_low':    float(c_curr['low']),
+                            'candle_close':  float(c_curr['close']),
+                            'tp_target':     float(c_curr['low']),   # TP = swept candle low
+                            'swept_at':      i,
+                        }
+        except Exception as e:
+            logger.debug(f"ShaakuniSSM.detect_htf_sweep: {e}")
+        return empty
+
+    @staticmethod
+    def find_extreme_ob(df_ltf: 'pd.DataFrame', sweep: dict, direction: str, atr: float) -> dict:
+        """
+        Find the EXTREME (most aggressive) unmitigated Order Block
+        within the swept leg on the LTF (M5).
+
+        For BUY (bullish sweep):
+          The swept leg runs from the sweep candle's high down to its low.
+          The extreme OB = the LOWEST unmitigated bearish OB (last red candle
+          before a bullish impulse) within that leg.
+          Entry: limit order BUY at this OB's low (deepest discount)
+
+        For SELL (bearish sweep):
+          The extreme OB = the HIGHEST unmitigated bullish OB
+          within the swept leg.
+          Entry: limit order SELL at this OB's high
+        """
+        empty = {}
+        if df_ltf is None or len(df_ltf) < 10 or not sweep:
+            return empty
+        try:
+            cur_price = float(df_ltf['close'].iloc[-1])
+
+            if direction == 'BUY':
+                leg_high = sweep.get('swept_low', cur_price) + atr * 3
+                leg_low  = sweep.get('candle_low', cur_price - atr * 5)
+                # Find all bearish OBs within the swept leg
+                # Bearish OB = red candle followed by bullish displacement
+                candidate_obs = []
+                for i in range(3, len(df_ltf) - 1):
+                    c = df_ltf.iloc[i]
+                    c_next = df_ltf.iloc[i + 1]
+                    # Red candle
+                    if float(c['close']) >= float(c['open']): continue
+                    # Next candle is strongly bullish (displacement)
+                    next_body = abs(float(c_next['close']) - float(c_next['open']))
+                    if float(c_next['close']) <= float(c_next['open']): continue
+                    if next_body < atr * 0.6: continue
+                    # OB is within the swept leg
+                    ob_low = float(c['close'])  # bottom of bearish OB = close
+                    ob_high= float(c['open'])   # top = open
+                    if not (leg_low <= ob_low <= leg_high): continue
+                    # OB is unmitigated (price hasn't returned to it yet)
+                    later_lows = [float(df_ltf.iloc[j]['low']) for j in range(i+2, len(df_ltf))]
+                    if later_lows and min(later_lows) < ob_low: continue  # mitigated
+                    candidate_obs.append({'ob_low': ob_low, 'ob_high': ob_high, 'idx': i})
+
+                if not candidate_obs: return empty
+                # EXTREME OB = the LOWEST (deepest in discount) unmitigated OB
+                extreme = min(candidate_obs, key=lambda x: x['ob_low'])
+                return {
+                    'ob_low':    extreme['ob_low'],
+                    'ob_high':   extreme['ob_high'],
+                    'entry':     extreme['ob_low'],   # limit BUY at OB low
+                    'sl':        extreme['ob_low'] - atr * 0.3,
+                    'tp':        sweep.get('tp_target', extreme['ob_high'] + atr * 5),
+                    'direction': 'BUY',
+                }
+
+            else:  # SELL
+                leg_low  = sweep.get('swept_high', cur_price) - atr * 3
+                leg_high = sweep.get('candle_high', cur_price + atr * 5)
+                candidate_obs = []
+                for i in range(3, len(df_ltf) - 1):
+                    c = df_ltf.iloc[i]
+                    c_next = df_ltf.iloc[i + 1]
+                    if float(c['close']) <= float(c['open']): continue  # need green candle
+                    next_body = abs(float(c_next['close']) - float(c_next['open']))
+                    if float(c_next['close']) >= float(c_next['open']): continue
+                    if next_body < atr * 0.6: continue
+                    ob_high = float(c['close'])  # top of bullish OB = close
+                    ob_low  = float(c['open'])
+                    if not (leg_low <= ob_high <= leg_high): continue
+                    later_highs = [float(df_ltf.iloc[j]['high']) for j in range(i+2, len(df_ltf))]
+                    if later_highs and max(later_highs) > ob_high: continue
+                    candidate_obs.append({'ob_low': ob_low, 'ob_high': ob_high, 'idx': i})
+
+                if not candidate_obs: return empty
+                # EXTREME OB = the HIGHEST (deepest in premium) unmitigated OB
+                extreme = max(candidate_obs, key=lambda x: x['ob_high'])
+                return {
+                    'ob_low':    extreme['ob_low'],
+                    'ob_high':   extreme['ob_high'],
+                    'entry':     extreme['ob_high'],  # limit SELL at OB high
+                    'sl':        extreme['ob_high'] + atr * 0.3,
+                    'tp':        sweep.get('tp_target', extreme['ob_low'] - atr * 5),
+                    'direction': 'SELL',
+                }
+
+        except Exception as e:
+            logger.debug(f"ShaakuniSSM.find_extreme_ob: {e}")
+        return empty
+
+
+def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFrame',
+                           df_m5: 'pd.DataFrame', effective_trend: str) -> dict:
+    """
+    Run the full ShaakuniSSM pipeline for one symbol.
+    Returns setup dict if valid, empty dict otherwise.
+
+    Flow:
+      1. Scan H4 for sweep (trend-aligned direction)
+      2. If no H4 sweep, scan H1
+      3. On confirmed sweep: scan M5 for extreme unmitigated OB
+      4. Return limit order setup at the extreme OB
+    """
+    empty = {}
+    if df_m5 is None or len(df_m5) < 10: return empty
+    try:
+        atr_m5 = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
+
+        # Direction: only trade trend-aligned sweeps
+        direction = 'BUY' if effective_trend == 'BULLISH' else                     'SELL' if effective_trend == 'BEARISH' else None
+        if direction is None: return empty
+
+        # Step 1: HTF sweep -- try H4 first, then H1
+        sweep = {}
+        for df_htf, tf_name in [(df_h4, 'H4'), (df_h1, 'H1')]:
+            if df_htf is not None and len(df_htf) >= 4:
+                sweep = ShaakuniSSM.detect_htf_sweep(df_htf, direction)
+                if sweep:
+                    logger.debug(f"[SSM] {symbol}: {sweep['type']} on {tf_name}")
+                    break
+        if not sweep: return empty
+
+        # Step 2: Find extreme OB on M5 within swept leg
+        ob = ShaakuniSSM.find_extreme_ob(df_m5, sweep, direction, atr_m5)
+        if not ob: return empty
+
+        # Step 3: Validate entry level is still reachable
+        cur_price = float(df_m5['close'].iloc[-1])
+        if direction == 'BUY' and cur_price <= ob['entry']:
+            return empty  # price already below OB -- limit already filled or stale
+        if direction == 'SELL' and cur_price >= ob['entry']:
+            return empty
+
+        rr = abs(ob['entry'] - ob['tp']) / abs(ob['entry'] - ob['sl']) if abs(ob['entry'] - ob['sl']) > 0 else 0
+        if rr < 1.5: return empty  # minimum 1.5:1 for SSM
+
+        logger.info(
+            f"[SSM] {symbol} {direction}: HTF sweep confirmed. "
+            f"Extreme OB={ob['entry']:.4f} SL={ob['sl']:.4f} TP={ob['tp']:.4f} RR={rr:.1f}x"
+        )
+        return {
+            'signal':        direction,
+            'reason':        'SHAAKUNI_SSM',
+            'stop_loss':     ob['sl'],
+            'tp':            ob['tp'],
+            'limit_entry':   ob['entry'],   # limit order, not market
+            'order_type':    'LIMIT',
+            'strategy_type': 'SSM',
+            'ob_zone':       ob,
+            'sweep':         sweep,
+            'rr':            rr,
+        }
+    except Exception as e:
+        logger.error(f"[SSM] {symbol}: {e}")
+    return empty
+
+
+# AOX MODEL -- ported from intraday.py
+# Runs on M5/M15 for scalping (manipulation spike + Fibonacci sniper + SMT + CISD)
+
+
+def compute_sd_levels(ref_high: float, ref_low: float) -> Dict:
+    """
+    Compute Standard Deviation levels for the manipulation leg.
+    Matches Fib Retracement SD tool settings (Image 1).
+    Checked levels: 0, -1, -1.5, -2, -2.25, -2.5, -4, -4.25, -4.5, 1, 0.25, 0.5, 0.7
+
+    Anchor: SD 0 = range_high (spike start), SD 1 = range_low (or vice versa).
+    Negative SDs project BEYOND the spike -- where institutional orders exhaust.
+
+    Primary reversal zone: -2.0 to -2.5 SD (must reach here before sniper)
+    Extreme zone:          -4.0 to -4.5 SD (max manipulation, rarer)
+    """
+    span = abs(ref_high - ref_low)
+    if span == 0: return {}
+    return {
+        'sd_0':    ref_high,
+        'sd_1':    ref_low,
+        'sd_025':  ref_high - span * 0.25,
+        'sd_05':   ref_high - span * 0.50,
+        'sd_07':   ref_high - span * 0.70,
+        'sd_neg1': ref_high + span * 1.0,   # -1 extension (above spike start for bearish)
+        'sd_neg15':ref_high + span * 1.5,
+        'sd_neg2': ref_high + span * 2.0,   # PRIMARY zone start
+        'sd_neg225':ref_high + span * 2.25,
+        'sd_neg25':ref_high + span * 2.5,   # PRIMARY zone end
+        'sd_neg4': ref_high + span * 4.0,   # EXTREME zone start
+        'sd_neg425':ref_high + span * 4.25,
+        'sd_neg45': ref_high + span * 4.5,  # EXTREME zone end
+    }
+
+
+def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
+    """
+    Detect a fast manipulation spike (Judas Swing) on M15.
+
+    Two-stage check:
+      Stage 1 (SD filter): spike must reach -2.0 to -2.5 SD of the reference
+        range. This confirms the manipulation went deep enough to be institutional.
+        If price only moved -1 SD, it's just noise.
+      Stage 2 (CRT check): the spike candle must close BACK inside the range
+        (Candle Range Theory -- Candle 2 sweeps and closes back inside).
+
+    Returns spike details or None.
+    """
+    if len(df) < 15: return None
+    try:
+        # Reference range: last 10 bars before the most recent 3
+        ref      = df.iloc[-13:-3]
+        ref_high = float(ref['high'].max())
+        ref_low  = float(ref['low'].min())
+        ref_range= ref_high - ref_low
+        if ref_range <= 0: return None
+
+        # Compute SD levels for this reference range
+        sd = compute_sd_levels(ref_high, ref_low)
+
+        # Check last 3 candles for a spike that swept and closed back inside (CRT)
+        for spike_len in range(1, 4):
+            spike_candles = df.iloc[-spike_len-1:-1]
+            spike_high    = float(spike_candles['high'].max())
+            spike_low     = float(spike_candles['low'].min())
+            last_close    = float(df.iloc[-2]['close'])
+
+            # BEARISH manipulation: swept above range high, closed back inside
+            if spike_high > ref_high and last_close < ref_high:
+                spike_dist = spike_high - ref_high
+                if spike_dist < atr * 0.5:
+                    continue  # too small, just noise
+
+                # SD filter: spike must reach at least -2.0 SD (institutional depth)
+                # -2.0 SD for bearish = ref_high + 2.0 * ref_range (above range)
+                sd_neg2_level = ref_high + ref_range * 2.0
+                reached_sd2   = spike_high >= sd_neg2_level * 0.85  # 85% tolerance
+                # Extreme zone check
+                sd_neg4_level = ref_high + ref_range * 4.0
+                reached_sd4   = spike_high >= sd_neg4_level * 0.85
+
+                return {
+                    'type':         'BEARISH',
+                    'spike_start':  ref_high,
+                    'spike_peak':   spike_high,
+                    'ref_high':     ref_high,
+                    'ref_low':      ref_low,
+                    'sweep_dist':   spike_dist,
+                    'reached_sd2':  reached_sd2,
+                    'reached_sd4':  reached_sd4,
+                    'sd_levels':    sd,
+                }
+
+            # BULLISH manipulation: swept below range low, closed back inside
+            if spike_low < ref_low and last_close > ref_low:
+                spike_dist = ref_low - spike_low
+                if spike_dist < atr * 0.5:
+                    continue
+
+                sd_neg2_level = ref_low - ref_range * 2.0
+                reached_sd2   = spike_low <= sd_neg2_level * 1.15  # tolerance
+                sd_neg4_level = ref_low - ref_range * 4.0
+                reached_sd4   = spike_low <= sd_neg4_level * 1.15
+
+                return {
+                    'type':          'BULLISH',
+                    'spike_start':   ref_low,
+                    'spike_trough':  spike_low,
+                    'ref_high':      ref_high,
+                    'ref_low':       ref_low,
+                    'sweep_dist':    spike_dist,
+                    'reached_sd2':   reached_sd2,
+                    'reached_sd4':   reached_sd4,
+                    'sd_levels':     sd,
+                }
+    except Exception as e:
+        logger.debug(f"Spike detection error: {e}")
+    return None
+
+
+
+def compute_aox_fibonacci(spike: Dict) -> Dict:
+    """
+    AOX Fibonacci Suite -- exact levels from Fib Retracement AOX tool (Image 2).
+
+    Anchor: Fib 0 = spike_start, Fib 1 = spike_peak
+    Active checked levels:
+      Sniper zone:  -0.21 | -0.255 | -0.29   (3 levels, entry zone)
+      TP1:           1.47 | 1.55              (partial close 60-70%)
+      TP2:           2.56 | 2.60  | 2.64     (final close, institutional target)
+      Reference:     0    | 1                (anchors)
+
+    SL: placed ~20% beyond -0.29 (not a Fib level, a risk rule).
+    """
+    if spike['type'] == 'BEARISH':
+        start = spike['spike_start']   # Fib 0  (range high, manipulation start)
+        peak  = spike['spike_peak']    # Fib 1  (spike top)
+        span  = peak - start           # positive span
+
+        # Sniper zone extends ABOVE the peak (negative extensions = beyond spike)
+        fib = {
+            # Sniper entry zone (3 levels)
+            'sniper_entry':   peak + span * 0.21,   # -0.21 (first tap)
+            'sniper_mid':     peak + span * 0.255,  # -0.255 (main sniper)
+            'sniper_top':     peak + span * 0.29,   # -0.29 (deepest)
+            # SL: hard stop beyond -0.29
+            'sl_level':       peak + span * 0.38,   # ~20 pips beyond sniper top
+            # TP1: 60-70% close (two levels)
+            'tp1_near':       start - span * 1.47,
+            'tp1_far':        start - span * 1.55,
+            # TP2: final exit (three levels)
+            'tp2_near':       start - span * 2.56,
+            'tp2_mid':        start - span * 2.60,
+            'tp2_far':        start - span * 2.64,
+            # Reference
+            'fib_0':          start,
+            'fib_1':          peak,
+            'equilibrium':    start + span * 0.5,
+        }
+    else:  # BULLISH: spike was downward (Judas swing down, real move UP)
+        start  = spike['spike_start']   # Fib 0 (range low)
+        trough = spike['spike_trough']  # Fib 1 (spike bottom)
+        span   = start - trough         # positive span
+
+        # Sniper zone extends BELOW the trough
+        fib = {
+            # Sniper entry zone (3 levels)
+            'sniper_entry':   trough - span * 0.21,  # -0.21
+            'sniper_mid':     trough - span * 0.255, # -0.255
+            'sniper_top':     trough - span * 0.29,  # -0.29 (deepest, below trough)
+            # SL
+            'sl_level':       trough - span * 0.38,
+            # TP1
+            'tp1_near':       start + span * 1.47,
+            'tp1_far':        start + span * 1.55,
+            # TP2
+            'tp2_near':       start + span * 2.56,
+            'tp2_mid':        start + span * 2.60,
+            'tp2_far':        start + span * 2.64,
+            # Reference
+            'fib_0':          start,
+            'fib_1':          trough,
+            'equilibrium':    start - span * 0.5,
+        }
+    return fib
+
+
+
+def detect_cisd_trigger(df_m1: pd.DataFrame, direction: str) -> Optional[Dict]:
+    """
+    CISD: Change in State of Delivery.
+    Find the last consecutive opposing candle at the POI, then confirm
+    when a candle CLOSES ITS BODY above (BUY) or below (SELL) that candle.
+    This is the mechanical entry trigger -- no ambiguity.
+
+    For BUY (bullish manipulation complete, real move UP):
+      - Find the last red candle in the recent M1 sequence
+      - Entry when a candle's body closes ABOVE that red candle's body top (open/close max)
+
+    For SELL (bearish manipulation complete, real move DOWN):
+      - Find the last green candle in the recent M1 sequence
+      - Entry when a candle's body closes BELOW that green candle's body bottom
+    """
+    if df_m1 is None or len(df_m1) < 8: return None
+    try:
+        recent = df_m1.iloc[-10:]  # last 10 M1 candles
+
+        if direction == 'BUY':
+            # Find last red (bearish) candle -- the opposing candle
+            last_red_idx = None
+            for i in range(len(recent)-2, -1, -1):  # skip very last candle
+                if float(recent.iloc[i]['close']) < float(recent.iloc[i]['open']):
+                    last_red_idx = i
+                    break
+            if last_red_idx is None: return None
+
+            opposing_candle = recent.iloc[last_red_idx]
+            opposing_top    = max(float(opposing_candle['open']), float(opposing_candle['close']))
+
+            # Check if a candle AFTER the red candle closes its body above it
+            for i in range(last_red_idx + 1, len(recent)):
+                c = recent.iloc[i]
+                c_open  = float(c['open'])
+                c_close = float(c['close'])
+                # Body closes above: bullish candle + close > opposing top
+                if c_close > c_open and c_close > opposing_top:
+                    return {
+                        'confirmed':      True,
+                        'cisd_level':     opposing_top,
+                        'trigger_close':  c_close,
+                        'entry_ref':      c_close,
+                    }
+
+        else:  # SELL
+            last_green_idx = None
+            for i in range(len(recent)-2, -1, -1):
+                if float(recent.iloc[i]['close']) > float(recent.iloc[i]['open']):
+                    last_green_idx = i
+                    break
+            if last_green_idx is None: return None
+
+            opposing_candle  = recent.iloc[last_green_idx]
+            opposing_bottom  = min(float(opposing_candle['open']), float(opposing_candle['close']))
+
+            for i in range(last_green_idx + 1, len(recent)):
+                c = recent.iloc[i]
+                c_open  = float(c['open'])
+                c_close = float(c['close'])
+                if c_close < c_open and c_close < opposing_bottom:
+                    return {
+                        'confirmed':      True,
+                        'cisd_level':     opposing_bottom,
+                        'trigger_close':  c_close,
+                        'entry_ref':      c_close,
+                    }
+
+    except Exception as e:
+        logger.debug(f"CISD detection error: {e}")
+    return None
+
+
+
+def check_smt_divergence(symbol: str, spike_type: str) -> bool:
+    """
+    SMT (Smart Money Divergence): correlated assets must diverge to confirm manipulation.
+    If Gold swept its high but Silver did NOT sweep its corresponding high -> manipulation confirmed.
+
+    Pairs checked:
+      XAUUSDm <-> XAGUSDm  (Gold vs Silver)
+      BTCUSDm <-> ETHUSDm  (BTC vs ETH)
+      EURUSDm <-> GBPUSDm  (EUR vs GBP -- both USD pairs, correlated)
+    """
+    correlations = {
+        'XAUUSDm': 'XAGUSDm',
+        'XAGUSDm': 'XAUUSDm',
+        'BTCUSDm': 'ETHUSDm',
+        'ETHUSDm': 'BTCUSDm',
+        'EURUSDm': 'GBPUSDm',
+        'GBPUSDm': 'EURUSDm',
+    }
+    corr_sym = correlations.get(symbol)
+    if not corr_sym:
+        return True  # No correlated pair to check -- pass through (no veto)
+
+    try:
+        df_main = get_market_data(symbol,   mt5.TIMEFRAME_M15, 30)
+        df_corr = get_market_data(corr_sym, mt5.TIMEFRAME_M15, 30)
+        if df_main is None or df_corr is None: return True
+
+        # Reference: high/low from 10-25 bars ago
+        main_ref_high = float(df_main.iloc[-20:-5]['high'].max())
+        main_ref_low  = float(df_main.iloc[-20:-5]['low'].min())
+        corr_ref_high = float(df_corr.iloc[-20:-5]['high'].max())
+        corr_ref_low  = float(df_corr.iloc[-20:-5]['low'].min())
+
+        # Recent: last 5 bars
+        main_rec_high = float(df_main.iloc[-5:]['high'].max())
+        main_rec_low  = float(df_main.iloc[-5:]['low'].min())
+        corr_rec_high = float(df_corr.iloc[-5:]['high'].max())
+        corr_rec_low  = float(df_corr.iloc[-5:]['low'].min())
+
+        if spike_type == 'BEARISH':
+            # Main swept above its ref high -- correlated should NOT have swept its ref high
+            main_swept = main_rec_high > main_ref_high
+            corr_swept = corr_rec_high > corr_ref_high
+            if main_swept and not corr_swept:
+                logger.info(f"[SMT] {symbol}: swept high, {corr_sym} did NOT -> manipulation confirmed")
+                return True
+            elif main_swept and corr_swept:
+                logger.debug(f"[SMT] {symbol}: both swept high -> real breakout, not manipulation")
+                return False
+        else:  # BULLISH
+            main_swept = main_rec_low < main_ref_low
+            corr_swept = corr_rec_low < corr_ref_low
+            if main_swept and not corr_swept:
+                logger.info(f"[SMT] {symbol}: swept low, {corr_sym} did NOT -> manipulation confirmed")
+                return True
+            elif main_swept and corr_swept:
+                logger.debug(f"[SMT] {symbol}: both swept low -> real breakout, not manipulation")
+                return False
+
+    except Exception as e:
+        logger.debug(f"SMT check error: {e}")
+    return True  # On error: don't veto
+
+
+
+def strategy_aox_model(symbol: str, df_m15: pd.DataFrame, df_m1: pd.DataFrame,
+                        trend: str) -> Optional[Dict]:
+    """
+    STRATEGY E: AOX (Algorithmic Order Execution) Sniper Model.
+
+    Full pipeline:
+      1. Detect manipulation spike (Judas Swing) on M15 using CRT logic
+      2. Compute AOX Fibonacci levels from spike
+      3. Check price is inside the Sniper Zone (-0.21 to -0.29)
+      4. Validate SMT divergence between correlated assets
+      5. Drop to M1 and confirm CISD entry trigger (body close through opposing candle)
+      6. Only fires inside a Temporal Macro window
+
+    SL:  beyond AOX -0.29 level (hard institutional stop)
+    TP1: AOX 1.47-1.55 level (60-70% position close)
+    TP2: AOX 2.56-2.64 level (remainder)
+    """
+    # H4 Candle CRT Rule: only trade AM H4 candles (1AM/5AM/9AM EST)
+    # PM candles (1PM/5PM/9PM EST) are excluded per image 2
+    if not is_am_h4_candle():
+        return None
+
+    macro = get_active_macro_window() or "NO_MACRO"
+
+    if df_m15 is None or df_m1 is None or len(df_m15) < 20 or len(df_m1) < 10:
+        return None
+
+    try:
+        atr_m15 = float(calculate_atr(df_m15['high'], df_m15['low'], df_m15['close'], 14).iloc[-1])
+        cur_price = float(df_m15['close'].iloc[-1])
+
+        # Step 1: Detect the manipulation spike
+        spike = detect_manipulation_spike(df_m15, atr_m15)
+        if not spike:
+            return None
+
+        # Step 2: Fibonacci levels
+        fib = compute_aox_fibonacci(spike)
+
+        # Step 3: Price must be inside the Sniper Zone
+        # Sniper zone check: price must be inside -0.21 to -0.29 zone
+        # Three levels: -0.21 (entry), -0.255 (core), -0.29 (deepest)
+        in_sniper_zone = fib['sniper_entry'] <= cur_price <= fib['sniper_top']
+        if not in_sniper_zone:
+            return None
+
+        # Determine which sniper sub-zone price is in (for confidence)
+        in_core_zone  = fib['sniper_entry'] <= cur_price <= fib['sniper_mid']  # -0.21 to -0.255
+        in_deep_zone  = fib['sniper_mid']   <  cur_price <= fib['sniper_top']  # -0.255 to -0.29
+
+        # Step 4: SMT divergence confirmation
+        direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
+        smt_ok = check_smt_divergence(symbol, spike['type'])
+
+        # TRUE DAY OPEN: Longs only in Discount, Shorts only in Premium
+        tdo = get_true_day_open(symbol)
+        _tdo_tag = "TDO_NA"
+        if tdo and tdo > 0:
+            if direction == 'BUY' and cur_price > tdo:
+                logger.debug(f"[AOX TDO] {symbol}: BUY rejected -- Premium (price > TDO {tdo:.4f})")
+                return None
+            if direction == 'SELL' and cur_price < tdo:
+                logger.debug(f"[AOX TDO] {symbol}: SELL rejected -- Discount (price < TDO {tdo:.4f})")
+                return None
+            _tdo_tag = f"DISC({tdo:.3f})" if cur_price < tdo else f"PREM({tdo:.3f})" 
+        if not smt_ok:
+            logger.debug(f"[AOX] {symbol}: SMT failed -- both assets swept, real breakout")
+            return None
+
+        # Step 5: CISD entry trigger on M1
+        cisd = detect_cisd_trigger(df_m1, direction)
+        if not cisd:
+            logger.debug(f"[AOX] {symbol}: waiting for CISD trigger on M1")
+            return None
+
+        # All conditions met -- build entry signal
+        tick = mt5.symbol_info_tick(symbol)
+        if not tick: return None
+        spread_buf = (tick.ask - tick.bid) * 2.5
+
+        if direction == 'SELL':
+            sl  = fib['sl_level'] + spread_buf
+            tp1 = fib['tp1_near']   # 1.47 -- first partial (60-70% close)
+            tp2 = fib['tp2_mid']    # 2.60 -- final target (institutional mid)
+        else:
+            sl  = fib['sl_level'] - spread_buf
+            tp1 = fib['tp1_near']
+            tp2 = fib['tp2_mid']
+
+        sl_dist = abs(cur_price - sl)
+        if sl_dist <= 0: return None
+        rr1 = abs(cur_price - tp1) / sl_dist
+
+        # Minimum 2:1 RR before taking the trade
+        if rr1 < 2.0:
+            logger.debug(f"[AOX] {symbol}: RR {rr1:.1f} < 2.0 minimum")
+            return None
+
+        # Confidence based on SD depth and sniper sub-zone
+        # Base: 0.88 (all 6 conditions met)
+        # +0.04 if spike reached -2.0 SD (institutional depth confirmed)
+        # +0.04 if price in deep sniper zone (-0.255 to -0.29, strongest area)
+        # Max: 0.96
+        _conf = 0.88
+        if spike.get('reached_sd2', False):       _conf += 0.04
+        if in_deep_zone:                           _conf += 0.04
+        if macro == "NY_AM_MACRO_1":               _conf += 0.02  # Silver Bullet highest prob
+        elif macro in ("NY_AM_MACRO_2", "NY_LUNCH_MACRO"): _conf += 0.01
+        _conf = min(0.96, _conf)
+
+        _sd_tag = "SD4+" if spike.get('reached_sd4') else ("SD2+" if spike.get('reached_sd2') else "SD<2")
+        _zone_tag = "DEEP(-0.255/-0.29)" if in_deep_zone else "ENTRY(-0.21/-0.255)"
+
+        logger.info(
+            f"[AOX] {symbol} {direction}: {spike['type']} | macro={macro} | tdo={_tdo_tag} | "
+            f"sniper={_zone_tag} | {_sd_tag} | "
+            f"cisd={cisd['cisd_level']:.4f} | RR={rr1:.1f} | conf={_conf:.2f}"
+        )
+
+        return {
+            'direction':     direction,
+            'stop_loss':     sl,
+            'tp':            tp1,
+            'tp2':           tp2,
+            'strategy_name': f'AOX_{macro}',
+            'confidence':    _conf,
+            'aox_spike':     spike,
+            'aox_fib':       fib,
+            'cisd':          cisd,
+        }
+
+    except Exception as e:
+        logger.error(f"[AOX] {symbol}: error -- {e}")
+        return None
+
+
+
+def detect_double_bottom(df: 'pd.DataFrame', atr: float) -> dict:
+    """
+    W-pattern (Double Bottom): Two lows of roughly equal depth with a swing
+    high between them. Price must then break above the neckline (swing high).
+    Used as pre-filter for bullish EMA cross.
+    """
+    empty = {'found': False, 'pattern': 'NONE'}
+    if df is None or len(df) < 30: return empty
+    try:
+        closes  = df['close'].values
+        highs   = df['high'].values
+        lows    = df['low'].values
+        # Find swing lows in last 60 bars (pivot: lower than 3 bars each side)
+        swing_lows = []
+        data = df.iloc[-60:].reset_index(drop=True)
+        for i in range(3, len(data)-3):
+            if all(data['low'].iloc[i] <= data['low'].iloc[i-j] for j in range(1,4)) and                all(data['low'].iloc[i] <= data['low'].iloc[i+j] for j in range(1,4)):
+                swing_lows.append((i, float(data['low'].iloc[i])))
+
+        if len(swing_lows) < 2: return empty
+
+        # Check pairs of swing lows for W-pattern
+        for i in range(len(swing_lows)-1):
+            pos1, low1 = swing_lows[i]
+            pos2, low2 = swing_lows[-1]  # most recent
+            if pos2 <= pos1: continue
+            gap = pos2 - pos1
+            if gap < 5 or gap > 40: continue  # not too close, not too far
+            # Lows within 0.5x ATR of each other (roughly equal depth)
+            if abs(low1 - low2) > atr * 0.5: continue
+            # There must be a swing high between them (the middle of the W)
+            mid_highs = [float(data['high'].iloc[j]) for j in range(pos1+1, pos2)]
+            if not mid_highs: continue
+            neckline = max(mid_highs)
+            # Current price should be breaking above neckline
+            cur_price = float(data['close'].iloc[-1])
+            if cur_price > neckline * 0.999:
+                return {'found': True, 'pattern': 'DOUBLE_BOTTOM',
+                        'low1': low1, 'low2': low2,
+                        'neckline': neckline,
+                        'reason': f'W-pattern: lows {low1:.3f}/{low2:.3f} neckline={neckline:.3f}'}
+    except Exception as e:
+        logger.debug(f"double_bottom: {e}")
+    return empty
+
+
+def detect_double_top(df: 'pd.DataFrame', atr: float) -> dict:
+    """M-pattern (Double Top): Two highs of roughly equal height."""
+    empty = {'found': False, 'pattern': 'NONE'}
+    if df is None or len(df) < 30: return empty
+    try:
+        data = df.iloc[-60:].reset_index(drop=True)
+        swing_highs = []
+        for i in range(3, len(data)-3):
+            if all(data['high'].iloc[i] >= data['high'].iloc[i-j] for j in range(1,4)) and                all(data['high'].iloc[i] >= data['high'].iloc[i+j] for j in range(1,4)):
+                swing_highs.append((i, float(data['high'].iloc[i])))
+
+        if len(swing_highs) < 2: return empty
+
+        for i in range(len(swing_highs)-1):
+            pos1, high1 = swing_highs[i]
+            pos2, high2 = swing_highs[-1]
+            if pos2 <= pos1: continue
+            gap = pos2 - pos1
+            if gap < 5 or gap > 40: continue
+            if abs(high1 - high2) > atr * 0.5: continue
+            mid_lows = [float(data['low'].iloc[j]) for j in range(pos1+1, pos2)]
+            if not mid_lows: continue
+            neckline = min(mid_lows)
+            cur_price = float(data['close'].iloc[-1])
+            if cur_price < neckline * 1.001:
+                return {'found': True, 'pattern': 'DOUBLE_TOP',
+                        'high1': high1, 'high2': high2,
+                        'neckline': neckline,
+                        'reason': f'M-pattern: highs {high1:.3f}/{high2:.3f} neckline={neckline:.3f}'}
+    except Exception as e:
+        logger.debug(f"double_top: {e}")
+    return empty
+
+
+def detect_head_and_shoulders(df: 'pd.DataFrame', atr: float, inverse: bool = False) -> dict:
+    """
+    Head & Shoulders (bearish) or Inverse H&S (bullish).
+    3 peaks/troughs: left shoulder, head (extreme), right shoulder.
+    Right shoulder roughly equal to left shoulder.
+    """
+    empty = {'found': False, 'pattern': 'NONE'}
+    if df is None or len(df) < 40: return empty
+    try:
+        data = df.iloc[-80:].reset_index(drop=True)
+        if not inverse:  # H&S bearish: find 3 swing highs
+            pivots = []
+            for i in range(4, len(data)-4):
+                if all(data['high'].iloc[i] >= data['high'].iloc[i-j] for j in range(1,5)) and                    all(data['high'].iloc[i] >= data['high'].iloc[i+j] for j in range(1,5)):
+                    pivots.append((i, float(data['high'].iloc[i])))
+        else:  # Inv H&S bullish: find 3 swing lows
+            pivots = []
+            for i in range(4, len(data)-4):
+                if all(data['low'].iloc[i] <= data['low'].iloc[i-j] for j in range(1,5)) and                    all(data['low'].iloc[i] <= data['low'].iloc[i+j] for j in range(1,5)):
+                    pivots.append((i, float(data['low'].iloc[i])))
+
+        if len(pivots) < 3: return empty
+        # Check last 3 pivots as potential L.Shoulder, Head, R.Shoulder
+        ls_pos, ls_val = pivots[-3]
+        hd_pos, hd_val = pivots[-2]
+        rs_pos, rs_val = pivots[-1]
+
+        if not inverse:
+            # Head must be highest; shoulders roughly equal
+            if not (hd_val > ls_val and hd_val > rs_val): return empty
+            if abs(ls_val - rs_val) > atr * 0.8: return empty
+            # Neckline connects the troughs between shoulders/head
+            neckline_pts = [float(data['low'].iloc[j]) for j in range(ls_pos, rs_pos)]
+            neckline = min(neckline_pts) if neckline_pts else 0
+            cur_price = float(data['close'].iloc[-1])
+            if cur_price < neckline * 1.001:
+                return {'found': True, 'pattern': 'HEAD_SHOULDERS',
+                        'head': hd_val, 'neckline': neckline,
+                        'reason': f'H&S: LS={ls_val:.3f} H={hd_val:.3f} RS={rs_val:.3f}'}
+        else:
+            # Inv H&S: head is lowest; shoulders roughly equal
+            if not (hd_val < ls_val and hd_val < rs_val): return empty
+            if abs(ls_val - rs_val) > atr * 0.8: return empty
+            neckline_pts = [float(data['high'].iloc[j]) for j in range(ls_pos, rs_pos)]
+            neckline = max(neckline_pts) if neckline_pts else float('inf')
+            cur_price = float(data['close'].iloc[-1])
+            if cur_price > neckline * 0.999:
+                return {'found': True, 'pattern': 'INV_HEAD_SHOULDERS',
+                        'head': hd_val, 'neckline': neckline,
+                        'reason': f'Inv H&S: LS={ls_val:.3f} H={hd_val:.3f} RS={rs_val:.3f}'}
+    except Exception as e:
+        logger.debug(f"h_and_s: {e}")
+    return empty
+
+
+def detect_ema_pattern_prefilter(df_m5: 'pd.DataFrame', direction: str, atr: float) -> dict:
+    """
+    EMA strategy pre-filter: MUST find one of these patterns before the EMA cross
+    is considered a valid entry:
+      BUY:  Double Bottom (W-pattern) OR Inverse H&S
+      SELL: Double Top (M-pattern) OR Head & Shoulders
+    Without this, EMA crosses fire randomly in sideways markets.
+    """
+    if direction == 'BUY':
+        db = detect_double_bottom(df_m5, atr)
+        if db['found']: return db
+        ihs = detect_head_and_shoulders(df_m5, atr, inverse=True)
+        if ihs['found']: return ihs
+    else:
+        dt = detect_double_top(df_m5, atr)
+        if dt['found']: return dt
+        hs = detect_head_and_shoulders(df_m5, atr, inverse=False)
+        if hs['found']: return hs
+    return {'found': False, 'pattern': 'NONE', 'reason': 'No qualifying pattern found'}
+
+
+def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
+                               entry_price: float, sl: float, account_equity: float) -> bool:
+    """
+    Place a BUY STOP or SELL STOP pending order for the Swappy 3C setup.
+    The order triggers only when price breaks above the 3-candle high (BUY)
+    or below the 3-candle low (SELL). If not triggered in 5 candles (25 minutes
+    on M5), the order expires. If price closes below setup_low (BUY) before
+    triggering, the order is cancelled externally by check_swappy_expirations().
+    """
+    try:
+        sym_info = mt5.symbol_info(symbol)
+        if not sym_info: return False
+
+        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0)
+        sl_dist     = abs(entry_price - sl)
+        if sl_dist <= 0: return False
+
+        tick_val  = sym_info.trade_tick_value
+        tick_size = sym_info.trade_tick_size
+        if tick_val and tick_val > 0 and tick_size > 0:
+            pip_value_per_lot = (tick_val / tick_size) * sym_info.point
+            lot_raw = risk_amount / max(sl_dist * (pip_value_per_lot / sym_info.point), 0.001)
+        else:
+            lot_raw = risk_amount / max(sl_dist * 10, 0.001)
+
+        lot_step = sym_info.volume_step
+        lot_size = round(lot_raw / lot_step) * lot_step
+        lot_size = max(sym_info.volume_min, min(lot_size, sym_info.volume_max))
+
+        # TP: 3:1 RR as per Swappy spec
+        tp_dist = sl_dist * 3.0
+        if direction == 'BUY':
+            tp = entry_price + tp_dist
+            order_type = mt5.ORDER_TYPE_BUY_STOP
+        else:
+            tp = entry_price - tp_dist
+            order_type = mt5.ORDER_TYPE_SELL_STOP
+
+        # Expiry: 5 candles on M5 = 25 minutes from now
+        expiry_dt = datetime.now(timezone.utc) + timedelta(minutes=25)
+
+        # Filling mode
+        mode  = sym_info.filling_mode
+        fill  = (mt5.ORDER_FILLING_FOK if mode & 1 else
+                 mt5.ORDER_FILLING_IOC if mode & 2 else
+                 mt5.ORDER_FILLING_RETURN)
+
+        request = {
+            "action":        mt5.TRADE_ACTION_PENDING,
+            "symbol":        symbol,
+            "volume":        lot_size,
+            "type":          order_type,
+            "price":         entry_price,
+            "sl":            sl,
+            "tp":            tp,
+            "deviation":     20,
+            "magic":         MAGIC_NUMBER,
+            "comment":       f"Swappy3C_{direction}",
+            "type_time":     mt5.ORDER_TIME_SPECIFIED,
+            "expiration":    int(expiry_dt.timestamp()),
+            "type_filling":  fill,
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            # Store setup_low/high for invalidation check
+            if not hasattr(state, 'swappy_pending'):
+                state.swappy_pending = {}
+            state.swappy_pending[result.order] = {
+                'symbol': symbol, 'direction': direction,
+                'setup_high': sw.get('setup_high', entry_price),
+                'setup_low':  sw.get('setup_low',  sl),
+                'placed_at':  datetime.now(timezone.utc),
+            }
+            logger.info(
+                f"[SWAPPY PENDING] {symbol} {direction} STOP @ {entry_price:.4f} "
+                f"SL={sl:.4f} TP={tp:.4f} lot={lot_size} expires=25min"
+            )
+            return True
+        else:
+            logger.warning(f"[SWAPPY PENDING] {symbol}: order failed retcode={result.retcode if result else 'None'}")
+            return False
+    except Exception as e:
+        logger.error(f"[SWAPPY PENDING] {symbol}: {e}")
+        return False
+
+
+def check_swappy_expirations():
+    """
+    1. Cancel pending Swappy orders if price invalidates the setup.
+    2. Track SL hits per price level for the 3rd-time re-entry rule.
+    Rule: 1st SL hit -> ignore 2nd setup. Only 3RD setup at same level allowed.
+    """
+    if not hasattr(state, 'swappy_pending'):    state.swappy_pending    = {}
+    if not hasattr(state, 'swappy_level_hits'): state.swappy_level_hits = {}
+    if not hasattr(state, 'swappy_triggered'):  state.swappy_triggered  = {}
+
+    orders    = mt5.orders_get()
+    positions = mt5.positions_get()
+    order_ids = {o.ticket for o in orders}    if orders    else set()
+    to_remove = []
+
+    for ticket, info in list(state.swappy_pending.items()):
+        if ticket not in order_ids:
+            state.swappy_triggered[ticket] = info  # triggered -> track for SL
+            to_remove.append(ticket)
+            continue
+        sym  = info['symbol']
+        tick = mt5.symbol_info_tick(sym)
+        if not tick: continue
+        cur  = tick.bid
+        if info['direction'] == 'BUY' and cur < info['setup_low']:
+            logger.info(f"[SWAPPY CANCEL] {sym} BUY invalidated @ {cur:.4f} < setup_low {info['setup_low']:.4f}")
+            mt5.order_delete(ticket)
+            to_remove.append(ticket)
+        elif info['direction'] == 'SELL' and cur > info['setup_high']:
+            logger.info(f"[SWAPPY CANCEL] {sym} SELL invalidated @ {cur:.4f} > setup_high {info['setup_high']:.4f}")
+            mt5.order_delete(ticket)
+            to_remove.append(ticket)
+
+    pos_ids = {p.ticket for p in positions} if positions else set()
+    for ticket, info in list(state.swappy_triggered.items()):
+        if ticket in pos_ids: continue  # still open
+        try:
+            history = mt5.history_deals_get(
+                datetime.now(timezone.utc) - timedelta(hours=2),
+                datetime.now(timezone.utc)
+            )
+            if not history: continue
+            for deal in history:
+                if deal.position_id != ticket or deal.entry != mt5.DEAL_ENTRY_OUT: continue
+                closed = deal.price
+                sl_ref = info.get('setup_low') if info['direction'] == 'BUY' else info.get('setup_high')
+                if not sl_ref: continue
+                is_sl = (info['direction'] == 'BUY' and closed <= sl_ref) or                         (info['direction'] == 'SELL' and closed >= sl_ref)
+                if is_sl:
+                    sym = info['symbol']
+                    lvl = round(sl_ref, 2)
+                    key = f"{sym}_{info['direction']}_{lvl}"
+                    hits = state.swappy_level_hits.get(key, 0) + 1
+                    state.swappy_level_hits[key] = hits
+                    logger.info(f"[SWAPPY SL HIT #{hits}] {sym} {info['direction']} @ {lvl:.4f}. "
+                               f"{'BLOCKED (need 3rd)' if hits < 3 else '3RD SETUP -- re-entry ALLOWED'}")
+                del state.swappy_triggered[ticket]
+                break
+        except Exception: pass
+
+    for t in to_remove:
+        state.swappy_pending.pop(t, None)
+
+
+def can_take_swappy_entry(symbol: str, direction: str, setup_low: float, setup_high: float):
+    """3rd-time re-entry rule. Returns (allowed, reason)."""
+    if not hasattr(state, 'swappy_level_hits'):
+        return True, "first_setup"
+    lvl = round(setup_low if direction == 'BUY' else setup_high, 2)
+    key = f"{symbol}_{direction}_{lvl}"
+    hits = state.swappy_level_hits.get(key, 0)
+    if hits == 0:   return True,  "first_setup"
+    elif hits == 1: return False, "second_setup_blocked (1 SL hit -- wait for 3rd)"
+    else:
+        state.swappy_level_hits[key] = 0  # reset after 3rd
+        return True,  "third_setup_allowed (level reset)"
+
 
 def ai_trading_session():
     """
@@ -6844,6 +8400,9 @@ def ai_trading_session():
     while True:
         try:
             iteration += 1
+            if iteration % 50 == 0:
+                _rs = getattr(state,'_rej',{})
+                if _rs: logger.info(f'[REJECT STATS] {_rs}')
             cycle_start = time.time()
             
             account_info = mt5.account_info()
@@ -6920,6 +8479,7 @@ def ai_trading_session():
                 state._last_manage_time = time.time()
                 import threading as _thr_mgr
                 _thr_mgr.Thread(target=manage_all_positions, daemon=True).start()
+                _thr_mgr.Thread(target=check_swappy_expirations, daemon=True).start()
 
             # --- 3. UPDATE CLOSED TRADES (throttled: max every 10s) ---
             if not hasattr(state, '_last_closed_time'): state._last_closed_time = 0.0
@@ -7061,6 +8621,8 @@ def ai_trading_session():
                     h1_trend = "NEUTRAL"
 
                 # H4 vs H1 alignment: if they conflict, skip (no clear direction)
+                # Only skip on CONFIRMED conflict -- both HTFs have strong opinions that differ
+                # If either is NEUTRAL, there's no conflict (just uncertainty)
                 if h4_bias != "NEUTRAL" and h1_trend != "NEUTRAL" and h4_bias != h1_trend:
                     logger.debug(f"[MTF] {symbol}: H4={h4_bias} conflicts H1={h1_trend} -- skip")
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
@@ -7149,58 +8711,86 @@ def ai_trading_session():
                     try:
                         _e9  = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-1])
                         _e9p = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-2])
-                        _e15 = float(df_m5['close'].ewm(span=15, adjust=False).mean().iloc[-1])
-                        _e15p= float(df_m5['close'].ewm(span=15, adjust=False).mean().iloc[-2])
-                        _e50 = float(df_m5['close'].ewm(span=50, adjust=False).mean().iloc[-1])
-
-                        # BUY cross: 9 EMA crosses ABOVE 15 EMA (was below, now above)
-                        # Hard cross: EMA9 crossed EMA15 this candle
-                        _cross_bull = (_e9p <= _e15p) and (_e9 > _e15) and (_cur_price > _e50)
-                        _cross_bear = (_e9p >= _e15p) and (_e9 < _e15) and (_cur_price < _e50)
-                        # Near-cross: EMA9 approaching EMA15 from below/above with strong slope
-                        # (catches the setup 1-2 bars before actual cross = better entry)
-                        _gap_pct = abs(_e9 - _e15) / max(_e15, 1) * 100
-                        # Near-cross: approaching with momentum (0.15% gap = ~$6.50 for Gold)
-                        _near_cross_bull = (not _cross_bull and _e9 < _e15 and
-                                            _e9 > _e9p and _gap_pct < 0.15 and _cur_price > _e50)
-                        _near_cross_bear = (not _cross_bear and _e9 > _e15 and
-                                            _e9 < _e9p and _gap_pct < 0.15 and _cur_price < _e50)
-                        # 9 EMA bounce: price pulled to 9 EMA and bouncing in trend direction
-                        # (the "bend" signal from EMA strategy docs)
-                        _e9_touch_bull = (not _cross_bull and not _near_cross_bull and
-                                          abs(_cur_price - _e9) < _e9 * 0.001 and  # within 0.1% of 9 EMA
-                                          _e9 > _e9p and _cur_price > _e50 and  # 9 EMA rising, price above 50
-                                          df_m5['close'].iloc[-1] > df_m5['open'].iloc[-1])  # last candle green
-                        _e9_touch_bear = (not _cross_bear and not _near_cross_bear and
-                                          abs(_cur_price - _e9) < _e9 * 0.001 and
-                                          _e9 < _e9p and _cur_price < _e50 and
-                                          df_m5['close'].iloc[-1] < df_m5['open'].iloc[-1])  # last candle red
-                        _cross_bull = _cross_bull or _near_cross_bull or _e9_touch_bull
-                        _cross_bear = _cross_bear or _near_cross_bear or _e9_touch_bear
-
-                        _cross_valid = (_cross_bull and _trade_direction == 'BUY') or                                        (_cross_bear and _trade_direction == 'SELL')
-
-                        if _cross_valid:
-                            # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
-                            _lookback_ema = df_m5.iloc[-20:]
-                            if _trade_direction == 'BUY':
-                                _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
+                        _e25 = float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-1])
+                        _e25p= float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-2])
+                        _e200= float(df_m5['close'].ewm(span=200, adjust=False).mean().iloc[-1])
+                        _e50 = float(df_m5['close'].ewm(span=50,  adjust=False).mean().iloc[-1])
+                        # 200 EMA TREND GATE (hard rule): Long only above 200 EMA, Short only below.
+                        # Without this the bot trades EMA crosses against the macro trend and hits SL.
+                        _above_200 = _cur_price > _e200
+                        _below_200 = _cur_price < _e200
+                        _200_gate_pass = (_trade_direction == 'BUY' and _above_200) or \
+                                         (_trade_direction == 'SELL' and _below_200)
+                        if not _200_gate_pass:
+                            logger.debug(f'[EMA 200 GATE] {symbol}: {_trade_direction} blocked -- '
+                                         f'price={_cur_price:.4f} {"below" if _trade_direction=="BUY" else "above"} '
+                                         f'200 EMA={_e200:.4f}')
+                            state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                        else:
+                            # PATTERN PRE-FILTER (doc requirement):
+                            # EMA cross is only valid after W/M/H&S pattern forms.
+                            # Without this, we trade random crossovers in ranging markets.
+                            _ema_pattern = detect_ema_pattern_prefilter(df_m5, _trade_direction, _atr_m5)
+                            if not _ema_pattern['found']:
+                                logger.debug(f"[EMA PATTERN] {symbol}: no qualifying pattern -- skip cross")
+                                state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                                # Don't continue -- let other strategies still check
                             else:
-                                _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
-                            setup = {
-                                'signal':    _trade_direction,
-                                'reason':    'EMA_SCALP_CROSS',
-                                'stop_loss': _sl_ema,
-                                'strategy_type': 'EMA',
-                                'liquidity_distance':  0.6,
-                                'liquidity_strength':  _ema_m5['strength'] == 'STRONG' and 0.8 or 0.65,
-                                'momentum_state':      0.7,
-                                'structure_alignment': 0.65,
-                                'entry_price': _cur_price,
-                                'htf_needed': False,   # EMA scalp never needs HTF OB
-                            }
-                            logger.debug(f"[EMA SCALP] {symbol}: 9/15 cross {'bullish' if _cross_bull else 'bearish'} "
-                                         f"e9={_e9:.4f} e15={_e15:.4f} e50={_e50:.4f}")
+                                logger.debug(f"[EMA PATTERN] {symbol}: {_ema_pattern['pattern']} -- EMA cross valid")
+
+                            # BUY cross: 9 EMA crosses ABOVE 25 EMA (was below, now above)
+                            # Hard cross: EMA9 crossed EMA25 this candle
+                            _cross_bull = (_e9p <= _e25p) and (_e9 > _e25) and (_cur_price > _e50)
+                            _cross_bear = (_e9p >= _e25p) and (_e9 < _e25) and (_cur_price < _e50)
+                            # Near-cross: EMA9 approaching EMA25 from below/above with strong slope
+                            # (catches the setup 1-2 bars before actual cross = better entry)
+                            _gap_pct = abs(_e9 - _e25) / max(_e25, 1) * 100
+                            # Near-cross: approaching with momentum (0.15% gap = ~$6.50 for Gold)
+                            _near_cross_bull = (not _cross_bull and _e9 < _e25 and
+                                                _e9 > _e9p and _gap_pct < 0.15 and _cur_price > _e50)
+                            _near_cross_bear = (not _cross_bear and _e9 > _e25 and
+                                                _e9 < _e9p and _gap_pct < 0.15 and _cur_price < _e50)
+                            # 9 EMA bounce: price pulled to 9 EMA and bouncing in trend direction
+                            # (the "bend" signal from EMA strategy docs)
+                            _e9_touch_bull = (not _cross_bull and not _near_cross_bull and
+                                              abs(_cur_price - _e9) < _e9 * 0.001 and  # within 0.1% of 9 EMA
+                                              _e9 > _e9p and _cur_price > _e50 and  # 9 EMA rising, price above 50
+                                              df_m5['close'].iloc[-1] > df_m5['open'].iloc[-1])  # last candle green
+                            _e9_touch_bear = (not _cross_bear and not _near_cross_bear and
+                                              abs(_cur_price - _e9) < _e9 * 0.001 and
+                                              _e9 < _e9p and _cur_price < _e50 and
+                                              df_m5['close'].iloc[-1] < df_m5['open'].iloc[-1])  # last candle red
+                            _cross_bull = _cross_bull or _near_cross_bull or _e9_touch_bull
+                            _cross_bear = _cross_bear or _near_cross_bear or _e9_touch_bear
+
+                            _cross_valid = (_cross_bull and _trade_direction == 'BUY') or \
+                                           (_cross_bear and _trade_direction == 'SELL')
+
+                            if _cross_valid:
+                                # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
+                                _lookback_ema = df_m5.iloc[-20:]
+                                if _trade_direction == 'BUY':
+                                    _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
+                                else:
+                                    _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
+                                setup = {
+                                    'signal':    _trade_direction,
+                                    'reason':    'EMA_SCALP_CROSS',
+                                    'stop_loss': _sl_ema,
+                                    'strategy_type': 'EMA',
+                                    '_requires_trending': True,   # BLOCKED in RANGING market
+                                    # 50 EMA = primary TP target (doc rule)
+                                    'ema50_tp':  float(_e50),     # structural TP overridden to 50 EMA
+                                    'liquidity_distance':  0.6,
+                                    'liquidity_strength':  _ema_m5['strength'] == 'STRONG' and 0.8 or 0.65,
+                                    'momentum_state':      0.7,
+                                    'structure_alignment': 0.65,
+                                    'entry_price': _cur_price,
+                                    'htf_needed': False,   # EMA scalp never needs HTF OB
+                                }
+                                logger.debug(f"[EMA SCALP] {symbol}: 9/25 cross {'bullish' if _cross_bull else 'bearish'} "
+                                             f"e9={_e9:.4f} e25={_e25:.4f} e50={_e50:.4f} e200={_e200:.4f} "
+                                             f"(price {'above' if _above_200 else 'below'} 200 EMA -- gate passed)")
                     except Exception as _ema_err:
                         logger.debug(f"[EMA SCALP] error: {_ema_err}")
 
@@ -7218,31 +8808,47 @@ def ai_trading_session():
                         _recent_lo = float(df_m5['low'].iloc[-20:-1].min())
                         _near_support = (_cur_price - _recent_lo) / max(_recent_hi - _recent_lo, 1) < 0.35
                         _near_resist  = (_recent_hi - _cur_price) / max(_recent_hi - _recent_lo, 1) < 0.35
-                        _good_location = (_trade_direction == 'BUY' and _near_support) or                                          (_trade_direction == 'SELL' and _near_resist) or                                          True  # allow even if not perfectly at level
+                        # Location: BUY near support (bottom 35% of range) or SELL near resistance (top 35%)
+                        # This prevents entering Swappy mid-range where risk:reward is poor
+                        _good_location = (_trade_direction == 'BUY' and _near_support) or                                          (_trade_direction == 'SELL' and _near_resist)
 
                         if _good_location:
-                            # SL: last swing extreme in last 15 bars + buffer
-                            _sw_scan = df_m5.iloc[-15:]
-                            if _trade_direction == 'BUY':
-                                _sl_sw = float(_sw_scan['low'].min()) - _atr_m5 * 0.3
+                            # 3RD-TIME RE-ENTRY RULE: If this level has already produced 1 SL hit,
+                            # the 2nd setup is blocked (level is still being rejected by market).
+                            # Only the 3rd setup at the same level is allowed -- by that point
+                            # the market has proven it won't give price away there cheaply.
+                            _sw_low  = float(_sw.get('setup_low',  _cur_price - _atr_m5))
+                            _sw_high = float(_sw.get('setup_high', _cur_price + _atr_m5))
+                            _sw_allowed, _sw_reason = can_take_swappy_entry(
+                                symbol, _trade_direction, _sw_low, _sw_high)
+                            if not _sw_allowed:
+                                logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_trade_direction} blocked -- {_sw_reason}")
+                                state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                             else:
-                                _sl_sw = float(_sw_scan['high'].max()) + _atr_m5 * 0.3
-                            setup = {
-                                'signal':    _trade_direction,
-                                'reason':    f"SWAPPY_3C_{_sw['pattern']}",
-                                'stop_loss': _sl_sw,
-                                'strategy_type': 'SWAPPY',
-                                'liquidity_distance':  0.6,
-                                'liquidity_strength':  _sw['strength'],
-                                'momentum_state':      _sw['strength'],
-                                'structure_alignment': 0.65,
-                                'entry_price':         _sw['entry_level'] or _cur_price,
-                                'swappy_reason':       _sw['reason'],
-                                'at_support': _near_support,
-                                'at_resist':  _near_resist,
-                                'htf_needed': False,  # Swappy never needs HTF OB
-                            }
-                            logger.debug(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} near_support={_near_support} near_resist={_near_resist}")
+                                if _sw_reason != 'first_setup':
+                                    logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_sw_reason} -- entry allowed")
+                                # SL: last swing extreme in last 15 bars + buffer
+                                _sw_scan = df_m5.iloc[-15:]
+                                if _trade_direction == 'BUY':
+                                    _sl_sw = float(_sw_scan['low'].min()) - _atr_m5 * 0.3
+                                else:
+                                    _sl_sw = float(_sw_scan['high'].max()) + _atr_m5 * 0.3
+                                setup = {
+                                    'signal':    _trade_direction,
+                                    'reason':    f"SWAPPY_3C_{_sw['pattern']}",
+                                    'stop_loss': _sl_sw,
+                                    'strategy_type': 'SWAPPY',
+                                    'liquidity_distance':  0.6,
+                                    'liquidity_strength':  _sw['strength'],
+                                    'momentum_state':      _sw['strength'],
+                                    'structure_alignment': 0.65,
+                                    'entry_price':         _sw['entry_level'] or _cur_price,
+                                    'swappy_reason':       _sw['reason'],
+                                    'at_support': _near_support,
+                                    'at_resist':  _near_resist,
+                                    'htf_needed': False,  # Swappy never needs HTF OB
+                                }
+                                logger.debug(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} near_support={_near_support} near_resist={_near_resist}")
 
                 # 
                 # STRATEGY C: SSM / ICT FVG RETEST (institutional sweep)
@@ -7275,7 +8881,40 @@ def ai_trading_session():
                         }
                         logger.debug(f"[SSM] {symbol}: FVG retest found, at_htf_zone={_ssm_in_zone}")
 
-                # Liquidity Grab and Kill Zone (also SSM-family, use HTF context)
+                # STRATEGY D: AOX MODEL -- 25/25/50 Layered Execution
+                # Layer 1 (25%): SD zone tap
+                # Layer 2 (25%): SMT + FPFVG Turtle Soup confirmation
+                # Layer 3 (50%): Hippo/Mitigation block
+                # This runs independently and manages its own state -- no `setup` needed
+                if df_m1 is not None and state.daily_trades < config.MAX_DAILY_TRADES:
+                    _acct_now_aox = mt5.account_info()
+                    if _acct_now_aox:
+                        _aox_executed = run_aox_layered_entry(
+                            symbol, df_m5, df_m1, effective_trend, _acct_now_aox.equity)
+                        if _aox_executed:
+                            continue  # AOX placed a layer, skip rest of pipeline this iteration
+
+                # SHAAKUNI SSM: dedicated HTF sweep + extreme OB entry
+                # This replaces generic liquidity grab with proper Shaakuni rules
+                if not setup and df_h1 is not None:
+                    _ssm_result = strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, effective_trend)
+                    if _ssm_result:
+                        setup = {
+                            'signal':          _ssm_result['signal'],
+                            'reason':          'SHAAKUNI_SSM',
+                            'stop_loss':       _ssm_result['stop_loss'],
+                            'strategy_type':   'SSM',
+                            'limit_entry':     _ssm_result.get('limit_entry'),
+                            'order_type':      'LIMIT',
+                            'liquidity_distance': 0.88,
+                            'liquidity_strength': 0.9,
+                            'momentum_state':     0.85,
+                            'structure_alignment': 0.88,
+                        }
+                        logger.info(f"[SHAAKUNI] {symbol}: SSM setup found | "
+                                   f"{_ssm_result['signal']} @ {_ssm_result.get('limit_entry',0):.4f}")
+
+                # Generic Liquidity Grab and Kill Zone (fallback)
                 if not setup:
                     _s = strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
                     if _s:
@@ -7300,7 +8939,10 @@ def ai_trading_session():
                             'signal':    _s['direction'],
                             'reason':    _s.get('strategy_name', 'ICT_KILLZONE'),
                             'stop_loss': _s['stop_loss'],
-                            'strategy_type': 'SSM',
+                            # ICT_KILLZONE is timing-based -- kill zone time IS the confluence
+                            # It doesn't need a separate 3C sweep confirmation
+                            # (using EMA path so it doesn't hit the SSM+3C gate)
+                            'strategy_type': 'ICT',
                             'liquidity_distance':  0.6,
                             'liquidity_strength':  0.7,
                             'momentum_state':      0.6,
@@ -7346,6 +8988,23 @@ def ai_trading_session():
                 setup['ema_strength'] = _ema_m5['strength']
                 setup['ema_reason']   = _ema_m5['reason']
 
+                # QUOTA MODE: when AI quota exceeded, only strongest signals go through
+                _quota_active = hasattr(state, '_quota_resume') and datetime.now() < state._quota_resume
+                if _quota_active:
+                    # Quota mode: SSM/Shaakuni sweep + ICT timing = self-confirming, no AI needed
+                    _strat_t = setup.get('strategy_type', 'SSM')
+                    _reason  = setup.get('reason', '')
+                    _is_self_confirming = _strat_t in ('ICT', 'AOX', 'SSM') or _reason in (
+                        'ICT_KILLZONE', 'LIQUIDITY_GRAB', 'AOX_SNIPER', 'SHAAKUNI_SSM')
+                    if not _is_self_confirming:
+                        # For EMA/Swappy in quota mode: need STRONG EMA or 3C
+                        _ema_ok = setup.get('ema_strength') == 'STRONG'
+                        _3c_ok  = setup.get('3c_confirmed', False)
+                        if not (_ema_ok or _3c_ok):
+                            logger.debug(f"[QUOTA MODE] {symbol}: EMA+3C weak, not self-confirming -- skip")
+                            continue
+                    logger.debug(f"[QUOTA MODE] {symbol}: {_strat_t}/{_reason} -- proceeding without AI")
+
                 _strat_type_early = setup.get('strategy_type', 'SSM')
                 if not _3c['confirmed'] and _strat_type_early == 'SSM':
                     # SSM/ICT requires 3C sweep confirmation (the institutional sweep pattern)
@@ -7355,7 +9014,9 @@ def ai_trading_session():
                         logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
                         state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
                         continue
-                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY'):
+                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'ICT', 'AOX'):
+                    # EMA, Swappy, ICT: don't require 3C (they have built-in confirmation)
+                    # ICT_KILLZONE: kill zone timing = confluence, 3C not needed
                     logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
 
                 if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
@@ -7403,7 +9064,9 @@ def ai_trading_session():
                 session_strength = 1.0 if session_str in ["LONDON", "NEW_YORK", "LONDON_NY"] else 0.5
 
                 try:
-                    regime = regime_detector.detect_regime(symbol, df_m5)
+                    # Regime from H4 (structural context) not M5 (too noisy)
+                    _df_h4_regime = get_market_data(symbol, mt5.TIMEFRAME_H4, 60)
+                    regime = regime_detector.detect_regime(symbol, _df_h4_regime) if _df_h4_regime is not None else regime_detector.detect_regime(symbol, df_m5)
                 except Exception:
                     regime = "RANGING"
 
@@ -7516,9 +9179,14 @@ def ai_trading_session():
                         _l3_last = state.l3_last_call.get(symbol, 0)
                         _l3_age  = time.time() - _l3_last
 
-                        if _l3_age < 300 and symbol in state.l3_last_score:
-                            _l3_score    = state.l3_last_score[symbol]
-                            _l3_approved = _l3_score >= 6
+                        _strat_type   = setup.get('strategy_type', 'SSM')
+                        _l3_cache_key = f"{symbol}_{direction}_{_strat_type}"
+                        _is_ssm_call  = _strat_type in ('SSM','ICT','AOX')
+                        _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
+                        _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
+                        if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
+                            _l3_score    = _l3_cached_score
+                            _l3_approved = _l3_score >= _l3_min_score
                             _l3_reason   = f"cached ({_l3_age:.0f}s ago)"
                             _l3_risk_mod = 1.0
                             logger.debug(f"[AI L3] {symbol}: cached score={_l3_score}/10")
@@ -7542,23 +9210,115 @@ def ai_trading_session():
                             _l3_reason   = _l3_result.get('reason', '')
                             _l3_risk_mod = _l3_result.get('risk_modifier', 1.0)
                             state.l3_last_call[symbol]  = time.time()
-                            state.l3_last_score[symbol] = _l3_score
+                            state.l3_last_score[symbol] = _l3_score  # backward compat
+                            state.l3_last_score[_l3_cache_key] = _l3_score  # new keyed cache
 
-                        _strat_type   = setup.get('strategy_type', 'SSM')
-                        _l3_min_score = 5  # EMA/SWAPPY/SSM all accept 5+ -- Gemini is conservative on M5 data
+                        #  MULTI-TIMEFRAME REGIME FILTER 
+                        # H4 = macro context (sets TP strategy)
+                        # M5 = local entry context (must be TRENDING to enter)
+                        #
+                        # Decision table:
+                        #   H4:TRENDING + M5:TRENDING  full trend trade
+                        #   H4:RANGING  + M5:TRENDING  range scalp (TP = range boundary)
+                        #   H4:TRENDING + M5:RANGING   skip (wait for M5 breakout)
+                        #   H4:RANGING  + M5:RANGING   skip
+                        #   H4:CHOPPY   + any          skip
+                        #
+                        # Note: H4 RANGING does NOT block trades.
+                        # A 400-500 pip Gold H4 range = M15 can trend 150 pips inside it.
+                        # 
 
-                        if _l3_score < _l3_min_score:
+                        _ema_str  = setup.get('ema_strength', 'WEAK')
+                        _3c_conf  = setup.get('3c_confirmed', False)
+
+                        # Step 1: M5 local regime -- is there actually a local trend?
+                        _m5_regime = regime_detector.detect_regime(symbol, df_m5)
+
+                        if _m5_regime == 'RANGING':
+                            # No local trend on M5 -- skip regardless of H4
+                            logger.debug(f"[REGIME] {symbol}: M5=RANGING -- no local trend, skip")
+                            state._rej['m5_ranging'] = state._rej.get('m5_ranging', 0) + 1
+                            continue
+
+                        # Step 2: H4 context from `regime` variable (already computed above)
+                        _h4_regime = regime  # H4 regime (set earlier in the scan loop)
+
+                        if _h4_regime == 'CHOPPY':
+                            logger.debug(f"[REGIME] {symbol}: H4=CHOPPY -- skip")
+                            state._rej['h4_choppy'] = state._rej.get('h4_choppy', 0) + 1
+                            continue
+
+                        # Step 3: Set trade mode based on combined regime
+                        if _h4_regime == 'RANGING' and _m5_regime == 'TRENDING':
+                            # Range scalp mode: valid trade, but TP must be range boundary
+                            # not a trend extension -- mark for constrained TP
+                            setup['_range_scalp_mode'] = True
+                            logger.debug(f"[REGIME] {symbol}: H4=RANGING M5=TRENDING  range scalp mode")
+                        else:
+                            setup['_range_scalp_mode'] = False
+
+                        # Step 4: Quality gate based on strategy type
+                        # ICT_KILLZONE: timing is the confluence, allow EMA:WEAK (kill zone = setup)
+                        # EMA/SWAPPY in TRENDING H4: require STRONG or 3C -- no weak signals in trend
+                        # EMA/SWAPPY in RANGING H4: EMA:WEAK allowed (range scalp, confirmed by M5 trend)
+                        if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
+                            if _ema_str == 'WEAK' and not _3c_conf:
+                                logger.debug(f"[WEAK+NO3C] {symbol}: TRENDING H4 + EMA:WEAK + no 3C -- skip")
+                                state._rej['weak_no3c'] = state._rej.get('weak_no3c', 0) + 1
+                                continue
+
+                        # PULLBACK GATE: if HTF is bearish but M5 signal is BUY,
+                        # only allow if price is at a valid H1 support level (not just any pullback)
+                        _m5_dir  = setup.get('signal', '')
+                        _h4_bias = h4_bias  # H4 macro direction (BULLISH/BEARISH/NEUTRAL)
+                        if _m5_dir == 'BUY' and _h4_bias == 'BEARISH':
+                            # Counter-trend BUY in bearish HTF -- needs structural support
+                            # Check if we have FVG or OB confluence, not just EMA cross
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            if not _has_struct:
+                                logger.debug(f"[HTF GATE] {symbol}: BUY rejected in BEARISH H4 -- no structural confluence")
+                                continue
+                        elif _m5_dir == 'SELL' and _h4_bias == 'BULLISH':
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            if not _has_struct:
+                                logger.debug(f"[HTF GATE] {symbol}: SELL rejected in BULLISH H4 -- no structural confluence")
+                                continue
+
+                        # L3 minimum score by strategy type
+                        # ICT_KILLZONE: kill zone timing = built-in confluence  allow 5/10
+                        # EMA/SWAPPY: need Gemini to have an opinion (6+)
+                        # EMA:WEAK + no 3C in trending: need strong AI conviction (7)
+                        if _strat_type in ('ICT', 'AOX', 'SSM'):
+                            _l3_min_score = 5  # kill zone time = valid signal even at score 5
+                        elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime == 'TRENDING':
+                            _l3_min_score = 7
+                        else:
+                            _l3_min_score = 6
+
+                        if _l3_score < _l3_min_score or (_l3_score <= 5 and not _l3_approved):
                             state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
+                            # Cooldown based on score (prevents retry spam)
                             if _l3_score <= 3:
-                                state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=30)
-                            logger.info(f"[AI L3] {symbol}: score={_l3_score}/{_l3_min_score} -- skip. {_l3_reason}")
+                                _cd_mins = 30
+                            elif _l3_score == 4:
+                                _cd_mins = 15
+                            else:  # score = 5
+                                _cd_mins = 5   # wait 5 min before retrying this symbol
+                            state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=_cd_mins)
+                            logger.info(f"[AI L3] {symbol}: score={_l3_score}/{_l3_min_score} -- skip ({_cd_mins}min cooldown). {_l3_reason}")
                             continue
 
                         logger.info(f"[AI L3] {symbol}: score={_l3_score}/10 APPROVED. {_l3_reason}")
                         final_risk = min(final_risk * _l3_risk_mod, config.MAX_RISK_PERCENT)
 
                     except Exception as _l3_err:
-                        logger.warning(f"[AI L3] Validation error for {symbol}: {_l3_err} -- using H4 bias fallback")
+                        _l3_err_str = str(_l3_err)
+                        if '429' in _l3_err_str or 'quota' in _l3_err_str.lower():
+                            # Mark quota as exceeded -- tighten all filters
+                            if not hasattr(state, '_quota_resume') or datetime.now() > state._quota_resume:
+                                state._quota_resume = datetime.now() + timedelta(hours=1)
+                                logger.critical(f"[QUOTA] L3 quota exceeded for {symbol}. Tightening filters for 1h.")
+                        logger.warning(f"[AI L3] Validation error for {symbol}: {_l3_err_str[:80]}")
                         _bias_fb = state.approved_bias.get(symbol, 'NEUTRAL')
                         if _bias_fb not in ('NEUTRAL', f'{direction}_ONLY'):
                             continue
