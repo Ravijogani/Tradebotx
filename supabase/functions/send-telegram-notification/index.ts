@@ -29,7 +29,36 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Auth: require JWT and verify caller owns userId (or is admin/service)
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const isServiceRole = token === supabaseKey;
+    let callerId: string | null = null;
+    if (!isServiceRole) {
+      const anonClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+        global: { headers: { Authorization: authHeader } }
+      });
+      const { data: u, error: e } = await anonClient.auth.getUser();
+      if (e || !u?.user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+      callerId = u.user.id;
+    }
+
     const { userId, type, title, message, metadata }: NotificationRequest = await req.json();
+
+    if (!isServiceRole && callerId !== userId) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
 
     console.log(`Processing notification for user ${userId}, type: ${type}`);
 
