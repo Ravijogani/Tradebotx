@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
+import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -19,6 +21,16 @@ serve(async (req) => {
   }
 
   try {
+    // Auth: server-side calls with CRON_SECRET, or an admin user JWT
+    if (!isCronAuthorized(req)) {
+      const authUser = await getAuthUser(req);
+      if (!authUser) return unauthorized(corsHeaders);
+      const { userHasRole } = await import("../_shared/auth.ts");
+      const isAdmin = await userHasRole(authUser.id, 'admin');
+      if (!isAdmin) return forbidden(corsHeaders);
+    }
+    // --- AUTH OK ---
+
     const { actionType, performedBy, targetUser, details }: AdminAlertRequest = await req.json();
     const adminEmail = Deno.env.get('ADMIN_EMAIL') || "tradebotxsuppo@gmail.com";
     const adminEmailCC = Deno.env.get('ADMIN_EMAIL_CC');

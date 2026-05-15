@@ -3,6 +3,8 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { handleError } from "../_shared/error-handler.ts";
 
+import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -20,6 +22,16 @@ serve(async (req) => {
   }
 
   try {
+    // Auth: server-side calls with CRON_SECRET, or an admin user JWT
+    if (!isCronAuthorized(req)) {
+      const authUser = await getAuthUser(req);
+      if (!authUser) return unauthorized(corsHeaders);
+      const { userHasRole } = await import("../_shared/auth.ts");
+      const isAdmin = await userHasRole(authUser.id, 'admin');
+      if (!isAdmin) return forbidden(corsHeaders);
+    }
+    // --- AUTH OK ---
+
     const requestBody = await req.json();
     const { userEmail, userName, signupTimestamp } = newUserAlertSchema.parse(requestBody);
 

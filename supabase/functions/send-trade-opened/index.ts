@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { getEmailTemplate, tradeOpenedContent } from "../_shared/email-templates.ts";
 
+import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -13,6 +15,18 @@ serve(async (req) => {
   }
 
   try {
+    // Auth: allow authenticated user whose email matches `email`, or server-side calls with CRON_SECRET
+    if (!isCronAuthorized(req)) {
+      const authUser = await getAuthUser(req);
+      if (!authUser) return unauthorized(corsHeaders);
+      const body = await req.clone().json().catch(() => ({}));
+      const targetEmail = (body as any).email;
+      if (typeof targetEmail === 'string' && targetEmail.toLowerCase() !== (authUser.email || '').toLowerCase()) {
+        return forbidden(corsHeaders);
+      }
+    }
+    // --- AUTH OK ---
+
     const { email, symbol, tradeType, entryPrice, stopLoss, takeProfit, lotSize } = await req.json();
 
     if (!email || !symbol || !tradeType) {
