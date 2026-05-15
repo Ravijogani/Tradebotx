@@ -5577,6 +5577,23 @@ def manage_all_positions():
                 state.open_positions[ticket] = {'params': {}}
             params = state.open_positions[ticket]['params']
 
+            # === UPDATE RUNNING P&L IN DASHBOARD (throttled to 5s/ticket) ===
+            try:
+                if not hasattr(manage_all_positions, '_last_pnl_push'):
+                    manage_all_positions._last_pnl_push = {}
+                _now_ts = time.time()
+                _last = manage_all_positions._last_pnl_push.get(ticket, 0)
+                if _now_ts - _last >= 5:
+                    manage_all_positions._last_pnl_push[ticket] = _now_ts
+                    trade_db.update_metadata(str(ticket), {
+                        'running_profit': round(float(pos.profit), 2),
+                        'current_price': round(float(current_price), 5),
+                        'stop_loss': float(sl),
+                        'take_profit': float(tp),
+                    })
+            except Exception as _pnl_err:
+                logger.debug(f"[DB] running PnL push failed for {ticket}: {_pnl_err}")
+
             duration_mins = (time.time() - pos.time) / 60.0
             total_dist = abs(tp - entry_price)
             if total_dist == 0:
