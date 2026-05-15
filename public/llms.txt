@@ -1,0 +1,18 @@
+# TradeBotX
+
+> AI-powered algorithmic trading platform that automates Forex and Crypto trading via MetaTrader 5 with proven strategies, 24/7 execution, and built-in risk management.
+
+## Pages
+
+- [Home](/): Product overview, features, and signup.
+- [Pricing](/pricing): Free, Pro, and Enterprise plans.
+- [Docs](/docs): Setup guide, FAQs, and strategy documentation.
+- [Referral Program](/referral-program): Earn rewards by referring new traders.
+- [Status](/status): Live platform uptime and incident history.
+
+## Optional
+
+- [Login](/auth/login): Sign in to your account.
+- [Terms](/terms): Terms of service.
+- [Privacy](/privacy): Privacy policy.
+- [Disclaimer](/disclaimer): Trading risk disclaimer.
