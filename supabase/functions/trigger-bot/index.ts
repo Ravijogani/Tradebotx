@@ -30,6 +30,11 @@ serve(async (req) => {
 
     const { action, strategyId, strategyName } = await req.json();
 
+    const ALLOWED_ACTIONS = new Set(['start', 'stop']);
+    if (!ALLOWED_ACTIONS.has(action)) {
+      throw new Error(`Invalid action: ${action}`);
+    }
+
     console.log(`Bot ${action} request from user ${user.id} for strategy ${strategyId}`);
 
     // Get user setup
@@ -60,27 +65,17 @@ serve(async (req) => {
     const scriptPath = strategy?.python_script_path || 'hybrid_trading_bot_multiuser.py';
     console.log(`Strategy ${strategyName} will use script: ${scriptPath}`);
 
-    // CRITICAL: Decrypt MT5 password before sending to bot
-    // Handle both encrypted and plain text passwords for backwards compatibility
+    // Decrypt MT5 password before sending to the bot manager. There is
+    // deliberately no plaintext fallback here: a password that fails to
+    // decrypt is never forwarded as-is (that would ship an unencrypted
+    // credential to the bot manager). The user must re-save their MT5
+    // credentials via Settings so it gets re-encrypted with the current key.
     let decryptedPassword: string;
     try {
       decryptedPassword = await decrypt(setup.mt5_password);
-      console.log('MT5 password decrypted successfully');
     } catch (decryptError) {
-      // If decryption fails, it might be a plain text password (legacy)
-      console.warn('Failed to decrypt MT5 password, assuming plain text:', decryptError);
-      
-      // Check if it looks like encrypted data (base64 format with sufficient length)
-      const isLikelyEncrypted = setup.mt5_password.length > 40 && /^[A-Za-z0-9+/=]+$/.test(setup.mt5_password);
-      
-      if (isLikelyEncrypted) {
-        // If it looks encrypted but failed to decrypt, throw error
-        throw new Error('Failed to decrypt MT5 credentials. Please update your setup with new credentials.');
-      }
-      
-      // Use plain text password (legacy support)
-      decryptedPassword = setup.mt5_password;
-      console.log('Using plain text MT5 password (legacy mode). Consider re-encrypting via setup update.');
+      console.error('Failed to decrypt MT5 password:', decryptError);
+      throw new Error('Failed to decrypt MT5 credentials. Please update your MT5 password in Settings and try again.');
     }
 
     // Prepare bot configuration with script path
@@ -199,24 +194,25 @@ serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             }
           );
-        } catch (fetchError: any) {
+        } catch (fetchError) {
           clearTimeout(timeoutId);
-          
-          if (fetchError.name === 'AbortError') {
+
+          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
             console.error(`Bot manager request timed out after 8 seconds`);
             throw new Error('Bot manager request timed out - server may be down');
           }
           throw fetchError;
         }
-      } catch (httpError: any) {
-        console.error(`Failed to reach bot manager via HTTP: ${httpError.message}`);
+      } catch (httpError) {
+        const httpMessage = httpError instanceof Error ? httpError.message : String(httpError);
+        console.error(`Failed to reach bot manager via HTTP: ${httpMessage}`);
         
         // Return error immediately instead of falling back to queue silently
         // This gives user clear feedback that bot manager is unreachable
         return new Response(
           JSON.stringify({
             success: false,
-            error: `Bot manager unreachable: ${httpError.message}. Please check if the trading server is running.`,
+            error: `Bot manager unreachable: ${httpMessage}. Please check if the trading server is running.`,
             method: 'http_failed'
           }),
           {
@@ -231,7 +227,6 @@ serve(async (req) => {
     // Store command in database for bot manager to poll
     console.log(`Queueing bot ${action} command in database for user ${user.id}`);
     
-    const { config: _omit, ...safeConfig } = botConfig as any;
     const safeQueueConfig = {
       user_id: botConfig.user_id,
       strategy_id: botConfig.strategy_id,
@@ -276,12 +271,13 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to trigger bot';
     console.error('Error in trigger-bot:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Failed to trigger bot',
+        error: message,
       }),
       {
         status: 400,

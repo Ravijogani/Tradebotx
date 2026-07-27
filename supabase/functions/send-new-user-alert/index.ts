@@ -12,7 +12,7 @@ const corsHeaders = {
 
 const newUserAlertSchema = z.object({
   userEmail: z.string().email().max(255),
-  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-\.]+$/, 'Invalid characters in name'),
+  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-.]+$/, 'Invalid characters in name'),
   signupTimestamp: z.string()
 });
 

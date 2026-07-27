@@ -47,8 +47,9 @@ const StrategyBuilderPage = () => {
       const userPlanType = (subscription?.plans as any)?.plan_type;
       setPlanType(userPlanType);
 
-      // Enterprise users only
-      if (userPlanType === "enterprise") {
+      // Enterprise users only, and only while their subscription is actually
+      // active/trialing — matches the RLS check enforced server-side.
+      if (userPlanType === "enterprise" && (subscription?.status === "active" || subscription?.status === "trial")) {
         setHasAccess(true);
       }
     } catch (error: any) {

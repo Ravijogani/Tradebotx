@@ -185,7 +185,7 @@ export const NotificationsCenterEnhanced = () => {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      !notification.read && markAsRead(notification.id);
+                      if (!notification.read) markAsRead(notification.id);
                     }
                   }}
                   tabIndex={0}

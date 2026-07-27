@@ -177,8 +177,10 @@ serve(async (req) => {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
-            chatId: setup.telegram_chat_id,
-            message: `⏹️ Trading bot stopped\n\nStrategy: ${userStrategy.strategies?.name}\nTotal Trades: ${perfData?.total_trades || 0}\nTotal P&L: $${(perfData?.total_profit_loss || 0).toFixed(2)}\nStopped at: ${new Date().toLocaleString()}`,
+            userId: user.id,
+            type: 'strategy_status',
+            title: 'Trading bot stopped',
+            message: `Strategy: ${userStrategy.strategies?.name}\nTotal Trades: ${perfData?.total_trades || 0}\nTotal P&L: $${(perfData?.total_profit_loss || 0).toFixed(2)}\nStopped at: ${new Date().toLocaleString()}`,
           }
         });
       } catch (telegramError) {

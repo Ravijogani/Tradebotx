@@ -12,10 +12,12 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { ScrollLink } from "@/components/ScrollLink";
+import { SignupDialog } from "@/components/auth/SignupDialog";
 
 export const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [showSignup, setShowSignup] = useState(false);
 
   useEffect(() => {
     // Check initial theme
@@ -86,8 +88,11 @@ export const Navbar = () => {
           <Button asChild variant="ghost" className="hover:bg-primary/10">
             <Link to="/auth/login">Sign In</Link>
           </Button>
-          <Button asChild className="bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300">
-            <Link to="/auth/login?signup=true">Get Started</Link>
+          <Button
+            className="bg-gradient-to-r from-primary to-accent hover:shadow-glow transition-all duration-300"
+            onClick={() => setShowSignup(true)}
+          >
+            Get Started
           </Button>
         </div>
 
@@ -135,14 +140,22 @@ export const Navbar = () => {
                 <Button asChild variant="ghost" className="w-full" onClick={() => setIsOpen(false)}>
                   <Link to="/auth/login">Sign In</Link>
                 </Button>
-                <Button asChild className="w-full bg-gradient-to-r from-primary to-accent" onClick={() => setIsOpen(false)}>
-                  <Link to="/auth/login?signup=true">Get Started</Link>
+                <Button
+                  className="w-full bg-gradient-to-r from-primary to-accent"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setShowSignup(true);
+                  }}
+                >
+                  Get Started
                 </Button>
               </div>
             </div>
           </SheetContent>
         </Sheet>
       </div>
+
+      <SignupDialog open={showSignup} onOpenChange={setShowSignup} />
     </nav>
   );
 };

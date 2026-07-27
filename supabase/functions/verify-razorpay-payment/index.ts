@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createHmac } from "https://deno.land/std@0.177.0/node/crypto.ts";
 import { handleError } from "../_shared/error-handler.ts";
-import { getAuthUser, unauthorized, forbidden } from "../_shared/auth.ts";
+import { getAuthUser, unauthorized, forbidden, timingSafeEqual } from "../_shared/auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -35,7 +35,7 @@ serve(async (req) => {
       .update(text)
       .digest('hex');
 
-    if (generatedSignature !== razorpay_signature) {
+    if (!timingSafeEqual(generatedSignature, razorpay_signature)) {
       throw new Error('Invalid payment signature');
     }
 
@@ -43,6 +43,46 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Fetch the plan to record the correct charged amount and to reject unknown plans
+    const { data: plan, error: planError } = await supabase
+      .from('plans')
+      .select('price')
+      .eq('id', planId)
+      .single();
+
+    if (planError || !plan) {
+      throw new Error('Invalid plan ID');
+    }
+
+    // Idempotency guard: claim this razorpay_payment_id exactly once via a unique
+    // index on payment_history.razorpay_payment_id. If the insert conflicts, this
+    // payment was already processed — return success without re-extending the
+    // subscription, instead of trusting the client to only call this once.
+    const { error: insertError } = await supabase
+      .from('payment_history')
+      .insert({
+        user_id: userId,
+        plan_id: planId,
+        amount: plan.price,
+        currency: 'INR',
+        status: 'completed',
+        razorpay_order_id,
+        razorpay_payment_id,
+        description: 'Subscription payment',
+      });
+
+    if (insertError) {
+      // 23505 = unique_violation — this payment was already recorded/processed.
+      if (insertError.code === '23505') {
+        console.log('Payment already processed, ignoring replay:', razorpay_payment_id);
+        return new Response(JSON.stringify({ success: true, message: 'Payment already verified' }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      throw insertError;
+    }
 
     // Update user subscription to active
     const { error: updateError } = await supabase
@@ -63,7 +103,7 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

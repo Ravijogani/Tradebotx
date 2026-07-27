@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,6 +16,13 @@ export const BotHealthIndicator = () => {
   const [health, setHealth] = useState<BotHealth | null>(null);
   const [isStale, setIsStale] = useState(false);
   const { toast } = useToast();
+  // The 30s interval below is set up once on mount; without a ref its
+  // callback would keep closing over the `health` value from that first
+  // render (null) forever, and unconditionally clear `isStale` every tick.
+  const healthRef = useRef<BotHealth | null>(null);
+  useEffect(() => {
+    healthRef.current = health;
+  }, [health]);
 
   useEffect(() => {
     loadBotHealth();
@@ -73,7 +80,7 @@ export const BotHealthIndicator = () => {
   };
 
   const checkHeartbeatFreshness = (healthData?: BotHealth | null) => {
-    const data = healthData || health;
+    const data = healthData || healthRef.current;
     if (!data) {
       setIsStale(false);
       return;

@@ -10,7 +10,7 @@ const corsHeaders = {
 
 const setupCompletionSchema = z.object({
   userEmail: z.string().email().max(255),
-  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-\.]+$/, 'Invalid characters in name'),
+  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-.]+$/, 'Invalid characters in name'),
   setupDetails: z.object({
     brokerName: z.string().max(100).optional(),
     mt5Account: z.string().min(5).max(20).regex(/^\d+$/, 'MT5 account must be numeric'),

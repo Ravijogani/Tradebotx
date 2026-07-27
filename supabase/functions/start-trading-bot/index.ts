@@ -208,8 +208,10 @@ serve(async (req) => {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
-            chatId: setup.telegram_chat_id,
-            message: `⏳ Bot starting...\n\nStrategy: ${strategyName}\nAccount: ${setup.mt5_account}\nYou'll receive another notification when bot is confirmed running.`,
+            userId: user.id,
+            type: 'strategy_status',
+            title: 'Bot starting',
+            message: `Strategy: ${strategyName}\nAccount: ${setup.mt5_account}\nYou'll receive another notification when the bot is confirmed running.`,
           }
         });
       } catch (telegramError) {

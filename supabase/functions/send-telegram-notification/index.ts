@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { timingSafeEqual } from "../_shared/auth.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,7 +13,7 @@ interface NotificationRequest {
   type: 'trade_alert' | 'pnl_update' | 'strategy_status' | 'account_notification';
   title: string;
   message: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 serve(async (req) => {
@@ -37,7 +39,7 @@ serve(async (req) => {
       });
     }
     const token = authHeader.replace('Bearer ', '');
-    const isServiceRole = token === supabaseKey;
+    const isServiceRole = timingSafeEqual(token, supabaseKey);
     let callerId: string | null = null;
     if (!isServiceRole) {
       const anonClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
@@ -149,11 +151,7 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );
 
-  } catch (error: any) {
-    console.error('Error in send-telegram-notification:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    );
+  } catch (error) {
+    return handleError(error, corsHeaders);
   }
 });

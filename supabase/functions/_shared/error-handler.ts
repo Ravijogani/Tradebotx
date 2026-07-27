@@ -10,7 +10,9 @@ export function generateErrorId(): string {
   return `ERR-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export function getErrorCategory(error: any): string {
+type ErrorLike = { message?: string; stack?: string; name?: string; status?: number };
+
+export function getErrorCategory(error: ErrorLike): string {
   const message = error?.message?.toLowerCase() || '';
   
   if (message.includes('auth') || message.includes('unauthorized') || message.includes('not authenticated')) {
@@ -31,7 +33,7 @@ export function getErrorCategory(error: any): string {
   return 'internal';
 }
 
-export function getGenericErrorMessage(error: any): string {
+export function getGenericErrorMessage(error: ErrorLike): string {
   const category = getErrorCategory(error);
   
   const messages: Record<string, string> = {
@@ -46,26 +48,27 @@ export function getGenericErrorMessage(error: any): string {
   return messages[category] || messages.internal;
 }
 
-export function handleError(error: any, corsHeaders: Record<string, string>): Response {
+export function handleError(error: unknown, corsHeaders: Record<string, string>): Response {
+  const err = (error ?? {}) as ErrorLike;
   // Log full error details server-side
   const errorId = generateErrorId();
   console.error(`[${errorId}] Error details:`, {
-    message: error.message,
-    stack: error.stack,
-    name: error.name,
+    message: err.message,
+    stack: err.stack,
+    name: err.name,
     timestamp: new Date().toISOString()
   });
-  
+
   // Return generic message to client
-  const genericMessage = getGenericErrorMessage(error);
-  
+  const genericMessage = getGenericErrorMessage(err);
+
   return new Response(
     JSON.stringify({
       error: genericMessage,
       error_id: errorId
     }),
     {
-      status: error.status || 500,
+      status: err.status || 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     }
   );
