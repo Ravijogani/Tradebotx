@@ -68,27 +68,55 @@ def get_approved_users():
         sys.exit(1)
 
 
+def _read_marker(folder: str):
+    """Read the full user_id an instance folder was provisioned for, if marked."""
+    marker = os.path.join(folder, "user_id.txt")
+    if os.path.exists(marker):
+        with open(marker, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return None
+
+
 def get_existing_instances():
-    """List user IDs that already have MT5 instances provisioned."""
+    """Map full user_id -> instance folder for already-provisioned users.
+
+    Instances are identified by their user_id.txt marker, not by folder name
+    alone — the folder name is a truncated (8-char) prefix of the user_id and
+    two different users can share that prefix. Legacy instances provisioned
+    before the marker existed are still recognized by folder name, but a new
+    user whose prefix collides with one of those gets a disambiguated folder
+    instead of silently reusing someone else's MT5 terminal.
+    """
+    existing_by_user_id = {}
     if not os.path.exists(MT5_INSTANCES_DIR):
-        return set()
-    return {
-        d for d in os.listdir(MT5_INSTANCES_DIR)
-        if os.path.isdir(os.path.join(MT5_INSTANCES_DIR, d))
-        and os.path.exists(os.path.join(MT5_INSTANCES_DIR, d, "terminal64.exe"))
-    }
+        return existing_by_user_id
+
+    for d in os.listdir(MT5_INSTANCES_DIR):
+        folder = os.path.join(MT5_INSTANCES_DIR, d)
+        if not os.path.isdir(folder) or not os.path.exists(os.path.join(folder, "terminal64.exe")):
+            continue
+        marked_user_id = _read_marker(folder)
+        if marked_user_id:
+            existing_by_user_id[marked_user_id] = folder
+        else:
+            # Legacy instance with no marker — best-effort match on folder name.
+            existing_by_user_id[d] = folder
+
+    return existing_by_user_id
 
 
-def provision_instance(user_id_short):
-    """Copy MT5 template to create a new user instance."""
-    target = os.path.join(MT5_INSTANCES_DIR, user_id_short)
+def provision_instance(full_user_id, folder_name):
+    """Copy MT5 template to create a new, uniquely-marked user instance."""
+    target = os.path.join(MT5_INSTANCES_DIR, folder_name)
     try:
-        log.info(f"[PROVISION] {user_id_short} — copying MT5 template...")
+        log.info(f"[PROVISION] {full_user_id} — copying MT5 template to {folder_name}...")
         shutil.copytree(MT5_TEMPLATE_DIR, target)
-        log.info(f"[OK] {user_id_short} — MT5 instance created at {target}")
+        with open(os.path.join(target, "user_id.txt"), "w", encoding="utf-8") as f:
+            f.write(full_user_id)
+        log.info(f"[OK] {full_user_id} — MT5 instance created at {target}")
         return True
     except Exception as e:
-        log.error(f"[FAIL] {user_id_short} — {e}")
+        log.error(f"[FAIL] {full_user_id} — {e}")
         return False
 
 
@@ -111,8 +139,9 @@ def main():
     # Get approved users via edge function
     approved_user_ids = get_approved_users()
 
-    # Get existing instances (first 8 chars)
+    # Existing instances, keyed by the full user_id they were provisioned for.
     existing = get_existing_instances()
+    used_folder_names = {os.path.basename(p) for p in existing.values()}
     log.info(f"Existing instances: {len(existing)}")
 
     # Provision new users
@@ -121,16 +150,26 @@ def main():
     failed = 0
 
     for full_id in approved_user_ids:
-        short_id = full_id[:8]
-
-        if short_id in existing:
-            log.debug(f"[SKIP] {short_id} — already exists")
+        if full_id in existing:
+            log.debug(f"[SKIP] {full_id} — already exists at {existing[full_id]}")
             skipped += 1
             continue
 
-        if provision_instance(short_id):
+        short_id = full_id[:8]
+        folder_name = short_id
+        if folder_name in used_folder_names:
+            # Prefix collision with a different user's folder — disambiguate
+            # instead of provisioning into (or being mistaken for) theirs.
+            suffix = 2
+            while f"{short_id}-{suffix}" in used_folder_names:
+                suffix += 1
+            folder_name = f"{short_id}-{suffix}"
+            log.warning(f"[COLLISION] {full_id} shares prefix {short_id} with an existing instance — using {folder_name}")
+
+        if provision_instance(full_id, folder_name):
             provisioned += 1
-            existing.add(short_id)
+            existing[full_id] = os.path.join(MT5_INSTANCES_DIR, folder_name)
+            used_folder_names.add(folder_name)
         else:
             failed += 1
 

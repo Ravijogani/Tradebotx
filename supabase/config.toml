@@ -101,3 +101,9 @@ verify_jwt = true
 
 [functions.ai-strategy-assistant]
 verify_jwt = true
+
+[functions.get-approved-users]
+# Called by the external bot manager with a shared secret (x-custom-auth),
+# never with a Supabase user JWT — verify_jwt would reject it at the gateway
+# before the function's own auth check ever runs.
+verify_jwt = false

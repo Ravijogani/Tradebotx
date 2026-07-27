@@ -606,15 +606,6 @@ TELEGRAM_CHAT_ID = args.telegram_chat_id
 TELEGRAM_BOT_TOKEN = args.telegram_bot_token
 MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
 
-# MAGIC NUMBER MANAGEMENT - Deterministic per user+strategy
-if args.magic_number:
-    MAGIC_NUMBER = args.magic_number
-else:
-    # Generate unique magic number from user_id + strategy_id hash
-    MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
-print(f"[MAGIC] Using Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
-print(f"[MT5] Terminal path: {MT5_TERMINAL_PATH or 'default (system)'}")
-
 # Initialize Supabase client
 supabase: Client = create_client(args.supabase_url, args.supabase_key)
 
@@ -622,6 +613,93 @@ supabase: Client = create_client(args.supabase_url, args.supabase_key)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data", USER_ID)
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def _resolve_magic_number(user_id: str, strategy_id: str, data_dir: str) -> int:
+    """Deterministic per (user, strategy) magic number, with a real collision
+    guard instead of just trusting the hash.
+
+    MT5 only needs this to be unique *within one MT5 account* — accounts are
+    already isolated per user (each user gets their own MT5 terminal), so the
+    only collision that actually matters is between two strategies for the
+    *same* user running concurrently on the same account. That's checked
+    against a small per-user registry file rather than a global one; a hash
+    collision that would let one strategy's SL/TP/close logic act on a
+    different strategy's live positions gets bumped to the next free slot
+    and persisted instead of silently colliding.
+    """
+    base = int(hashlib.md5(f"{user_id}_{strategy_id}".encode()).hexdigest(), 16) % 2_000_000_000 + 10_000_000
+
+    registry_path = os.path.join(data_dir, "magic_numbers.json")
+    try:
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            registry = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        registry = {}
+
+    # Already assigned to this exact strategy — reuse it.
+    if strategy_id in registry:
+        return registry[strategy_id]
+
+    taken = set(registry.values())
+    candidate = base
+    while candidate in taken:
+        candidate += 1
+        print(f"[MAGIC] Collision on {candidate - 1} for user={user_id[:8]} strategy={strategy_id[:8]} — trying {candidate}")
+
+    registry[strategy_id] = candidate
+    try:
+        with open(registry_path, 'w', encoding='utf-8') as f:
+            json.dump(registry, f)
+    except OSError as e:
+        print(f"[MAGIC] WARNING: could not persist magic number registry: {e}")
+
+    return candidate
+
+
+def _daily_baseline_path(data_dir: str) -> str:
+    return os.path.join(data_dir, "daily_equity_baseline.json")
+
+
+def load_or_init_daily_baseline(data_dir: str, current_equity: float, today: str) -> float:
+    """Restart-safe daily-loss baseline.
+
+    Previously this was set to *current* equity on every process start with
+    no persistence, so a bot restart mid-day (crash, VM reboot, redeploy)
+    would silently re-baseline the daily-loss circuit breaker from whatever
+    equity happened to be left — erasing losses already taken earlier that
+    same day and letting the account drop further than MAX_DAILY_LOSS_PERCENT
+    / MAX_DAILY_DRAWDOWN_PERCENT actually allow. If a baseline was already
+    recorded for today, reuse it; only a genuine new day gets a fresh one.
+    """
+    try:
+        with open(_daily_baseline_path(data_dir), 'r', encoding='utf-8') as f:
+            saved = json.load(f)
+        if saved.get('date') == today and isinstance(saved.get('baseline'), (int, float)) and saved['baseline'] > 0:
+            print(f"[BASELINE] Restored daily start equity ${saved['baseline']:.2f} for {today} (restart-safe)")
+            return float(saved['baseline'])
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+    persist_daily_baseline(data_dir, today, current_equity)
+    return current_equity
+
+
+def persist_daily_baseline(data_dir: str, date_str: str, baseline: float) -> None:
+    try:
+        with open(_daily_baseline_path(data_dir), 'w', encoding='utf-8') as f:
+            json.dump({'date': date_str, 'baseline': baseline}, f)
+    except OSError as e:
+        print(f"[BASELINE] WARNING: could not persist daily equity baseline: {e}")
+
+
+# MAGIC NUMBER MANAGEMENT - Deterministic per user+strategy, collision-checked
+if args.magic_number:
+    MAGIC_NUMBER = args.magic_number
+else:
+    MAGIC_NUMBER = _resolve_magic_number(USER_ID, STRATEGY_ID, DATA_DIR)
+print(f"[MAGIC] Using Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
+print(f"[MT5] Terminal path: {MT5_TERMINAL_PATH or 'default (system)'}")
 
 
 # =============================================================================
@@ -818,8 +896,12 @@ SYMBOL_SPECS = {
 # LOGGING SETUP (Now User-Specific)
 # =============================================================================
 
-LOG_DIR = f"Hybrid_AI_Bot_Logs_{USER_ID}"
-BACKUP_DIR = f"Backup_Trades_{USER_ID}"
+# Keyed by strategy_id as well as user_id: a user can run several strategies
+# concurrently (Pro: up to 5, Enterprise: more), and without the strategy_id
+# here two of their bot processes would share one log file (interleaved
+# writes) and one backup JSON file (lost-update race on read-modify-write).
+LOG_DIR = f"Hybrid_AI_Bot_Logs_{USER_ID}_{STRATEGY_ID}"
+BACKUP_DIR = f"Backup_Trades_{USER_ID}_{STRATEGY_ID}"
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
@@ -6412,9 +6494,10 @@ def check_emergency_conditions(account_info) -> bool:
     Previously, `get_recent_trades()` fetched ALL-TIME history, so 10 losses
     from a previous run would immediately halt the bot on restart.
     """
-    # Initialize daily equity tracker
+    # Initialize daily equity tracker (restart-safe — see load_or_init_daily_baseline)
     if state.daily_start_equity == 0:
-        state.daily_start_equity = account_info.equity
+        today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        state.daily_start_equity = load_or_init_daily_baseline(DATA_DIR, account_info.equity, today_str)
 
     if state.daily_start_equity <= 0:
         return False
@@ -8394,7 +8477,11 @@ def ai_trading_session():
     
     try:
         account_info = mt5.account_info()
-        state.daily_start_equity = account_info.equity if account_info else 0.0
+        if account_info:
+            today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            state.daily_start_equity = load_or_init_daily_baseline(DATA_DIR, account_info.equity, today_str)
+        else:
+            state.daily_start_equity = 0.0
 
         # --- GLOBAL KILL SWITCH CHECK (Founder's Safety) ---
         # Check Supabase for a global 'kill_switch' flag
@@ -8441,6 +8528,7 @@ def ai_trading_session():
                 state.daily_trades = 0
                 state.daily_start_equity = account_info.equity
                 state.last_reset_day = current_day
+                persist_daily_baseline(DATA_DIR, datetime.now(timezone.utc).strftime('%Y-%m-%d'), account_info.equity)
 
             # --- 0. EQUITY PROTECTOR (The "Stop Loss" for the Account) ---
             current_dd_percent = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100

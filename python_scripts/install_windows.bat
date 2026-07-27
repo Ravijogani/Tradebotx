@@ -29,10 +29,18 @@ if not exist "%BOT_DIR%" (
 )
 
 REM Copy files
+REM NOTE: bot_manager_http_windows.py is the file run_bot_manager.bat actually
+REM launches (via `waitress ... bot_manager_http_windows:app`) — it must keep
+REM this exact filename, and bot_manager_core.py must ship alongside it since
+REM it now imports shared logic from that module instead of duplicating it.
 echo Copying bot files...
+copy /Y bot_manager_core.py "%BOT_DIR%\" >nul
+copy /Y bot_manager_http_windows.py "%BOT_DIR%\" >nul
+copy /Y hybrid_trading_bot_multiuser.py "%BOT_DIR%\" >nul
+copy /Y intraday.py "%BOT_DIR%\" >nul
+copy /Y auto_provision_mt5.py "%BOT_DIR%\" >nul
 copy /Y bot_wrapper.py "%BOT_DIR%\" >nul
 copy /Y hybrid_trading_bot.py "%BOT_DIR%\" >nul
-copy /Y bot_manager_http_windows.py "%BOT_DIR%\bot_manager_http.py" >nul
 copy /Y requirements.txt "%BOT_DIR%\" >nul
 
 REM Create virtual environment

@@ -3950,11 +3950,12 @@ def intraday_trading_session():
                 h_now = datetime.now(timezone.utc).hour
                 bias_str = " ".join(f"{s.replace('USDm','')[:3]}:{v.replace('_ONLY','')[:4]}"
                                     for s,v in state.approved_bias.items()) if state.approved_bias else "none"
+                active_macro_window = get_active_macro_window() or "WAIT"
                 logger.info(
                     f"[STATUS] Eq:${account_info.equity:.2f} P&L:${state.daily_pnl:.2f} "
                     f"Trades:{state.daily_trades}/{config.MAX_DAILY_TRADES} "
                     f"Session:{get_current_session()} KillZone:{'YES' if in_kz else 'NO'} "
-                    f"Bias:[{bias_str}] Risk:{config.BASE_RISK_PERCENT:.1f}% Macro:{get_active_macro_window() or "WAIT"}"
+                    f"Bias:[{bias_str}] Risk:{config.BASE_RISK_PERCENT:.1f}% Macro:{active_macro_window}"
                 )
             
             # --- HEARTBEAT SYNC ---
