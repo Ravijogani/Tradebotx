@@ -333,6 +333,7 @@ export const CustomStrategyApproval = () => {
             <DialogTitle>{selectedStrategy?.name}</DialogTitle>
             <DialogDescription>
               {selectedStrategy?.description || "Strategy configuration and generated code"}
+              {" — approving publishes it to the strategy marketplace for other users to import into their own builder. It does not start a live bot; the generated code below is reference/export only."}
             </DialogDescription>
           </DialogHeader>
 
@@ -410,7 +411,7 @@ export const CustomStrategyApproval = () => {
                   ) : (
                     <CheckCircle className="h-4 w-4 mr-2" />
                   )}
-                  Approve & Deploy
+                  Approve for Marketplace
                 </Button>
               )}
             </div>

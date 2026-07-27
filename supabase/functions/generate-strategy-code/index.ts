@@ -129,7 +129,10 @@ serve(async (req) => {
     }
 
     if (action === 'approve') {
-      // Approve and deploy strategy
+      // Approving publishes the strategy to the marketplace (custom_strategies
+      // with is_approved=true) so other users can import its blocks into their
+      // own builder. It does NOT create a runnable bot — no edge function or
+      // bot-manager script reads custom_strategies for that.
       await supabase
         .from('custom_strategies')
         .update({
@@ -141,9 +144,9 @@ serve(async (req) => {
 
       console.log(`Strategy ${strategyId} approved by admin ${user.id}`);
 
-      return new Response(JSON.stringify({ 
-        success: true, 
-        message: 'Strategy approved and ready for deployment'
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Strategy approved and published to the marketplace'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
