@@ -11,12 +11,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, MessageSquare, Clock, CheckCircle, XCircle, Search } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Ticket = Tables<"support_tickets">;
+type TicketMessage = Tables<"ticket_messages">;
 
 export const SupportTickets = () => {
-  const [tickets, setTickets] = useState<any[]>([]);
-  const [filteredTickets, setFilteredTickets] = useState<any[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [filteredTickets, setFilteredTickets] = useState<Ticket[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newMessage, setNewMessage] = useState("");
@@ -66,8 +70,9 @@ export const SupportTickets = () => {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'ticket_messages' },
         (payload) => {
-          if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
-            setMessages(prev => [...prev, payload.new]);
+          const newMessage = payload.new as TicketMessage;
+          if (selectedTicket && newMessage.ticket_id === selectedTicket.id) {
+            setMessages(prev => [...prev, newMessage]);
           }
         }
       )

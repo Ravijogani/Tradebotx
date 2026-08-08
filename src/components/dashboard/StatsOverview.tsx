@@ -2,6 +2,13 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { TrendingUp, DollarSign, Activity, Target } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+
+// trades.metadata is JSONB — this is the shape the bot writes for a live
+// running position, asserted here since the DB type can't verify it.
+interface TradeMetadata {
+  running_profit?: number;
+}
 
 export const StatsOverview = () => {
   const [stats, setStats] = useState({
@@ -29,7 +36,7 @@ export const StatsOverview = () => {
           { event: '*', schema: 'public', table: 'trades' },
           async (payload) => {
             // Only reload if this trade belongs to the current user
-            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            const tradeUserId = (payload.new as Partial<Tables<"trades">>)?.user_id || (payload.old as Partial<Tables<"trades">>)?.user_id;
             if (tradeUserId === user.id) {
               // Debounce stats reload to once every 2 seconds
               clearTimeout(debounceTimer);
@@ -66,7 +73,7 @@ export const StatsOverview = () => {
       const totalProfit = trades.reduce((sum, trade) => {
         if (trade.status === 'open') {
           // Use running_profit from metadata for open trades
-          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
           const runningProfit = metadata.running_profit || 0;
           return sum + parseFloat(String(runningProfit));
         }
@@ -79,7 +86,7 @@ export const StatsOverview = () => {
       const todayTrades = trades.filter(t => new Date(t.opened_at) >= today);
       const todayPL = todayTrades.reduce((sum, trade) => {
         if (trade.status === 'open') {
-          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
           return sum + (metadata.running_profit || 0);
         }
         return sum + parseFloat(String(trade.profit_loss || 0));
