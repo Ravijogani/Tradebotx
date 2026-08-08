@@ -5137,6 +5137,15 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
         
         # FIX: SELL fills at BID, BUY fills at ASK. Wrong direction = wrong TP/SL distances.
         entry_price = tick.ask if direction == 'BUY' else tick.bid
+        # Computed here (not where it's first used further down) because the
+        # SL-CAP block below references it — it previously referenced
+        # spread_now before this line existed, which raised a NameError that
+        # was silently swallowed by that block's own try/except, and made
+        # the (undefined) "worst_spread" name in the SPREAD-SAFETY block
+        # below crash this whole function on every trade that needed its SL
+        # adjusted for spread safety, causing place_ai_trade() to abandon an
+        # otherwise-valid trade instead of correcting the SL and proceeding.
+        spread_now = tick.ask - tick.bid
         spec = get_symbol_specs(symbol)
         pip_size = spec.get('pip_size', 0.0001)
         atr = calculate_atr(df['high'], df['low'], df['close'], 14).iloc[-1]
@@ -5204,8 +5213,11 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
                             f"with equity ${_acct.equity:.2f}. Need ~${_min_lot*(_max_safe_sl_dist/_ts_cap)*_tv_cap/_max_safe_sl_dist*100:.0f} "
                             f"equity for {symbol}. Setting 6h cooldown."
                         )
-                        # 6-hour cooldown -- equity won't recover in minutes
-                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=10)
+                        # 6-hour cooldown -- equity won't recover in minutes, so a
+                        # short cooldown just means retrying (and re-rejecting) this
+                        # symbol every cycle for no benefit. Was `minutes=10`, which
+                        # contradicted the reasoning above.
+                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(hours=6)
                         return {}
                     if direction == 'BUY':
                         sl = entry_price - _max_safe_sl_dist
@@ -5218,7 +5230,7 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
         # CRITICAL FIX: MT5 checks BID vs SL for long positions and ASK vs SL for short.
         # If SL is within spread distance of entry, the position closes INSTANTLY.
         # Rule: SL must be >= (spread x MIN_SL_SPREAD_MULT) from the BID/ASK at open.
-        spread_now = tick.ask - tick.bid
+        # (spread_now is computed once, up near entry_price, and reused here.)
         sym_upper_s = symbol.upper()
 
         # SL floor: use 3x CURRENT live spread (not spike multiplier).
@@ -5236,7 +5248,7 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
             if sl > safe_max_sl_buy:
                 logger.warning(
                     f"[SL ADJUST] {symbol} BUY SL {sl:.5f} inside spike-safe zone "
-                    f"(worst_spread={worst_spread:.5f} atr_floor={min_atr_dist:.5f}). "
+                    f"(spread={spread_now:.5f} atr_floor={min_atr_dist:.5f}). "
                     f"Moving to {safe_max_sl_buy:.5f}."
                 )
                 sl = safe_max_sl_buy
@@ -5245,7 +5257,7 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
             if sl < safe_min_sl_sell:
                 logger.warning(
                     f"[SL ADJUST] {symbol} SELL SL {sl:.5f} inside spike-safe zone "
-                    f"(worst_spread={worst_spread:.5f} atr_floor={min_atr_dist:.5f}). "
+                    f"(spread={spread_now:.5f} atr_floor={min_atr_dist:.5f}). "
                     f"Moving to {safe_min_sl_sell:.5f}."
                 )
                 sl = safe_min_sl_sell
@@ -6854,27 +6866,6 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                 )
             return False
 
-        # SET COOLDOWN FIRST (before notification) -- this stops the scan
-        # loop from re-calling place_ai_trade on the next 0.1s iteration.
-            _cooldown_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)  # was 6h
-            state.symbol_cooldowns[symbol] = _cooldown_expiry
-
-            # Rate-limit Telegram: one notification per unique (symbol, direction)
-            # until cooldown expires. Key stored directly in symbol_cooldowns.
-            _rb_key = f"_rb_notif_{symbol}_{direction}"
-            _rb_last = getattr(state, _rb_key, 0)
-            if time.time() - _rb_last > 30:   # 30s minimum between notifications
-                setattr(state, _rb_key, time.time())
-                _needs_equity = actual_risk_dollars / (config.MAX_RISK_PERCENT / 100)
-                send_telegram_notification(
-                    f"[RISK BLOCK] {symbol} {direction}: skipped\n"
-                    f"Min lot risk: ${actual_risk_dollars:.2f} "
-                    f"({actual_risk_dollars/account_equity*100:.1f}% equity)\n"
-                    f"Intended: ${risk_money:.2f} | Need ~${_needs_equity:.0f} equity\n"
-                    f"Pausing {symbol} for 6 hours."
-                )
-            return False
-
         # 4. SEND ORDER
         # ---------------------------------------------------------------------
         symbol_info = mt5.symbol_info(symbol)
@@ -8337,7 +8328,14 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
             "type_filling":  fill,
         }
         result = mt5.order_send(request)
-        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+        # This is the only TRADE_ACTION_PENDING (stop order) request in the
+        # file. MT5 returns TRADE_RETCODE_PLACED (10008) for a successfully
+        # placed pending order, not TRADE_RETCODE_DONE (10009) — DONE is for
+        # an immediately-executed deal. Checking only DONE here meant a
+        # genuinely successful pending-order placement got logged and
+        # treated as a failure and never tracked in state.swappy_pending,
+        # leaving a live order on the broker that this bot never manages.
+        if result and result.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
             # Store setup_low/high for invalidation check
             if not hasattr(state, 'swappy_pending'):
                 state.swappy_pending = {}
