@@ -207,6 +207,28 @@ class EdgeEngine:
         "volatility_state":    10,
     }
 
+    # BUG FIX: RegimeDetector.detect_regime() does real work (ATR/ADX/
+    # Donchian) and its own docstring says it "selects appropriate
+    # strategies for each regime" -- but ctx.regime (which the live call
+    # site already populates with a real computed value) was never once
+    # read here. Every trade got scored identically whether the market was
+    # trending or ranging. Fixed as a multiplicative adjustment on top of
+    # the existing weighted score (same approach as CapitalController's
+    # pattern_health/symbol_metrics fix) rather than folding it into the
+    # weighted sum -- that would mean re-tuning WEIGHTS, which is riskier
+    # and out of scope for closing this specific gap. TRENDING (also the
+    # TradeContext default) and any unrecognized value are neutral (1.0,
+    # unchanged behavior); RANGING gets a modest penalty since every
+    # strategy this scores (Shaakuni/Swappy/AOX/EMA scalp/fallbacks) is
+    # momentum- or liquidity-based, not mean-reversion -- detect_regime
+    # only ever returns exactly 'TRENDING' or 'RANGING' (verified by
+    # reading its full body), so this covers every real case, not just
+    # the common ones.
+    REGIME_MULT = {
+        "TRENDING": 1.0,
+        "RANGING":  0.80,
+    }
+
     def calculate(self, ctx: TradeContext) -> EdgeResult:
         score  = ctx.liquidity_distance  * self.WEIGHTS["liquidity_distance"]
         score += ctx.liquidity_strength  * self.WEIGHTS["liquidity_strength"]
@@ -214,6 +236,9 @@ class EdgeEngine:
         score += ctx.structure_alignment * self.WEIGHTS["structure_alignment"]
         score += ctx.session_strength    * self.WEIGHTS["session_strength"]
         score += ctx.volatility_state    * self.WEIGHTS["volatility_state"]
+        score  = max(0.0, min(100.0, score))
+
+        score *= self.REGIME_MULT.get(ctx.regime, 1.0)
         score  = max(0.0, min(100.0, score))
 
         if score > 75:   state = "STRONG"
@@ -1994,12 +2019,26 @@ class SymbolCorrelationTracker:
         self.max_exposure_per_group = 2  # Max 2 positions per correlation group
     
     def get_correlation_group(self, symbol: str) -> str:
-        """Find which correlation group this symbol belongs to"""
+        """
+        Find which correlation group this symbol belongs to.
+
+        BUG FIX: correlation_groups stores bare symbol names ('EURUSD',
+        'XAUUSD') but every real symbol this bot trades carries a broker
+        suffix ('EURUSDm', 'XAUUSDm' -- see SYMBOL_SPECS / the symbol list
+        used everywhere else in this file). The old exact `symbol in
+        symbols` check meant get_correlation_group() returned
+        'UNCORRELATED' for every real symbol, unconditionally -- this
+        tracker could never have actually grouped anything even if
+        should_allow_trade() had been called. Fixed with a prefix match
+        (same style already used elsewhere in this file, e.g. `'XAU' in
+        symbol`), which handles the 'm' suffix and any other broker
+        suffix variant without hardcoding it.
+        """
         for group_name, symbols in self.correlation_groups.items():
-            if symbol in symbols:
+            if any(symbol.startswith(base) for base in symbols):
                 return group_name
         return 'UNCORRELATED'
-    
+
     def get_current_exposure(self, symbol: str) -> tuple[int, list]:
         """
         Check current exposure to this correlation group
@@ -2008,15 +2047,16 @@ class SymbolCorrelationTracker:
         group = self.get_correlation_group(symbol)
         if group == 'UNCORRELATED':
             return 0, []
-        
+
         group_symbols = self.correlation_groups[group]
         exposed_symbols = []
-        
+
         for ticket, pos in state.open_positions.items():
             pos_symbol = pos.get('symbol', '')
-            if pos_symbol in group_symbols:
+            # Same broker-suffix prefix match as get_correlation_group above.
+            if any(pos_symbol.startswith(base) for base in group_symbols):
                 exposed_symbols.append(pos_symbol)
-        
+
         return len(exposed_symbols), exposed_symbols
     
     def should_allow_trade(self, symbol: str) -> tuple[bool, str]:
@@ -9127,6 +9167,25 @@ def ai_trading_session():
                 cap_ctrl = CapitalController()
 
                 edge_score = edge_result.score
+
+                # BUG FIX: SymbolCorrelationTracker.should_allow_trade() had
+                # zero call sites anywhere in this file -- only its own def
+                # and the startup log line claiming "N groups defined". The
+                # bot could stack unlimited correlated positions (e.g.
+                # several EUR-major pairs, or XAUUSDm + XAGUSDm together)
+                # despite this component existing and looking active.
+                # Wired in here, at the same point allow_stacking/
+                # should_throttle_frequency already gate entries -- correct
+                # place for a "should we trade this at all" check, before
+                # spending any effort sizing a position we're about to
+                # reject. (See SymbolCorrelationTracker.get_correlation_group
+                # for the other half of this fix -- the group-matching logic
+                # itself never matched a single real symbol.)
+                _corr_allowed, _corr_reason = correlation_tracker.should_allow_trade(symbol)
+                if not _corr_allowed:
+                    state._rej['correlation'] = state._rej.get('correlation', 0) + 1
+                    logger.debug(f"[SCAN] {symbol}: correlation blocked ({_corr_reason})")
+                    continue
 
                 if len(my_bot_positions) >= config.MAX_CONCURRENT_TRADES:
                     if not cap_ctrl.allow_stacking(edge_score, regime, "EXPANSION"):

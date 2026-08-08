@@ -336,6 +336,50 @@ same historical data, not just summarized.
   a short window, not a harness bug. Don't trust a result from under a
   few hundred trades.
 
+## Other live-file fixes verified via this harness (not strategy-shaped)
+
+Not every real bug this engagement found lives in strategy logic a
+`StrategyAdapter` can drive — some live in the main scan loop's risk
+gating (`EdgeEngine`, `CapitalController`, `SymbolCorrelationTracker`),
+which the per-strategy adapters bypass entirely (they call
+`bot.strategy_X()` directly, not the full cascade). Those still got
+verified through this harness's `bot_loader.import_bot_module()` — calling
+the real classes directly with constructed inputs, same "call the actual
+live object, not a reimplementation" principle, just without a
+`StrategyAdapter` wrapper since there's no bar-by-bar decision to replay:
+
+- **`CapitalController.calculate()` ignored two of its own inputs.**
+  `symbol_metrics` was a parameter with a real value already computed at
+  the live call site, but the method body never read it. Separately,
+  `PatternRecognitionSystem.get_edge_health_score()` (a real 0.0-1.5
+  confidence multiplier) was only ever called in the mid-trade management
+  loop, and even there its result was discarded. Both now actually move
+  position size. Verified with direct assertions: strong/weak pattern
+  history and good/bad symbol performance move size in the correct
+  direction; omitting the new parameter reproduces the exact old
+  behavior; the 1.5% hard cap still holds with everything maxed.
+- **`SymbolCorrelationTracker.should_allow_trade()` had zero call
+  sites**, and separately its `correlation_groups` dict used bare symbol
+  names (`'XAUUSD'`) while every real traded symbol carries a broker
+  suffix (`'XAUUSDm'`), so `get_correlation_group()` would have returned
+  `'UNCORRELATED'` for everything even if it had been called. Both fixed
+  (prefix match handles the suffix; the gate is now wired into the main
+  loop's entry cascade). Verified directly: simulating 2 open
+  same-correlation-group positions blocks a 3rd, a different group is
+  unaffected, and being under the limit still allows a trade.
+- **`RegimeDetector.detect_regime()`'s output never reached a decision.**
+  Its own docstring says it "selects appropriate strategies for each
+  regime," and the live call site already passes a real computed value
+  into `TradeContext.regime` -- but `EdgeEngine.calculate()`'s `WEIGHTS`
+  never included it. Fixed as a multiplicative adjustment on the existing
+  weighted score (TRENDING/unrecognized = neutral 1.0x, RANGING = 0.80x)
+  rather than re-tuning `WEIGHTS` itself. Since `EdgeEngine` is the single
+  scoring authority both the entry gate and the mid-trade exit re-score
+  call into, this one fix closes the gap on both sides without needing a
+  second, separate change to `ScalpingExitEngine`. Verified directly:
+  RANGING scores exactly 80% of the identical TRENDING input; an
+  unrecognized regime string reproduces the exact old (neutral) behavior.
+
 ## Extending this
 
 Both EMA_SCALP_CROSS and AOX are now wired (see above for how each was
