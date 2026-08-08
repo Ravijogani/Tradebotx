@@ -7,14 +7,35 @@ import { CheckCircle, XCircle, Loader2, Activity, Server, Database, Mail } from 
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
+type CheckStatus = "healthy" | "unhealthy" | "warning" | "info" | "error";
+
+interface HealthCheckResult {
+  name: string;
+  status: CheckStatus;
+  details: string;
+  configured?: boolean;
+  url?: string;
+  count?: number;
+}
+
+interface HealthResults {
+  timestamp: string;
+  checks: {
+    botManager?: HealthCheckResult;
+    database?: HealthCheckResult;
+    strategies?: HealthCheckResult;
+    runningBots?: HealthCheckResult;
+  };
+}
+
 export const SystemHealthCheck = () => {
   const [checking, setChecking] = useState(false);
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<HealthResults | null>(null);
   const { toast } = useToast();
 
   const runHealthCheck = async () => {
     setChecking(true);
-    const healthResults: any = {
+    const healthResults: HealthResults = {
       timestamp: new Date().toISOString(),
       checks: {}
     };
@@ -22,7 +43,13 @@ export const SystemHealthCheck = () => {
     try {
       // Check 1: Bot Manager Connection
       try {
-        const { data: botManager, error } = await supabase.functions.invoke('verify-bot-manager');
+        const { data: botManager } = await supabase.functions.invoke<{
+          success: boolean;
+          configured: boolean;
+          healthy?: boolean;
+          url?: string;
+          error?: string;
+        }>('verify-bot-manager');
         healthResults.checks.botManager = {
           name: 'Bot Manager',
           status: botManager?.healthy ? 'healthy' : 'unhealthy',
@@ -181,7 +208,7 @@ export const SystemHealthCheck = () => {
             </div>
 
             <div className="space-y-3">
-              {Object.values(results.checks).map((check: any, idx: number) => (
+              {Object.values(results.checks).map((check, idx: number) => check && (
                 <div key={idx} className="flex items-start gap-3 p-4 border rounded-lg">
                   {getStatusIcon(check.status)}
                   <div className="flex-1">
@@ -206,19 +233,19 @@ export const SystemHealthCheck = () => {
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <div className="text-2xl font-bold text-green-500">
-                    {Object.values(results.checks).filter((c: any) => c.status === 'healthy').length}
+                    {Object.values(results.checks).filter((c) => c&&c.status === 'healthy').length}
                   </div>
                   <div className="text-xs text-muted-foreground">Healthy</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-yellow-500">
-                    {Object.values(results.checks).filter((c: any) => c.status === 'warning').length}
+                    {Object.values(results.checks).filter((c) => c&&c.status === 'warning').length}
                   </div>
                   <div className="text-xs text-muted-foreground">Warnings</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-red-500">
-                    {Object.values(results.checks).filter((c: any) => c.status === 'unhealthy' || c.status === 'error').length}
+                    {Object.values(results.checks).filter((c) => c && (c.status === 'unhealthy' || c.status === 'error')).length}
                   </div>
                   <div className="text-xs text-muted-foreground">Issues</div>
                 </div>

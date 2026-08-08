@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Edit, Trash2, Mail, Send } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { z } from "zod";
+import type { Tables } from "@/integrations/supabase/types";
 
 const emailTemplateSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
@@ -19,13 +20,15 @@ const emailTemplateSchema = z.object({
   body: z.string().min(1, "Body is required").max(10000),
 });
 
+type EmailTemplate = Tables<"email_templates">;
+
 export const EmailTemplatesManager = () => {
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<any>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
+  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -158,7 +161,7 @@ export const EmailTemplatesManager = () => {
     }
   };
 
-  const handleEdit = (template: any) => {
+  const handleEdit = (template: EmailTemplate) => {
     setEditingTemplate(template);
     setFormData({
       name: template.name,
@@ -168,7 +171,7 @@ export const EmailTemplatesManager = () => {
     setDialogOpen(true);
   };
 
-  const handleSend = (template: any) => {
+  const handleSend = (template: EmailTemplate) => {
     setSelectedTemplate(template);
     setSendData({
       to: "",
