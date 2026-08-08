@@ -99,34 +99,34 @@ const Landing = () => {
       />
       <Navbar />
       <Hero />
-      <section ref={statsAnimation.ref as any} className={`scroll-animate ${statsAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={statsAnimation.ref} className={`scroll-animate ${statsAnimation.isVisible ? 'visible' : ''}`}>
         <Stats />
       </section>
-      <section ref={featuresAnimation.ref as any} className={`scroll-animate ${featuresAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={featuresAnimation.ref} className={`scroll-animate ${featuresAnimation.isVisible ? 'visible' : ''}`}>
         <Features />
       </section>
-      <section ref={howItWorksAnimation.ref as any} className={`scroll-animate ${howItWorksAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={howItWorksAnimation.ref} className={`scroll-animate ${howItWorksAnimation.isVisible ? 'visible' : ''}`}>
         <HowItWorks />
       </section>
-      <section ref={techSpecsAnimation.ref as any} className={`scroll-animate ${techSpecsAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={techSpecsAnimation.ref} className={`scroll-animate ${techSpecsAnimation.isVisible ? 'visible' : ''}`}>
         <TechnicalSpecs />
       </section>
-      <section ref={integrationsAnimation.ref as any} className={`scroll-animate ${integrationsAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={integrationsAnimation.ref} className={`scroll-animate ${integrationsAnimation.isVisible ? 'visible' : ''}`}>
         <Integrations />
       </section>
-      <section ref={trustAnimation.ref as any} className={`scroll-animate ${trustAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={trustAnimation.ref} className={`scroll-animate ${trustAnimation.isVisible ? 'visible' : ''}`}>
         <TrustTransparency />
       </section>
-      <section ref={performanceAnimation.ref as any} className={`scroll-animate ${performanceAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={performanceAnimation.ref} className={`scroll-animate ${performanceAnimation.isVisible ? 'visible' : ''}`}>
         <LivePerformance />
       </section>
-      <section ref={pricingAnimation.ref as any} className={`scroll-animate ${pricingAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={pricingAnimation.ref} className={`scroll-animate ${pricingAnimation.isVisible ? 'visible' : ''}`}>
         <PricingSection />
       </section>
-      <section ref={faqAnimation.ref as any} className={`scroll-animate ${faqAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={faqAnimation.ref} className={`scroll-animate ${faqAnimation.isVisible ? 'visible' : ''}`}>
         <FAQ />
       </section>
-      <section ref={supportAnimation.ref as any} className={`scroll-animate ${supportAnimation.isVisible ? 'visible' : ''}`}>
+      <section ref={supportAnimation.ref} className={`scroll-animate ${supportAnimation.isVisible ? 'visible' : ''}`}>
         <SupportContact />
       </section>
       <Footer />
