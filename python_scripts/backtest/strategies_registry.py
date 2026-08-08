@@ -30,20 +30,26 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
     - strategy_shaakuni_ssm()           ("SHAAKUNI SSM")
     - strategy_liquidity_grab()         (fallback)
     - strategy_ict_killzone()           (fallback)
+    - strategy_ema_scalp_cross()        ("STRATEGY A" -- extracted from a
+                                          ~90-line inline block in the main
+                                          loop specifically so it could be
+                                          wired in here; see its own
+                                          docstring for two behavior fixes
+                                          made during that extraction)
     - detect_swappy_3c()                ("STRATEGY B" -- see its adapter's
                                           docstring for what's still
                                           excluded vs the full live path)
 
   NOTE on "live" vs "enabled": per an explicit decision to run the live
-  cascade on only three setups (Shaakuni SSM, Swappy 3C, AOX), STRATEGY A
-  (EMA scalp), STRATEGY C (SMC FVG retest), and both generic fallbacks are
-  now gated off by default via config.ENABLE_STRATEGY_* flags in
-  AITradingConfig -- their call sites still exist (so `live=True` here is
-  still accurate in the sense that flipping a flag re-enables them
-  immediately), but they don't fire in the current default configuration.
-  Test SMC_FVG_OB_RETEST/ICT_KILLZONE/LIQUIDITY_GRAB here if you're
-  deciding whether to re-enable any of them; don't read their presence as
-  "this is what the bot trades today."
+  cascade on only four setups (Shaakuni SSM, Swappy 3C, AOX, EMA scalp),
+  STRATEGY C (SMC FVG retest) and both generic fallbacks are gated off by
+  default via config.ENABLE_STRATEGY_* flags in AITradingConfig -- their
+  call sites still exist (so `live=True` here is still accurate in the
+  sense that flipping a flag re-enables them immediately), but they don't
+  fire in the current default configuration. Test SMC_FVG_OB_RETEST/
+  ICT_KILLZONE/LIQUIDITY_GRAB here if you're deciding whether to
+  re-enable any of them; don't read their presence as "this is what the
+  bot trades today."
 
   Defined, fully implemented, but NEVER CALLED anywhere in the file:
     - EntryEngine.evaluate_setup (see correction above)
@@ -60,12 +66,6 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
   their numbers in with strategies that actually trade real money today.
 
   NOT wired at all, on purpose:
-    - "STRATEGY A" (EMA_SCALP_CROSS) is ~90 lines fully inline in the main
-      trading loop (no standalone function exists to call) -- extracting
-      it cleanly is a real refactor, not a quick adapter, and doing it
-      blind (untestable end-to-end on this machine -- no MT5/Windows here)
-      risks a subtle behavior change in a strategy that IS live. Left as a
-      deliberate follow-up.
     - "STRATEGY D" (run_aox_layered_entry) manages its own multi-call phase
       state machine and appears to place real orders itself (returns bool,
       not a signal dict) -- it's an execution engine, not a pure signal
@@ -413,12 +413,40 @@ def _adapt_mean_reversion_bb(bot, dataset, as_of, symbol):
                            confidence=r.get("confidence", 0.0))
 
 
+def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
+    """
+    STRATEGY A, now backtestable since strategy_ema_scalp_cross() was
+    extracted from the main loop into a standalone function. Mirrors the
+    live call site exactly: df_m5 + the H4-aligned bias direction.
+
+    TP: the live setup dict's 'ema50_tp' (the 50 EMA) is the doc-specified
+    structural target, not an R-multiple -- mapped directly to
+    StrategyResult.take_profit here, same as Shaakuni's own 'tp' field, so
+    the engine doesn't fall back to --rr for this strategy either.
+    """
+    with replay_context(bot, dataset, as_of):
+        trend = _get_trend(bot, symbol)
+        if trend not in ("BULLISH", "BEARISH"):
+            return None
+        direction = "BUY" if trend == "BULLISH" else "SELL"
+        df_m5 = dataset.window("M5", as_of, 210)  # 200 EMA needs real history to be stable
+        if len(df_m5) < 60:
+            return None
+        r = bot.strategy_ema_scalp_cross(df_m5, direction, symbol)
+    if not r:
+        return None
+    return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],
+                           reason=r.get("reason", "EMA_SCALP_CROSS"),
+                           take_profit=r.get("ema50_tp"))
+
+
 STRATEGIES_LIVE = [
     StrategyAdapter("ICT_KILLZONE", True, _adapt_ict_killzone),
     StrategyAdapter("LIQUIDITY_GRAB", True, _adapt_liquidity_grab),
     StrategyAdapter("SMC_FVG_OB_RETEST", True, _adapt_liquidity_fvg_engine),
     StrategyAdapter("SHAAKUNI_SSM", True, _adapt_shaakuni_ssm),
     StrategyAdapter("SWAPPY_3C", True, _adapt_swappy_3c),
+    StrategyAdapter("EMA_SCALP_CROSS", True, _adapt_ema_scalp_cross),
 ]
 
 STRATEGIES_DORMANT = [

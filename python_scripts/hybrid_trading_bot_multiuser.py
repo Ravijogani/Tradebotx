@@ -8351,6 +8351,143 @@ def detect_ema_pattern_prefilter(df_m5: 'pd.DataFrame', direction: str, atr: flo
     return {'found': False, 'pattern': 'NONE', 'reason': 'No qualifying pattern found'}
 
 
+def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str = "") -> Optional[Dict[str, Any]]:
+    """
+    STRATEGY A -- 9/25/50/200 EMA scalp cross.
+
+    Extracted from the main loop's inline block (previously ~90 lines with
+    no standalone function to call, which is why it wasn't backtestable --
+    see python_scripts/backtest/README.md). This is meant to be a faithful
+    extraction: every threshold and comparison is unchanged from the
+    inline version, with two deliberate differences, both flagged here
+    rather than silently bundled in:
+
+    1. state._rej bookkeeping moved to the caller, matching how every
+       other cascade strategy already works (STRATEGY C / the fallback
+       blocks don't touch state._rej themselves either, relying on the
+       cascade's single catch-all counter). The inline version incremented
+       state._rej at up to 3 points inside itself AND at the cascade's
+       catch-all, double-counting rejections in the stats whenever every
+       other strategy also failed the same cycle -- a minor bug, fixed as
+       a side effect of this extraction.
+    2. REAL BUG FIX: the inline "PATTERN PRE-FILTER" block computed
+       detect_ema_pattern_prefilter() and logged whether a qualifying W/M/
+       H&S pattern was found, but had no `continue`/gate after a "not
+       found" result -- the comment even says "Don't continue -- let
+       other strategies still check," but nothing stopped THIS strategy
+       from proceeding past its own failed pre-filter. So the filter ran,
+       logged, and incremented a counter, but never once blocked a trade;
+       every EMA cross fired regardless of the pattern check, exactly the
+       failure mode ("we trade random crossovers in ranging markets") its
+       own comment says the filter exists to prevent. Fixed here: a failed
+       pre-filter now actually returns None.
+
+    direction: the H4-aligned bias ('BUY' or 'SELL') -- matches
+    _trade_direction at the call site, not something this function derives
+    itself (same convention as strategy_shaakuni_ssm's effective_trend).
+    """
+    try:
+        _cur_price = df_m5['close'].iloc[-1]
+        _atr_m5 = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
+        _ema_m5 = get_ema_momentum(df_m5, slope_bars=5)
+
+        _e9  = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-1])
+        _e9p = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-2])
+        _e25 = float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-1])
+        _e25p= float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-2])
+        _e200= float(df_m5['close'].ewm(span=200, adjust=False).mean().iloc[-1])
+        _e50 = float(df_m5['close'].ewm(span=50,  adjust=False).mean().iloc[-1])
+        # 200 EMA TREND GATE (hard rule): Long only above 200 EMA, Short only below.
+        # Without this the bot trades EMA crosses against the macro trend and hits SL.
+        _above_200 = _cur_price > _e200
+        _below_200 = _cur_price < _e200
+        _200_gate_pass = (direction == 'BUY' and _above_200) or \
+                         (direction == 'SELL' and _below_200)
+        if not _200_gate_pass:
+            logger.debug(f'[EMA 200 GATE] {symbol}: {direction} blocked -- '
+                         f'price={_cur_price:.4f} {"below" if direction=="BUY" else "above"} '
+                         f'200 EMA={_e200:.4f}')
+            return None
+        # DISTANCE RULE (doc requirement): 9/25 cluster must be
+        # meaningfully separated from the 50 EMA. Bunched/braided
+        # EMAs = ranging market = a cross here is noise, not
+        # momentum, and disproportionately reverses into the stop.
+        if abs(_e25 - _e50) <= (_atr_m5 * config.EMA_DISTANCE_RULE_ATR_MULT):
+            logger.debug(f'[EMA DISTANCE] {symbol}: EMAs bunched '
+                         f'(25={_e25:.4f} 50={_e50:.4f} gap={abs(_e25-_e50):.4f} '
+                         f'< {_atr_m5*config.EMA_DISTANCE_RULE_ATR_MULT:.4f}) -- ranging, skip')
+            return None
+
+        # PATTERN PRE-FILTER (doc requirement):
+        # EMA cross is only valid after W/M/H&S pattern forms.
+        # Without this, we trade random crossovers in ranging markets.
+        _ema_pattern = detect_ema_pattern_prefilter(df_m5, direction, _atr_m5)
+        if not _ema_pattern['found']:
+            logger.debug(f"[EMA PATTERN] {symbol}: no qualifying pattern -- skip cross")
+            return None
+        logger.debug(f"[EMA PATTERN] {symbol}: {_ema_pattern['pattern']} -- EMA cross valid")
+
+        # BUY cross: 9 EMA crosses ABOVE 25 EMA (was below, now above)
+        # Hard cross: EMA9 crossed EMA25 this candle
+        _cross_bull = (_e9p <= _e25p) and (_e9 > _e25) and (_cur_price > _e50)
+        _cross_bear = (_e9p >= _e25p) and (_e9 < _e25) and (_cur_price < _e50)
+        # Near-cross: EMA9 approaching EMA25 from below/above with strong slope
+        # (catches the setup 1-2 bars before actual cross = better entry)
+        _gap_pct = abs(_e9 - _e25) / max(_e25, 1) * 100
+        # Near-cross: approaching with momentum (0.15% gap = ~$6.50 for Gold)
+        _near_cross_bull = (not _cross_bull and _e9 < _e25 and
+                            _e9 > _e9p and _gap_pct < 0.15 and _cur_price > _e50)
+        _near_cross_bear = (not _cross_bear and _e9 > _e25 and
+                            _e9 < _e9p and _gap_pct < 0.15 and _cur_price < _e50)
+        # 9 EMA bounce: price pulled to 9 EMA and bouncing in trend direction
+        # (the "bend" signal from EMA strategy docs)
+        _e9_touch_bull = (not _cross_bull and not _near_cross_bull and
+                          abs(_cur_price - _e9) < _e9 * 0.001 and  # within 0.1% of 9 EMA
+                          _e9 > _e9p and _cur_price > _e50 and  # 9 EMA rising, price above 50
+                          df_m5['close'].iloc[-1] > df_m5['open'].iloc[-1])  # last candle green
+        _e9_touch_bear = (not _cross_bear and not _near_cross_bear and
+                          abs(_cur_price - _e9) < _e9 * 0.001 and
+                          _e9 < _e9p and _cur_price < _e50 and
+                          df_m5['close'].iloc[-1] < df_m5['open'].iloc[-1])  # last candle red
+        _cross_bull = _cross_bull or _near_cross_bull or _e9_touch_bull
+        _cross_bear = _cross_bear or _near_cross_bear or _e9_touch_bear
+
+        _cross_valid = (_cross_bull and direction == 'BUY') or \
+                       (_cross_bear and direction == 'SELL')
+
+        if not _cross_valid:
+            return None
+
+        # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
+        _lookback_ema = df_m5.iloc[-20:]
+        if direction == 'BUY':
+            _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
+        else:
+            _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
+        setup = {
+            'signal':    direction,
+            'reason':    'EMA_SCALP_CROSS',
+            'stop_loss': _sl_ema,
+            'strategy_type': 'EMA',
+            '_requires_trending': True,   # BLOCKED in RANGING market
+            # 50 EMA = primary TP target (doc rule)
+            'ema50_tp':  float(_e50),     # structural TP overridden to 50 EMA
+            'liquidity_distance':  0.6,
+            'liquidity_strength':  _ema_m5['strength'] == 'STRONG' and 0.8 or 0.65,
+            'momentum_state':      0.7,
+            'structure_alignment': 0.65,
+            'entry_price': _cur_price,
+            'htf_needed': False,   # EMA scalp never needs HTF OB
+        }
+        logger.debug(f"[EMA SCALP] {symbol}: 9/25 cross {'bullish' if _cross_bull else 'bearish'} "
+                     f"e9={_e9:.4f} e25={_e25:.4f} e50={_e50:.4f} e200={_e200:.4f} "
+                     f"(price {'above' if _above_200 else 'below'} 200 EMA -- gate passed)")
+        return setup
+    except Exception as _ema_err:
+        logger.debug(f"[EMA SCALP] error: {_ema_err}")
+        return None
+
+
 def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
                                entry_price: float, sl: float, account_equity: float) -> bool:
     """
@@ -8915,107 +9052,18 @@ def ai_trading_session():
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                     continue
 
-                # 
-                # STRATEGY A: EMA SCALP (9/15 EMA crossover)
+                #
+                # STRATEGY A: EMA SCALP (9/25/50/200 EMA crossover)
                 # Rules: H4 bias  (already checked) + M5 EMA pullback  (already checked)
-                #        + 9 EMA crossing 15 EMA in bias direction on M5
+                #        + 9 EMA crossing 25 EMA in bias direction on M5
                 # No HTF OB needed. Fires on EMA crossover at any M5 location.
+                # Extracted into strategy_ema_scalp_cross() -- see its docstring
+                # for the two behavior fixes made during that extraction
+                # (state._rej double-counting, and the pattern pre-filter now
+                # actually gating instead of only logging).
                 #
                 if not setup and config.ENABLE_STRATEGY_EMA_SCALP:
-                    try:
-                        _e9  = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-1])
-                        _e9p = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-2])
-                        _e25 = float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-1])
-                        _e25p= float(df_m5['close'].ewm(span=25, adjust=False).mean().iloc[-2])
-                        _e200= float(df_m5['close'].ewm(span=200, adjust=False).mean().iloc[-1])
-                        _e50 = float(df_m5['close'].ewm(span=50,  adjust=False).mean().iloc[-1])
-                        # 200 EMA TREND GATE (hard rule): Long only above 200 EMA, Short only below.
-                        # Without this the bot trades EMA crosses against the macro trend and hits SL.
-                        _above_200 = _cur_price > _e200
-                        _below_200 = _cur_price < _e200
-                        _200_gate_pass = (_trade_direction == 'BUY' and _above_200) or \
-                                         (_trade_direction == 'SELL' and _below_200)
-                        if not _200_gate_pass:
-                            logger.debug(f'[EMA 200 GATE] {symbol}: {_trade_direction} blocked -- '
-                                         f'price={_cur_price:.4f} {"below" if _trade_direction=="BUY" else "above"} '
-                                         f'200 EMA={_e200:.4f}')
-                            state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
-                        # DISTANCE RULE (doc requirement): 9/25 cluster must be
-                        # meaningfully separated from the 50 EMA. Bunched/braided
-                        # EMAs = ranging market = a cross here is noise, not
-                        # momentum, and disproportionately reverses into the stop.
-                        elif abs(_e25 - _e50) <= (_atr_m5 * config.EMA_DISTANCE_RULE_ATR_MULT):
-                            logger.debug(f'[EMA DISTANCE] {symbol}: EMAs bunched '
-                                         f'(25={_e25:.4f} 50={_e50:.4f} gap={abs(_e25-_e50):.4f} '
-                                         f'< {_atr_m5*config.EMA_DISTANCE_RULE_ATR_MULT:.4f}) -- ranging, skip')
-                            state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
-                        else:
-                            # PATTERN PRE-FILTER (doc requirement):
-                            # EMA cross is only valid after W/M/H&S pattern forms.
-                            # Without this, we trade random crossovers in ranging markets.
-                            _ema_pattern = detect_ema_pattern_prefilter(df_m5, _trade_direction, _atr_m5)
-                            if not _ema_pattern['found']:
-                                logger.debug(f"[EMA PATTERN] {symbol}: no qualifying pattern -- skip cross")
-                                state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
-                                # Don't continue -- let other strategies still check
-                            else:
-                                logger.debug(f"[EMA PATTERN] {symbol}: {_ema_pattern['pattern']} -- EMA cross valid")
-
-                            # BUY cross: 9 EMA crosses ABOVE 25 EMA (was below, now above)
-                            # Hard cross: EMA9 crossed EMA25 this candle
-                            _cross_bull = (_e9p <= _e25p) and (_e9 > _e25) and (_cur_price > _e50)
-                            _cross_bear = (_e9p >= _e25p) and (_e9 < _e25) and (_cur_price < _e50)
-                            # Near-cross: EMA9 approaching EMA25 from below/above with strong slope
-                            # (catches the setup 1-2 bars before actual cross = better entry)
-                            _gap_pct = abs(_e9 - _e25) / max(_e25, 1) * 100
-                            # Near-cross: approaching with momentum (0.15% gap = ~$6.50 for Gold)
-                            _near_cross_bull = (not _cross_bull and _e9 < _e25 and
-                                                _e9 > _e9p and _gap_pct < 0.15 and _cur_price > _e50)
-                            _near_cross_bear = (not _cross_bear and _e9 > _e25 and
-                                                _e9 < _e9p and _gap_pct < 0.15 and _cur_price < _e50)
-                            # 9 EMA bounce: price pulled to 9 EMA and bouncing in trend direction
-                            # (the "bend" signal from EMA strategy docs)
-                            _e9_touch_bull = (not _cross_bull and not _near_cross_bull and
-                                              abs(_cur_price - _e9) < _e9 * 0.001 and  # within 0.1% of 9 EMA
-                                              _e9 > _e9p and _cur_price > _e50 and  # 9 EMA rising, price above 50
-                                              df_m5['close'].iloc[-1] > df_m5['open'].iloc[-1])  # last candle green
-                            _e9_touch_bear = (not _cross_bear and not _near_cross_bear and
-                                              abs(_cur_price - _e9) < _e9 * 0.001 and
-                                              _e9 < _e9p and _cur_price < _e50 and
-                                              df_m5['close'].iloc[-1] < df_m5['open'].iloc[-1])  # last candle red
-                            _cross_bull = _cross_bull or _near_cross_bull or _e9_touch_bull
-                            _cross_bear = _cross_bear or _near_cross_bear or _e9_touch_bear
-
-                            _cross_valid = (_cross_bull and _trade_direction == 'BUY') or \
-                                           (_cross_bear and _trade_direction == 'SELL')
-
-                            if _cross_valid:
-                                # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
-                                _lookback_ema = df_m5.iloc[-20:]
-                                if _trade_direction == 'BUY':
-                                    _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
-                                else:
-                                    _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
-                                setup = {
-                                    'signal':    _trade_direction,
-                                    'reason':    'EMA_SCALP_CROSS',
-                                    'stop_loss': _sl_ema,
-                                    'strategy_type': 'EMA',
-                                    '_requires_trending': True,   # BLOCKED in RANGING market
-                                    # 50 EMA = primary TP target (doc rule)
-                                    'ema50_tp':  float(_e50),     # structural TP overridden to 50 EMA
-                                    'liquidity_distance':  0.6,
-                                    'liquidity_strength':  _ema_m5['strength'] == 'STRONG' and 0.8 or 0.65,
-                                    'momentum_state':      0.7,
-                                    'structure_alignment': 0.65,
-                                    'entry_price': _cur_price,
-                                    'htf_needed': False,   # EMA scalp never needs HTF OB
-                                }
-                                logger.debug(f"[EMA SCALP] {symbol}: 9/25 cross {'bullish' if _cross_bull else 'bearish'} "
-                                             f"e9={_e9:.4f} e25={_e25:.4f} e50={_e50:.4f} e200={_e200:.4f} "
-                                             f"(price {'above' if _above_200 else 'below'} 200 EMA -- gate passed)")
-                    except Exception as _ema_err:
-                        logger.debug(f"[EMA SCALP] error: {_ema_err}")
+                    setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol)
 
                 # 
                 # STRATEGY B: SWAPPY 3C (momentum continuation)

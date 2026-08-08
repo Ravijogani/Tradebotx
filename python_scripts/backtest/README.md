@@ -26,8 +26,8 @@ current configuration.
 |---|---|---|---|
 | `SHAAKUNI_SSM` | Yes | **Yes** | Places a LIMIT order, not a market order |
 | `SWAPPY_3C` | Yes | **Yes** | Now matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below) |
+| `EMA_SCALP_CROSS` | Yes | **Yes** | Now backtestable — extracted from the main loop into `strategy_ema_scalp_cross()`, with two behavior fixes made in the process (see below) |
 | AOX (layered execution) | Yes | **Yes** | Not backtestable here — see "not wired" below |
-| EMA scalp cross ("STRATEGY A") | Yes | **Yes** | Not backtestable here — see "not wired" below |
 | `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy |
 | `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy |
 | `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" |
@@ -56,14 +56,34 @@ its own execution) and calling `check_swappy_expirations()` once per
 cycle. The `SWAPPY_3C` adapter here was updated to match: it now models a
 stop entry with 3:1 RR instead of a market fill.
 
-Two more live strategies exist but are **not wired here on purpose**:
+### EMA_SCALP_CROSS extraction (two behavior fixes found and made)
 
-- **"STRATEGY A" (EMA_SCALP_CROSS)** is ~90 lines fully inline in the main
-  trading loop — no standalone function exists to call. Extracting it
-  cleanly is a real refactor of live-critical code, not a quick adapter,
-  and this sandbox can't run the live bot end-to-end to verify a refactor
-  didn't change its behavior (no Windows, no MT5 terminal). Left as a
-  deliberate follow-up to do carefully, with real testing access.
+Previously ~90 lines fully inline in the main loop with no standalone
+function to call. Extracted into `strategy_ema_scalp_cross()` so it could
+be wired in here. This was meant to be a faithful "move, don't rewrite"
+extraction, but tracing every external variable dependency surfaced two
+real bugs, both fixed as part of the extraction (not silently — see the
+function's own docstring):
+
+1. **The pattern pre-filter never actually gated anything.** The inline
+   code computed `detect_ema_pattern_prefilter()`, logged whether a
+   qualifying double-top/bottom or H&S pattern was found, and — on
+   "not found" — logged, bumped a counter, and then **fell straight
+   through to the cross-detection logic anyway**, with no `continue` or
+   gate. The comment even says "Don't continue -- let other strategies
+   still check," which is true but irrelevant: nothing stopped *this*
+   strategy from proceeding past its own failed filter. So the filter
+   that exists specifically to stop "random crossovers in ranging
+   markets" (its own comment) never once blocked a trade. Fixed: a failed
+   pre-filter now returns `None`.
+2. **`state._rej` double-counting.** The inline version incremented the
+   rejection counter at up to 3 internal points *and* the cascade's
+   single catch-all after everything fails — double-counting whenever
+   every strategy failed the same cycle. Moved the bookkeeping to the
+   caller, matching how every other cascade strategy already works.
+
+One more live strategy exists but is **not wired here on purpose**:
+
 - **"STRATEGY D" (`run_aox_layered_entry`)** manages its own multi-call
   phase state machine and returns `bool`, not a signal dict — it looks
   like it places real orders itself rather than just proposing a trade.
@@ -72,17 +92,16 @@ Two more live strategies exist but are **not wired here on purpose**:
   order *intent* instead of this engine's simulate-fills-against-
   subsequent-bars model). Not faked here.
 
-### EMA scalp (9/25/50/200) -- what changed and what's still open
+### EMA scalp (9/25/50/200) -- what changed
 
-Per the 9/15/50/200 EMA framework spec, two things were added/enabled:
+Per the 9/15/50/200 EMA framework spec:
 
 - **Enabled by default** (`ENABLE_STRATEGY_EMA_SCALP = True`). The existing
-  implementation already matched the spec reasonably well before this: a
-  9/25 EMA cross (the spec explicitly allows 25 as a documented variant of
-  15), a hard 200 EMA macro-trend gate, and the 50 EMA used as the primary
-  TP target (via `ema50_tp` -> `get_dynamic_trade_params`'s
-  `ema50_tp_hint`, already correctly wired -- verified before touching
-  anything, not new).
+  implementation already matched the spec reasonably well before touching
+  anything: a 9/25 EMA cross (the spec explicitly allows 25 as a
+  documented variant of 15), a hard 200 EMA macro-trend gate, and the 50
+  EMA used as the primary TP target (via `ema50_tp` -> `get_dynamic_trade_
+  params`'s `ema50_tp_hint`, verified already correctly wired, not new).
 - **Added: the "Distance Rule"** — the spec's no-trade-zone filter for when
   the 9/25 cluster and 50 EMA are bunched/braided (ranging market, cross
   is noise not momentum). Implemented as an ATR-relative gap requirement
@@ -90,17 +109,19 @@ Per the 9/15/50/200 EMA framework spec, two things were added/enabled:
   than the spec's fixed "~15 pips", since a fixed pip count doesn't
   translate across Gold/BTC/forex — same reasoning already used elsewhere
   in this file (`strategy_advanced_smc`'s `min_ob_size`). Not empirically
-  validated; tune via this harness once EMA scalp is backtestable (see
-  below).
+  validated; tune via this harness now that EMA scalp is backtestable.
+- **Extracted into `strategy_ema_scalp_cross()`** (see the section above)
+  so it's now wired into this harness as `EMA_SCALP_CROSS` — found and
+  fixed two real behavior bugs in the process, also covered above.
 
-**Deliberately NOT implemented:** the spec's core execution protocol is a
-limit entry at the 50% retracement of the trigger candle, not a market
-fill. The current code enters at the live market price via the shared
-`place_ai_trade` pipeline — verified that `entry_price` in the setup dict
-is informational only (the actual fill price comes from a fresh
-bid/ask tick at execution time), so simply changing that value would not
-have made this a real limit order. Implementing the retracement entry
-correctly needs an actual order-type branch (`TRADE_ACTION_DEAL` vs
+**Still deliberately NOT implemented:** the spec's core execution protocol
+is a limit entry at the 50% retracement of the trigger candle, not a
+market fill. The current code enters at the live market price via the
+shared `place_ai_trade` pipeline — verified that `entry_price` in the
+setup dict is informational only (the actual fill price comes from a
+fresh bid/ask tick at execution time), so simply changing that value
+would not have made this a real limit order. Implementing the retracement
+entry correctly needs an actual order-type branch (`TRADE_ACTION_DEAL` vs
 `TRADE_ACTION_PENDING`) inside the shared execution function used by every
 other strategy's market orders too — a change to core, heavily-shared
 execution code that this sandbox cannot verify end-to-end (no Windows, no
