@@ -3,11 +3,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Users, TrendingUp, DollarSign, Activity, Target, Award } from "lucide-react";
+import type { Database } from "@/integrations/supabase/types";
+
+type PlatformPnlOverview = Database["public"]["Functions"]["get_platform_pnl_overview"]["Returns"][number];
+type StrategyPerformance = Database["public"]["Functions"]["get_strategy_performance"]["Returns"][number];
 
 export const PlatformAnalytics = () => {
   const [loading, setLoading] = useState(true);
-  const [platformData, setPlatformData] = useState<any>(null);
-  const [strategyData, setStrategyData] = useState<any[]>([]);
+  const [platformData, setPlatformData] = useState<PlatformPnlOverview | null>(null);
+  const [strategyData, setStrategyData] = useState<StrategyPerformance[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {

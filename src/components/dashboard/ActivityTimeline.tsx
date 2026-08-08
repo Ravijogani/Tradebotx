@@ -12,6 +12,7 @@ import {
   Clock
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface ActivityItem {
   id: string;
@@ -48,7 +49,7 @@ export const ActivityTimeline = () => {
           },
           async (payload) => {
             // Only reload if this trade belongs to the current user
-            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            const tradeUserId = (payload.new as Partial<Tables<"trades">>)?.user_id || (payload.old as Partial<Tables<"trades">>)?.user_id;
             if (tradeUserId === user.id) {
               // Debounce reload to prevent excessive updates
               clearTimeout(debounceTimer);

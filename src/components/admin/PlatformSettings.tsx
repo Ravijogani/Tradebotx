@@ -9,13 +9,12 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Save, Settings } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { Tables, Json } from "@/integrations/supabase/types";
 
-interface PlatformSetting {
-  id: string;
-  key: string;
-  value: any;
-  description: string;
-}
+// value is genuinely heterogeneous per key (number, boolean, string, or
+// string[] for allowed_brokers) — Json (matching the DB column) is the
+// honest type; each read below narrows it to what that key actually holds.
+type PlatformSetting = Tables<"platform_settings">;
 
 export const PlatformSettings = () => {
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
@@ -60,40 +59,40 @@ export const PlatformSettings = () => {
         data.forEach((setting: PlatformSetting) => {
           switch (setting.key) {
             case "max_positions_per_user":
-              setMaxPositionsPerUser(setting.value);
+              setMaxPositionsPerUser(setting.value as number);
               break;
             case "max_risk_per_trade":
-              setMaxRiskPerTrade(setting.value);
+              setMaxRiskPerTrade(setting.value as number);
               break;
             case "min_account_size":
-              setMinAccountSize(setting.value);
+              setMinAccountSize(setting.value as number);
               break;
             case "max_leverage":
-              setMaxLeverage(setting.value);
+              setMaxLeverage(setting.value as number);
               break;
             case "allowed_brokers":
-              setAllowedBrokers(setting.value.join(", "));
+              setAllowedBrokers((setting.value as string[]).join(", "));
               break;
             case "maintenance_mode":
-              setMaintenanceMode(setting.value);
+              setMaintenanceMode(setting.value as boolean);
               break;
             case "allow_new_signups":
-              setAllowNewSignups(setting.value);
+              setAllowNewSignups(setting.value as boolean);
               break;
             case "require_email_verification":
-              setRequireEmailVerification(setting.value);
+              setRequireEmailVerification(setting.value as boolean);
               break;
             case "require_admin_approval":
-              setRequireAdminApproval(setting.value);
+              setRequireAdminApproval(setting.value as boolean);
               break;
             case "email_notifications":
-              setEmailNotifications(setting.value);
+              setEmailNotifications(setting.value as boolean);
               break;
             case "telegram_notifications":
-              setTelegramNotifications(setting.value);
+              setTelegramNotifications(setting.value as boolean);
               break;
             case "admin_alert_email":
-              setAdminAlertEmail(setting.value);
+              setAdminAlertEmail(setting.value as string);
               break;
           }
         });
@@ -110,7 +109,7 @@ export const PlatformSettings = () => {
     }
   };
 
-  const updateSetting = async (key: string, value: any, description: string) => {
+  const updateSetting = async (key: string, value: Json, description: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     
     const existingSetting = settings.find(s => s.key === key);
