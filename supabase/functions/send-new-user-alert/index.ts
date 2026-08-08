@@ -5,10 +5,7 @@ import { handleError } from "../_shared/error-handler.ts";
 
 import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const newUserAlertSchema = z.object({
   userEmail: z.string().email().max(255),
