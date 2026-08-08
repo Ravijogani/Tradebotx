@@ -15,14 +15,20 @@ import { Loader2, Search, UserCheck, UserX, CheckCircle, XCircle, Clock, AlertCi
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { UserProfileModal } from "@/components/admin/UserProfileModal";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import type { Tables } from "@/integrations/supabase/types";
 
 const ADMIN_EMAIL = "admin@tradebotx.com"; // Configure this with your admin email
 
+type AdminUserRow = Tables<"profiles"> & {
+  user_subscriptions: (Tables<"user_subscriptions"> & { plans?: Pick<Tables<"plans">, "plan_type"> | null })[];
+  user_setup: Tables<"user_setup">[];
+};
+
 export const AdminUsers = () => {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [selectedUser, setSelectedUser] = useState<(AdminUserRow & { action?: "approve" | "reject" }) | null>(null);
   const [selectedUserIdForProfile, setSelectedUserIdForProfile] = useState<string | null>(null);
   const [approvalNotes, setApprovalNotes] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
@@ -33,7 +39,7 @@ export const AdminUsers = () => {
   const [showBulkEmailDialog, setShowBulkEmailDialog] = useState(false);
   const [bulkEmailSubject, setBulkEmailSubject] = useState("");
   const [bulkEmailMessage, setBulkEmailMessage] = useState("");
-  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [userToDelete, setUserToDelete] = useState<AdminUserRow | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const { toast } = useToast();
 
@@ -272,56 +278,20 @@ export const AdminUsers = () => {
     }
   };
 
-  const handleDeleteUser = async (user: any) => {
+  const handleDeleteUser = async (user: AdminUserRow) => {
     setDeleteLoading(true);
     try {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      
-      // Delete related data first (in order to avoid foreign key issues)
-      // Delete trades
-      await supabase.from("trades").delete().eq("user_id", user.id);
-      
-      // Delete user_strategies
-      await supabase.from("user_strategies").delete().eq("user_id", user.id);
-      
-      // Delete bot_heartbeats
-      await supabase.from("bot_heartbeats").delete().eq("user_id", user.id);
-      
-      // Delete bot_commands
-      await supabase.from("bot_commands").delete().eq("user_id", user.id);
-      
-      // Delete user_subscriptions
-      await supabase.from("user_subscriptions").delete().eq("user_id", user.id);
-      
-      // Delete user_setup
-      await supabase.from("user_setup").delete().eq("user_id", user.id);
-      
-      // Delete user_notifications
-      await supabase.from("user_notifications").delete().eq("user_id", user.id);
-      
-      // Delete referral_codes
-      await supabase.from("referral_codes").delete().eq("user_id", user.id);
-      
-      // Delete user_roles
-      await supabase.from("user_roles").delete().eq("user_id", user.id);
-      
-      // Delete profile
-      const { error: profileError } = await supabase
-        .from("profiles")
-        .delete()
-        .eq("id", user.id);
-      
-      if (profileError) throw profileError;
-
-      // Log activity
-      if (currentUser) {
-        await supabase.from("admin_activity_logs").insert({
-          admin_user_id: currentUser.id,
-          action_type: "user_deleted",
-          target_user_id: user.id,
-          description: `Deleted user account: ${user.email}`,
-        });
-      }
+      // Deletes the actual auth.users row via the admin API (server-side,
+      // service-role only). Every related table's user_id FK is
+      // ON DELETE CASCADE (checked the migrations), so this alone cleans up
+      // trades, user_strategies, subscriptions, setup, roles, profile, etc.
+      // — the previous version deleted those rows manually one table at a
+      // time but never removed the actual auth account, so a "deleted" user
+      // could still log in with no profile/data behind it.
+      const { error } = await supabase.functions.invoke("admin-delete-user", {
+        body: { userId: user.id },
+      });
+      if (error) throw error;
 
       toast({
         title: "User Deleted",
@@ -357,7 +327,7 @@ export const AdminUsers = () => {
       for (const userId of selectedUsers) {
         const user = users.find(u => u.id === userId);
         if (user) {
-          await handleDeleteUserData(userId, user.email);
+          await handleDeleteUserData(userId);
         }
       }
 
@@ -380,29 +350,13 @@ export const AdminUsers = () => {
     }
   };
 
-  const handleDeleteUserData = async (userId: string, email: string) => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    
-    // Delete all related data
-    await supabase.from("trades").delete().eq("user_id", userId);
-    await supabase.from("user_strategies").delete().eq("user_id", userId);
-    await supabase.from("bot_heartbeats").delete().eq("user_id", userId);
-    await supabase.from("bot_commands").delete().eq("user_id", userId);
-    await supabase.from("user_subscriptions").delete().eq("user_id", userId);
-    await supabase.from("user_setup").delete().eq("user_id", userId);
-    await supabase.from("user_notifications").delete().eq("user_id", userId);
-    await supabase.from("referral_codes").delete().eq("user_id", userId);
-    await supabase.from("user_roles").delete().eq("user_id", userId);
-    await supabase.from("profiles").delete().eq("id", userId);
-
-    if (currentUser) {
-      await supabase.from("admin_activity_logs").insert({
-        admin_user_id: currentUser.id,
-        action_type: "user_deleted",
-        target_user_id: userId,
-        description: `Deleted user account: ${email}`,
-      });
-    }
+  const handleDeleteUserData = async (userId: string) => {
+    // Same server-side delete as handleDeleteUser — see its comment. The
+    // edge function logs its own admin_activity_logs entry.
+    const { error } = await supabase.functions.invoke("admin-delete-user", {
+      body: { userId },
+    });
+    if (error) throw error;
   };
 
   const filteredUsers = users.filter(user => {
