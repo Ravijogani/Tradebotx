@@ -32,3 +32,9 @@ venv/
 # Environment secrets
 .env.local
 python_scripts/.env
+
+# Bot manager / trading bot runtime state (created on the deployment host)
+python_scripts/running_bots_state.json
+python_scripts/data/
+python_scripts/Hybrid_AI_Bot_Logs_*/
+python_scripts/Backup_Trades_*/

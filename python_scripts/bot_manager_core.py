@@ -84,11 +84,21 @@ def log_environment_summary() -> None:
 
 
 class BotRegistry:
-    """Thread-safe tracking of running bot subprocesses, keyed by (user_id, strategy_id)."""
+    """Thread-safe tracking of running bot subprocesses, keyed by (user_id, strategy_id).
 
-    def __init__(self):
+    Also persisted to a state file on every change so a manager restart can
+    reconcile with subprocesses that are still actually running instead of
+    losing track of them (they'd otherwise become invisible orphans that a
+    later /bot/start call might try to duplicate).
+    """
+
+    def __init__(self, state_path: Path | None = None):
         self._lock = threading.Lock()
         self._bots: dict[tuple[str, str], dict] = {}
+        self._state_path = state_path
+
+    def set_state_path(self, state_path: Path) -> None:
+        self._state_path = state_path
 
     @staticmethod
     def key_str(key: tuple[str, str]) -> str:
@@ -101,10 +111,12 @@ class BotRegistry:
     def set(self, user_id: str, strategy_id: str, info: dict):
         with self._lock:
             self._bots[(user_id, strategy_id)] = info
+            self._persist_locked()
 
     def remove(self, user_id: str, strategy_id: str):
         with self._lock:
             self._bots.pop((user_id, strategy_id), None)
+            self._persist_locked()
 
     def for_user(self, user_id: str) -> dict:
         with self._lock:
@@ -119,20 +131,79 @@ class BotRegistry:
         with self._lock:
             dead = []
             for key, info in self._bots.items():
-                pid = info.get('pid')
-                try:
-                    alive = pid is not None and psutil.pid_exists(pid) and info['process'].poll() is None
-                except Exception:
-                    alive = False
-                if not alive:
-                    dead.append(key)
+                dead.append(key) if not _pid_is_alive(info.get('pid'), info.get('process')) else None
             for key in dead:
                 logger.info(f"Cleaned up dead process for {self.key_str(key)}")
                 del self._bots[key]
+            if dead:
+                self._persist_locked()
+
+    def _persist_locked(self) -> None:
+        if not self._state_path:
+            return
+        try:
+            serializable = {
+                self.key_str(key): {k: v for k, v in info.items() if k != 'process'}
+                for key, info in self._bots.items()
+            }
+            self._state_path.write_text(json.dumps(serializable), encoding='utf-8')
+        except OSError as e:
+            logger.warning(f"Could not persist bot registry state: {e}")
+
+    def reconcile_from_disk(self, bot_dir: Path) -> None:
+        """Called once at startup. Re-adopts entries from the last run whose
+        process is still alive AND whose command line still matches the
+        expected (user_id, strategy_id) — a bare PID match isn't enough since
+        PIDs get reused by unrelated processes over time."""
+        if not self._state_path or not self._state_path.exists():
+            return
+        try:
+            saved = json.loads(self._state_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not read bot registry state file: {e}")
+            return
+
+        adopted = 0
+        with self._lock:
+            for key_str, info in saved.items():
+                user_id, _, strategy_id = key_str.partition(':')
+                pid = info.get('pid')
+                if not _pid_matches_bot(pid, user_id, strategy_id):
+                    continue
+                info['process'] = None  # no live Popen handle for an adopted process
+                self._bots[(user_id, strategy_id)] = info
+                adopted += 1
+            self._persist_locked()
+        if adopted:
+            logger.info(f"Reconciled {adopted} bot(s) still running from before restart")
 
     def __len__(self):
         with self._lock:
             return len(self._bots)
+
+
+def _pid_is_alive(pid, process) -> bool:
+    if pid is None:
+        return False
+    try:
+        if process is not None:
+            return psutil.pid_exists(pid) and process.poll() is None
+        return psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, Exception):
+        return False
+
+
+def _pid_matches_bot(pid, user_id: str, strategy_id: str) -> bool:
+    if not pid:
+        return False
+    try:
+        proc = psutil.Process(pid)
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        cmdline = ' '.join(proc.cmdline())
+        return user_id in cmdline and strategy_id in cmdline
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
 
 
 running_bots = BotRegistry()
@@ -275,6 +346,9 @@ def build_bot_blueprint(get_secret, bot_dir: Path, build_launch_args=None):
     lets the Windows variant inject a resolved --mt5-path (and refuse to
     start if no MT5 instance is provisioned) without duplicating every route.
     """
+    running_bots.set_state_path(bot_dir / "running_bots_state.json")
+    running_bots.reconcile_from_disk(bot_dir)
+
     bp = Blueprint('bot_manager', __name__)
     auth = require_auth(get_secret)
 
@@ -352,17 +426,24 @@ def build_bot_blueprint(get_secret, bot_dir: Path, build_launch_args=None):
                 '--user-id', str(user_id),
                 '--strategy-id', str(strategy_id),
                 '--mt5-login', str(config.get('mt5_account')),
-                '--mt5-password', str(config.get('mt5_password')),
                 '--mt5-server', str(config.get('mt5_server')),
                 *extra_args,
                 '--supabase-url', str(config.get('supabase_url')),
-                '--supabase-key', str(config.get('supabase_service_key')),
-                '--gemini-api-key', str(config.get('gemini_api_key')),
             ]
             if config.get('telegram_chat_id'):
                 command.extend(['--telegram-chat-id', str(config.get('telegram_chat_id'))])
+
+            # Secrets go through the child process's environment, not argv —
+            # command-line arguments are visible to any local process via
+            # `ps`/Task Manager's "Command line" column or WMI, in addition to
+            # whatever ends up in this process's own debug logs.
+            child_env = dict(os.environ)
+            child_env['MT5_PASSWORD'] = str(config.get('mt5_password', ''))
+            child_env['SUPABASE_SERVICE_KEY'] = str(config.get('supabase_service_key', ''))
+            if config.get('gemini_api_key'):
+                child_env['GEMINI_API_KEY'] = str(config.get('gemini_api_key'))
             if config.get('telegram_bot_token'):
-                command.extend(['--telegram-bot-token', str(config.get('telegram_bot_token'))])
+                child_env['TELEGRAM_BOT_TOKEN'] = str(config.get('telegram_bot_token'))
 
             # Per (user, strategy) log dir — keeping strategy_id in the path
             # (not just user_id) avoids two concurrent strategies for the
@@ -370,7 +451,7 @@ def build_bot_blueprint(get_secret, bot_dir: Path, build_launch_args=None):
             user_log_dir = bot_dir / f"Hybrid_AI_Bot_Logs_{user_id}_{strategy_id}"
             user_log_dir.mkdir(exist_ok=True)
 
-            popen_kwargs = dict(cwd=str(bot_dir))
+            popen_kwargs = dict(cwd=str(bot_dir), env=child_env)
             if sys.platform == 'win32':
                 popen_kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
             else:

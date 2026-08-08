@@ -587,13 +587,17 @@ parser = argparse.ArgumentParser(description='Multi-user Hybrid AI Trading Bot')
 parser.add_argument('--user-id', type=str, required=True, help='User ID')
 parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID')
 parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
-parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
+# --mt5-password / --supabase-key are optional on the CLI on purpose: the bot
+# manager passes them via environment variables instead of argv so they don't
+# show up in `ps`/Task Manager/WMI process-listing output. Falls back to the
+# flag only for manual/local runs.
+parser.add_argument('--mt5-password', type=str, required=False, default=None, help='MT5 Password (prefer MT5_PASSWORD env var)')
 parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
 parser.add_argument('--mt5-path', type=str, required=False, default=None, help='Path to user-specific MT5 terminal64.exe')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
-parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
+parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token (prefer TELEGRAM_BOT_TOKEN env var)')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
-parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Key')
+parser.add_argument('--supabase-key', type=str, required=False, default=None, help='Supabase Service Key (prefer SUPABASE_SERVICE_KEY env var)')
 parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
 parser.add_argument('--magic-number', type=int, required=False, help='Fixed Magic Number (optional - if not provided, generates from user-id + strategy-id)')
 
@@ -603,11 +607,22 @@ args = parser.parse_args()
 USER_ID = args.user_id
 STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
-TELEGRAM_BOT_TOKEN = args.telegram_bot_token
+# Secrets prefer environment variables (set by the bot manager) over CLI
+# flags, so they don't appear in `ps`/Task Manager/WMI process listings.
+MT5_PASSWORD_RESOLVED = args.mt5_password or os.getenv("MT5_PASSWORD", "")
+SUPABASE_KEY_RESOLVED = args.supabase_key or os.getenv("SUPABASE_SERVICE_KEY", "")
+TELEGRAM_BOT_TOKEN = args.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
 MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
 
+if not MT5_PASSWORD_RESOLVED:
+    print("[FATAL] MT5 password not provided (neither --mt5-password nor MT5_PASSWORD env var)")
+    sys.exit(1)
+if not SUPABASE_KEY_RESOLVED:
+    print("[FATAL] Supabase service key not provided (neither --supabase-key nor SUPABASE_SERVICE_KEY env var)")
+    sys.exit(1)
+
 # Initialize Supabase client
-supabase: Client = create_client(args.supabase_url, args.supabase_key)
+supabase: Client = create_client(args.supabase_url, SUPABASE_KEY_RESOLVED)
 
 # DATA DIRECTORY SETUP (OS AGNOSTIC)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -712,7 +727,7 @@ class AITradingConfig:
     
     # MT5 Connection
     MT5_LOGIN: int = args.mt5_login
-    MT5_PASSWORD: str = args.mt5_password
+    MT5_PASSWORD: str = MT5_PASSWORD_RESOLVED
     MT5_SERVER: str = args.mt5_server
     
     # AI API Configuration
