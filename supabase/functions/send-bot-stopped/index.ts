@@ -80,7 +80,7 @@ serve(async (req) => {
       console.log('Bot stopped email sent successfully to:', email);
       
       await client.close();
-    } catch (emailError: any) {
+    } catch (emailError) {
       console.error('SMTP send error:', emailError);
       throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
     }
@@ -95,9 +95,10 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error sending bot stopped email:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

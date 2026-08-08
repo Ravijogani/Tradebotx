@@ -96,7 +96,7 @@ serve(async (req) => {
 
         const stopResult = await stopResponse.json();
         console.log(`Bot stopped successfully on Lightsail:`, stopResult);
-      } catch (fetchError: any) {
+      } catch (fetchError) {
         console.error('Error calling bot manager:', fetchError);
         // Don't throw - database already updated, just log the error
         // The bot might have already crashed or stopped on its own
@@ -197,12 +197,13 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error stopping trading bot:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Failed to stop trading bot',
+        error: message || 'Failed to stop trading bot',
       }),
       {
         status: 400,

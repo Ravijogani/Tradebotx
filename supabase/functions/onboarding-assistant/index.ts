@@ -129,7 +129,7 @@ Be concise, friendly, and helpful. If users ask about trading strategies or fina
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

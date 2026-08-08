@@ -228,12 +228,13 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error starting trading bot:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Failed to start trading bot',
+        error: message || 'Failed to start trading bot',
       }),
       {
         status: 400,
