@@ -11,14 +11,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Loader2, MessageSquare, Plus, Send, Clock, CheckCircle, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Ticket = Tables<"support_tickets">;
+type TicketMessage = Tables<"ticket_messages">;
 
 export const UserSupport = () => {
-  const [tickets, setTickets] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showNewTicket, setShowNewTicket] = useState(false);
-  const [selectedTicket, setSelectedTicket] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const { toast } = useToast();
 
@@ -39,10 +43,10 @@ export const UserSupport = () => {
       if (!user) return;
 
       const { data, error } = await supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }) as any;
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       setTickets(data || []);
@@ -61,10 +65,10 @@ export const UserSupport = () => {
   const loadMessages = async (ticketId: string) => {
     try {
       const { data, error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId)
-        .order("created_at", { ascending: true }) as any;
+        .order("created_at", { ascending: true });
 
       if (error) throw error;
       setMessages(data || []);
@@ -85,14 +89,14 @@ export const UserSupport = () => {
       if (!user) return;
 
       const { error } = await supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .insert({
           user_id: user.id,
           subject: formData.subject,
           description: formData.description,
           priority: formData.priority,
           status: "open",
-        } as any);
+        });
 
       if (error) throw error;
 
@@ -124,13 +128,13 @@ export const UserSupport = () => {
       if (!user) return;
 
       const { error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .insert({
           ticket_id: selectedTicket.id,
-          sender_id: user.id,
+          user_id: user.id,
           message: newMessage,
           is_admin: false,
-        } as any);
+        });
 
       if (error) throw error;
 
@@ -225,7 +229,7 @@ export const UserSupport = () => {
                     <Label>Priority</Label>
                     <Select
                       value={formData.priority}
-                      onValueChange={(value: any) => setFormData({ ...formData, priority: value })}
+                      onValueChange={(value: "low" | "medium" | "high") => setFormData({ ...formData, priority: value })}
                     >
                       <SelectTrigger>
                         <SelectValue />

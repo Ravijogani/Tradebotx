@@ -10,11 +10,16 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, MessageSquare, Clock, CheckCircle, XCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { Tables } from "@/integrations/supabase/types";
+
+type TicketProfile = Pick<Tables<"profiles">, "id" | "full_name" | "email">;
+type Ticket = Tables<"support_tickets"> & { profiles?: TicketProfile };
+type TicketMessage = Tables<"ticket_messages"> & { profiles?: TicketProfile };
 
 export const SupportTicketsManagement = () => {
-  const [tickets, setTickets] = useState<any[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [newMessage, setNewMessage] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -43,8 +48,9 @@ export const SupportTicketsManagement = () => {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'ticket_messages' },
         (payload) => {
-          if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
-            setMessages(prev => [...prev, payload.new]);
+          const newMessage = payload.new as TicketMessage;
+          if (selectedTicket && newMessage.ticket_id === selectedTicket.id) {
+            setMessages(prev => [...prev, newMessage]);
           }
         }
       )
@@ -58,7 +64,7 @@ export const SupportTicketsManagement = () => {
   const loadTickets = async () => {
     try {
       let query = supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .select("*")
         .order("created_at", { ascending: false });
 
@@ -71,14 +77,14 @@ export const SupportTicketsManagement = () => {
       if (error) throw error;
 
       // Load user profiles
-      const userIds = (tickets as any[])?.map((t: any) => t.user_id) || [];
+      const userIds = tickets?.map((t) => t.user_id) || [];
       const { data: profiles } = await supabase
         .from("profiles")
         .select("id, full_name, email")
         .in("id", userIds);
 
       const profileMap = new Map(profiles?.map(p => [p.id, p]));
-      const ticketsWithProfiles = (tickets as any[])?.map((ticket: any) => ({
+      const ticketsWithProfiles = tickets?.map((ticket) => ({
         ...ticket,
         profiles: profileMap.get(ticket.user_id),
       }));
@@ -99,7 +105,7 @@ export const SupportTicketsManagement = () => {
   const loadMessages = async (ticketId: string) => {
     try {
       const { data: messages, error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId)
         .order("created_at", { ascending: true });
@@ -107,14 +113,14 @@ export const SupportTicketsManagement = () => {
       if (error) throw error;
 
       // Load user profiles for message senders
-      const userIds = (messages as any[])?.map((m: any) => m.user_id) || [];
+      const userIds = messages?.map((m) => m.user_id) || [];
       const { data: profiles } = await supabase
         .from("profiles")
         .select("id, full_name, email")
         .in("id", userIds);
 
       const profileMap = new Map(profiles?.map(p => [p.id, p]));
-      const messagesWithProfiles = (messages as any[])?.map((msg: any) => ({
+      const messagesWithProfiles = messages?.map((msg) => ({
         ...msg,
         profiles: profileMap.get(msg.user_id),
       }));
@@ -134,7 +140,7 @@ export const SupportTicketsManagement = () => {
     if (!selectedTicket) return;
 
     try {
-      const updates: any = { status };
+      const updates: Partial<Tables<"support_tickets">> = { status };
       if (status === "resolved") {
         updates.resolved_at = new Date().toISOString();
       } else if (status === "closed") {
@@ -142,7 +148,7 @@ export const SupportTicketsManagement = () => {
       }
 
       const { error } = await supabase
-        .from("support_tickets" as any)
+        .from("support_tickets")
         .update(updates)
         .eq("id", selectedTicket.id);
 
@@ -173,7 +179,7 @@ export const SupportTicketsManagement = () => {
       if (!user) throw new Error("Not authenticated");
 
       const { error } = await supabase
-        .from("ticket_messages" as any)
+        .from("ticket_messages")
         .insert([{
           ticket_id: selectedTicket.id,
           user_id: user.id,
@@ -186,7 +192,7 @@ export const SupportTicketsManagement = () => {
       // Update ticket status to in_progress if it's open
       if (selectedTicket.status === "open") {
         await supabase
-          .from("support_tickets" as any)
+          .from("support_tickets")
           .update({ status: "in_progress" })
           .eq("id", selectedTicket.id);
       }

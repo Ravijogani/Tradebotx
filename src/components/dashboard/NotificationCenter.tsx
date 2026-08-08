@@ -10,9 +10,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Notification = Tables<"user_notifications">;
 
 export const NotificationCenter = () => {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
@@ -29,13 +32,14 @@ export const NotificationCenter = () => {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'user_notifications' },
         (payload) => {
-          setNotifications(prev => [payload.new, ...prev]);
+          const newNotification = payload.new as Notification;
+          setNotifications(prev => [newNotification, ...prev]);
           setUnreadCount(prev => prev + 1);
-          
+
           // Show toast for new notification
           toast({
-            title: payload.new.title,
-            description: payload.new.message,
+            title: newNotification.title,
+            description: newNotification.message,
           });
         }
       )
@@ -49,14 +53,14 @@ export const NotificationCenter = () => {
   const loadNotifications = async () => {
     try {
       const { data, error } = await supabase
-        .from("user_notifications" as any)
+        .from("user_notifications")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (error) throw error;
       setNotifications(data || []);
-      setUnreadCount(data?.filter((n: any) => !n.read).length || 0);
+      setUnreadCount(data?.filter((n) => !n.read).length || 0);
     } catch (error) {
       console.error("Error loading notifications:", error);
     }
@@ -65,8 +69,8 @@ export const NotificationCenter = () => {
   const markAsRead = async (id: string) => {
     try {
       const { error } = await supabase
-        .from("user_notifications" as any)
-        .update({ read: true } as any)
+        .from("user_notifications")
+        .update({ read: true })
         .eq("id", id);
 
       if (error) throw error;
@@ -82,11 +86,11 @@ export const NotificationCenter = () => {
 
   const markAllAsRead = async () => {
     try {
-      const unreadIds = notifications.filter((n: any) => !n.read).map((n: any) => n.id);
+      const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
       
       const { error } = await supabase
-        .from("user_notifications" as any)
-        .update({ read: true } as any)
+        .from("user_notifications")
+        .update({ read: true })
         .in("id", unreadIds);
 
       if (error) throw error;
@@ -103,7 +107,7 @@ export const NotificationCenter = () => {
   const deleteNotification = async (id: string) => {
     try {
       const { error } = await supabase
-        .from("user_notifications" as any)
+        .from("user_notifications")
         .delete()
         .eq("id", id);
 

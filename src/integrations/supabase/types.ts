@@ -930,10 +930,12 @@ export type Database = {
       support_tickets: {
         Row: {
           category: string
+          closed_at: string | null
           created_at: string
           description: string
           id: string
           priority: string
+          resolved_at: string | null
           status: string
           subject: string
           updated_at: string
@@ -941,10 +943,12 @@ export type Database = {
         }
         Insert: {
           category?: string
+          closed_at?: string | null
           created_at?: string
           description: string
           id?: string
           priority?: string
+          resolved_at?: string | null
           status?: string
           subject: string
           updated_at?: string
@@ -952,10 +956,12 @@ export type Database = {
         }
         Update: {
           category?: string
+          closed_at?: string | null
           created_at?: string
           description?: string
           id?: string
           priority?: string
+          resolved_at?: string | null
           status?: string
           subject?: string
           updated_at?: string
