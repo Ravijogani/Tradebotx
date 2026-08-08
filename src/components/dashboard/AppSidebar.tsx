@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface AppSidebarProps {
   activeTab: string;
@@ -44,7 +45,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
         .eq("user_id", user.id)
         .single();
 
-      const planType = (subscription?.plans as any)?.plan_type;
+      const planType = (subscription?.plans as Pick<Tables<"plans">, "plan_type"> | null)?.plan_type;
       setIsEnterprise(planType === "enterprise");
     } catch (error) {
       console.error("Error checking plan:", error);

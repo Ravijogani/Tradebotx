@@ -5,6 +5,7 @@ import {
   ArrowUpDown, AlignVerticalJustifyCenter, CandlestickChart,
   GripVertical, X
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { StrategyBlock, PlacedBlock } from "./StrategyBuilder";
 
 interface StrategyCanvasProps {
@@ -18,8 +19,8 @@ interface StrategyCanvasProps {
   selectedBlockId?: string;
 }
 
-const iconMap: Record<string, any> = {
-  TrendingUp, Activity, BarChart, Target, Clock, 
+const iconMap: Record<string, LucideIcon> = {
+  TrendingUp, Activity, BarChart, Target, Clock,
   Shield, ShoppingCart, XCircle, Filter, Crosshair,
   ArrowUpDown, AlignVerticalJustifyCenter, CandlestickChart
 };

@@ -4,6 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { TrendingUp, TrendingDown, Target, DollarSign } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import type { Tables } from "@/integrations/supabase/types";
+
+type StrategyPerformanceRow = Tables<"strategy_performance"> & {
+  strategies?: Pick<Tables<"strategies">, "id" | "name"> | null;
+};
 
 interface PerformanceData {
   strategy_name: string;
@@ -93,28 +98,28 @@ export const StrategyPerformance = () => {
         .eq("user_id", user.id)
         .eq("status", "open");
 
-      const formatted = data?.map((p: any) => {
+      const formatted = (data as StrategyPerformanceRow[] | null)?.map((p) => {
         // Find matching heartbeat for real-time balance
         const heartbeat = heartbeats?.find(h => h.strategy_id === p.strategy_id);
-        const liveBalance = heartbeat?.equity || heartbeat?.balance || parseFloat(p.current_balance);
-        
+        const liveBalance = heartbeat?.equity || heartbeat?.balance || p.current_balance;
+
         // Count open trades for this strategy
         const openTradeCount = openTrades?.filter(t => t.strategy_id === p.strategy_id).length || 0;
         const totalTradesIncludingOpen = p.total_trades + openTradeCount;
 
         return {
           strategy_name: p.strategies?.name || "Unknown",
-          initial_balance: parseFloat(p.initial_balance),
+          initial_balance: p.initial_balance,
           current_balance: liveBalance, // Use real-time balance
           total_trades: totalTradesIncludingOpen, // Include open trades
           winning_trades: p.winning_trades,
           losing_trades: p.losing_trades,
-          total_profit_loss: parseFloat(p.total_profit_loss) + (liveBalance - parseFloat(p.current_balance)), // Add unrealized P&L
-          win_rate: parseFloat(p.win_rate),
-          best_trade: parseFloat(p.best_trade),
-          worst_trade: parseFloat(p.worst_trade),
-          avg_win: parseFloat(p.avg_win),
-          avg_loss: parseFloat(p.avg_loss),
+          total_profit_loss: p.total_profit_loss + (liveBalance - p.current_balance), // Add unrealized P&L
+          win_rate: p.win_rate,
+          best_trade: p.best_trade,
+          worst_trade: p.worst_trade,
+          avg_win: p.avg_win,
+          avg_loss: p.avg_loss,
         };
       }) || [];
 

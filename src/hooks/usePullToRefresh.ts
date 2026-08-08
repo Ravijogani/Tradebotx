@@ -11,7 +11,9 @@ export const usePullToRefresh = ({
   threshold = 80,
   maxPullDistance = 150
 }: PullToRefreshOptions) => {
-  const ref = useRef<HTMLDivElement>(null);
+  // HTMLElement, not HTMLDivElement — the only current usage attaches this
+  // to a <main> element.
+  const ref = useRef<HTMLElement>(null);
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [startY, setStartY] = useState(0);

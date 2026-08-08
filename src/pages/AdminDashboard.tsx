@@ -25,11 +25,12 @@ import { AdminOverview } from "@/components/admin/AdminOverview";
 import { OnboardingAnalytics } from "@/components/admin/OnboardingAnalytics";
 import { CustomStrategyApproval } from "@/components/admin/CustomStrategyApproval";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import type { User } from "@supabase/supabase-js";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();

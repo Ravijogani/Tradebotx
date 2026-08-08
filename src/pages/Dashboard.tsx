@@ -7,12 +7,12 @@ import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { SetupDialog } from "@/components/dashboard/SetupDialog";
 import { TrialExpiredModal } from "@/components/dashboard/TrialExpiredModal";
 import { SessionTimeoutWarning } from "@/components/dashboard/SessionTimeoutWarning";
-import type { Session } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();

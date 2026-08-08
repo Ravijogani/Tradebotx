@@ -5,10 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Users, DollarSign, TrendingUp, Gift } from "lucide-react";
+import type { Tables } from "@/integrations/supabase/types";
+
+type ReferralCodeWithProfile = Tables<"referral_codes"> & {
+  profiles?: Pick<Tables<"profiles">, "id" | "email" | "full_name"> | null;
+};
 
 export const ReferralProgramDashboard = () => {
   const [loading, setLoading] = useState(true);
-  const [referralData, setReferralData] = useState<any[]>([]);
+  const [referralData, setReferralData] = useState<ReferralCodeWithProfile[]>([]);
   const [stats, setStats] = useState({
     totalReferrals: 0,
     totalEarnings: 0,

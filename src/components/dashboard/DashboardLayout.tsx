@@ -178,7 +178,7 @@ export const DashboardLayout = ({ user }: { user: SupabaseUser }) => {
 
           {/* Main Content */}
           <main 
-            ref={pullToRefresh.ref as any}
+            ref={pullToRefresh.ref}
             className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-x-hidden overflow-y-auto"
           >
             <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6">
