@@ -1,4 +1,6 @@
-export const exportToCSV = (data: any[], filename: string) => {
+type ExportRow = Record<string, unknown>;
+
+export const exportToCSV = (data: ExportRow[], filename: string) => {
   if (!data || data.length === 0) {
     console.error('No data to export');
     return;
@@ -6,11 +8,11 @@ export const exportToCSV = (data: any[], filename: string) => {
 
   // Get headers from first object
   const headers = Object.keys(data[0]);
-  
+
   // Create CSV content
   const csvContent = [
     headers.join(','), // Header row
-    ...data.map(row => 
+    ...data.map(row =>
       headers.map(header => {
         const value = row[header];
         // Handle values that might contain commas or quotes
@@ -28,17 +30,17 @@ export const exportToCSV = (data: any[], filename: string) => {
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
-  
+
   link.setAttribute('href', url);
   link.setAttribute('download', `${filename}.csv`);
   link.style.visibility = 'hidden';
-  
+
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 };
 
-export const exportToJSON = (data: any[], filename: string) => {
+export const exportToJSON = (data: ExportRow[], filename: string) => {
   if (!data || data.length === 0) {
     console.error('No data to export');
     return;
@@ -48,19 +50,19 @@ export const exportToJSON = (data: any[], filename: string) => {
   const blob = new Blob([jsonContent], { type: 'application/json' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
-  
+
   link.setAttribute('href', url);
   link.setAttribute('download', `${filename}.json`);
   link.style.visibility = 'hidden';
-  
+
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 };
 
-export const formatDataForExport = (data: any[], columns: string[]) => {
+export const formatDataForExport = (data: ExportRow[], columns: string[]) => {
   return data.map(item => {
-    const formatted: any = {};
+    const formatted: ExportRow = {};
     columns.forEach(col => {
       formatted[col] = item[col];
     });

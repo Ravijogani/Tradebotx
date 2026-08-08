@@ -32,12 +32,13 @@ import { AIInsightsDashboard } from "./AIInsightsDashboard";
 import { RunningBotsPanel } from "./RunningBotsPanel";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { TelegramFAB } from "@/components/TelegramFAB";
 import { MultiAccountManager } from "./MultiAccountManager";
 import { AdvancedAuditLogs } from "./AdvancedAuditLogs";
 import { WeeklyReportSettings } from "./WeeklyReportSettings";
 
-export const DashboardLayout = ({ user }: { user: any }) => {
+export const DashboardLayout = ({ user }: { user: SupabaseUser }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") || "dashboard";
   const [activeTab, setActiveTab] = useState(initialTab);

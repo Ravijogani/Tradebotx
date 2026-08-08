@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, User, Mail, Building2, CreditCard, Settings as SettingsIcon, Palette } from "lucide-react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { useTheme } from "@/components/theme-provider";
 import {
   Select,
@@ -17,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { TelegramNotificationSettings } from "./TelegramNotificationSettings";
 
-export const UserSettings = ({ user }: { user: any }) => {
+export const UserSettings = ({ user }: { user: SupabaseUser }) => {
   const [loading, setLoading] = useState(false);
   const [setupData, setSetupData] = useState<any>(null);
   const { toast } = useToast();
