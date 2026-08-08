@@ -1562,28 +1562,54 @@ class PatternRecognitionSystem:
     
     def __init__(self):
         self.patterns_file = os.path.join(DATA_DIR, 'trade_patterns.json')
-        self.patterns = []
+        # patterns_db is the one and only pattern store -- learn_from_trade,
+        # save_patterns, predict_trade_quality, and find_similar_trades all
+        # already read/write this name. load_patterns() sets it below,
+        # unconditionally (see its own fix note for why "unconditionally"
+        # matters).
+        self.patterns_db = []
         self.load_patterns()
-        
+
+    # calculate_similarity() is a raw additive point score (symbol=5,
+    # direction=10 [required to be nonzero], session=3, hour=2, day=1,
+    # adx=2, rsi=2, volatility=1.5, volume_ratio=1, price_position=1;
+    # max ~28.5), not a 0-1 normalized score. "High similarity" here means
+    # most of the optional factors also agreeing on top of the mandatory
+    # direction match, not just >0.8 out of ~28.5 (which every stored
+    # pattern would trivially clear). This threshold is still a starting
+    # point, not empirically validated -- tune it with the backtest
+    # harness (python_scripts/backtest/) now that this method actually runs.
+    SIMILARITY_THRESHOLD = 17.0
+
     def get_edge_health_score(self, symbol: str, direction: str, context: dict) -> float:
         """
         Compare current setup to database of similar past setups.
         Returns: 0.0 to 1.5 multiplier for confidence.
         """
-        if not self.patterns: return 1.0
-        
+        if not self.patterns_db: return 1.0
+
+        # Every caller today passes context={} (see the get_edge_health_score
+        # call site) -- comparing that raw empty dict directly against stored
+        # patterns' `features` (which have symbol/direction/session/hour/...)
+        # always failed the mandatory direction check inside
+        # calculate_similarity and returned 0.0, unconditionally. Build a
+        # real features dict here instead, the same way predict_trade_quality
+        # does, so a live features dict is actually compared to stored ones.
+        current_features = self.extract_features(symbol, direction, context)
+        if not current_features: return 1.0
+
         # Find similar past patterns
         similar_score = 0
         total_weight = 0
-        
-        for p in self.patterns:
-            sim = self.calculate_similarity(context, p['context'])
-            if sim > 0.8: # High similarity
+
+        for p in self.patterns_db:
+            sim = self.calculate_similarity(current_features, p['features'])
+            if sim > self.SIMILARITY_THRESHOLD:
                 weight = sim * sim
-                outcome = 1 if p['result'] > 0 else -1
+                outcome = 1 if p['profit'] > 0 else -1
                 similar_score += outcome * weight
                 total_weight += weight
-                
+
         if total_weight == 0: return 1.0
         
         # Normalize score (-1 to 1)
@@ -1600,11 +1626,23 @@ class PatternRecognitionSystem:
     def predict_success_rate(self, symbol: str, direction: str, context: dict) -> float:
         """DEPRECATED: Use get_edge_health_score instead"""
         return 0.5
-        self.patterns_db = []
-        self.load_patterns()
-        
+
     def load_patterns(self):
-        """Load existing patterns from file"""
+        """
+        Load existing patterns from file. Always leaves self.patterns_db
+        set to a list -- previously this only assigned it inside the
+        `if os.path.exists(...)` branch (or the except block), so a brand
+        new user/strategy with no trade_patterns.json yet left patterns_db
+        never assigned at all. That crashed the bot at startup every time
+        (`pattern_recognizer.patterns_db` read at module scope right after
+        construction, AttributeError, process exits) -- i.e. every
+        first-ever run for a new user, and every restart before their
+        first learned trade got saved. __init__ now also pre-sets
+        patterns_db = [] before calling this, so this is now defense in
+        depth rather than the only thing standing between a new user and
+        an immediate crash.
+        """
+        self.patterns_db = []
         try:
             import json
             import os
@@ -4731,6 +4769,32 @@ def update_global_ai_context():
 
 
 # ---------- LAYER 3: AI TRADE VALIDATION (per candidate setup) ----------
+def _l3_bias_fallback(symbol: str, direction: str, reason: str) -> dict:
+    """
+    Shared degraded-mode fallback for ai_validate_trade -- used both when
+    Gemini isn't configured AND when a live call to it fails. Approves only
+    when the cached L1 macro bias agrees with this trade's direction.
+
+    Deliberately fails closed rather than open: this must NEVER score
+    higher than a real AI approval would (score 7, same as the "aligned"
+    case below), so an API outage can never look more convincing than the
+    AI actually being asked. Previously the on-error path returned a
+    fabricated score of 8/10 with a fake-sounding reason, which meant any
+    Gemini timeout, quota exhaustion, or malformed response silently
+    APPROVED the trade at a score exceeding every real min-score gate in
+    the codebase (5-7) -- i.e. every AI outage passed every trade through
+    as if it had gotten a strong (never-actually-given) AI endorsement.
+    """
+    bias = state.approved_bias.get(symbol, 'NEUTRAL')
+    aligned = (bias == 'BUY_ONLY' and direction == 'BUY') or (bias == 'SELL_ONLY' and direction == 'SELL')
+    return {
+        'score': 7 if aligned else 4,
+        'approved': aligned or bias == 'NEUTRAL',
+        'reason': reason,
+        'risk_modifier': 1.0
+    }
+
+
 def ai_validate_trade(symbol: str, direction: str, setup_name: str,
                       entry: float, sl: float, tp: float,
                       df_m5: 'pd.DataFrame', df_m1: 'pd.DataFrame') -> dict:
@@ -4746,7 +4810,8 @@ def ai_validate_trade(symbol: str, direction: str, setup_name: str,
     Score 4-6  --> trade skipped (logged, no Telegram)
     Score 1-3  --> trade skipped + symbol gets 30min cooldown
 
-    If Gemini unavailable --> falls back to L1 bias check (approved if bias aligns)
+    If Gemini unavailable, or a call to it fails --> falls back to the L1
+    bias check (approved only if bias aligns), never to a fabricated score.
     """
     if not config.ENABLE_AI_VALIDATION:
         return {'score': 7, 'approved': True, 'reason': 'AI validation disabled', 'risk_modifier': 1.0}
@@ -4754,13 +4819,7 @@ def ai_validate_trade(symbol: str, direction: str, setup_name: str,
     # Fallback: if AI unavailable, use cached L1 bias
     if not ai_provider.gemini_model:
         bias = state.approved_bias.get(symbol, 'NEUTRAL')
-        aligned = (bias == 'BUY_ONLY' and direction == 'BUY') or                   (bias == 'SELL_ONLY' and direction == 'SELL')
-        return {
-            'score': 7 if aligned else 4,
-            'approved': aligned or bias == 'NEUTRAL',
-            'reason': f'AI unavailable -- using cached bias: {bias}',
-            'risk_modifier': 1.0
-        }
+        return _l3_bias_fallback(symbol, direction, f'AI unavailable -- using cached bias: {bias}')
 
     session = get_current_session()
     rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
@@ -4822,12 +4881,12 @@ approved=true only when score>=7."""
                 'risk_modifier': max(0.5, min(1.5, risk_mod))}
 
     except Exception as e:
-        logger.warning(f"[AI L3] Validation failed for {symbol}: {e} -- fallback approve")
-        # On error: use L1 bias as fallback (don't block due to API hiccup)
-        bias = state.approved_bias.get(symbol, 'NEUTRAL')
-        aligned = (direction == 'BUY' and bias == 'BUY_ONLY') or                   (direction == 'SELL' and bias == 'SELL_ONLY') or                   bias == 'NEUTRAL'
-        return {'score': 8, 'approved': aligned, 'reason': f'API error fallback: {e}',
-                'risk_modifier': 1.0}
+        logger.warning(f"[AI L3] Validation failed for {symbol}: {e} -- degraded to L1 bias fallback (fail-closed)")
+        # On error: degrade to the same honest L1-bias fallback used when
+        # Gemini isn't configured at all. NEVER fabricate a passing score --
+        # see _l3_bias_fallback's docstring for why the old behavior here
+        # (score=8) was a real bug, not just a cosmetic one.
+        return _l3_bias_fallback(symbol, direction, f'AI call failed ({e}) -- using cached bias, not a real AI score')
 
 
 def ai_filter_signal(local_signal: Dict) -> Dict[str, Any]:

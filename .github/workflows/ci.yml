@@ -21,11 +21,21 @@ jobs:
       - run: npm run build
 
   python:
-    name: Python bot scripts (syntax check)
+    name: Python bot scripts (syntax check + import smoke test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m py_compile python_scripts/*.py
+      - run: python -m py_compile python_scripts/*.py python_scripts/backtest/*.py
+      - run: pip install pandas numpy
+      # Real smoke test, not just a syntax check: imports the live bot file
+      # with MT5/Supabase stubbed (see python_scripts/backtest/bot_loader.py)
+      # and confirms module-level construction (AITradingConfig,
+      # PatternRecognitionSystem, etc.) doesn't throw. This is exactly the
+      # check that would have caught the PatternRecognitionSystem.patterns_db
+      # AttributeError crash-on-first-run bug before it shipped.
+      - name: Import smoke test (bot module loads with mocked MT5/Supabase)
+        working-directory: python_scripts
+        run: python -c "from backtest.bot_loader import import_bot_module; import_bot_module(); print('bot module imported cleanly')"
