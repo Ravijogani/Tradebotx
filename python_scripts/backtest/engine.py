@@ -1,42 +1,34 @@
 """
-Walk-forward backtest engine.
+Walk-forward backtest engine -- drives any StrategyAdapter from
+strategies_registry.py through historical data identically.
 
 Design principles (all a direct response to what the live script review
 found missing):
 
-  1. No lookahead. At each decision point the strategy only ever sees bars
+  1. No lookahead. At each decision point a strategy only ever sees bars
      strictly before "now" (HistoricalDataset.window enforces this).
-  2. Backtest/live parity by construction. We call the real EntryEngine /
-     EdgeEngine classes imported from the live bot file (via bot_loader),
-     not a reimplementation -- if the live file changes, the backtest
-     automatically tests the new behavior next run.
-  3. Every trade's entry reasoning is a re-derivable, structured record
-     (setup dict + edge score components), not a one-line summary -- this
-     is what "know exactly what went wrong" requires: you can look at any
-     losing trade afterward and see precisely which score inputs, regime,
-     and session it fired under.
-  4. Spread is modeled explicitly, not ignored. It's a static
-     per-symbol approximation (SPREAD_MODEL below) -- refine this with
-     real recorded spreads from your broker once you have them; the point
-     for v1 is that a real cost is being charged at all, since a strategy
-     that only looks profitable with zero transaction costs isn't
-     profitable.
+  2. Backtest/live parity by construction. Every adapter calls the real
+     function/class from the live bot file (via bot_loader) -- not a
+     reimplementation.
+  3. Every trade's entry reasoning is a re-derivable, structured record,
+     not a one-line summary -- this is what "know exactly what went
+     wrong" requires.
+  4. Spread is modeled explicitly, not ignored (see DEFAULT_SPREAD_MODEL).
+  5. MARKET and LIMIT orders are simulated differently. A LIMIT setup
+     (Shaakuni) is not guaranteed to fill just because it fired -- price
+     has to actually return to the limit level, within a bounded wait, or
+     the setup expires with no trade. Treating it as a market fill would
+     overstate how often this strategy actually gets a position on.
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
 from .data import HistoricalDataset
-from .time_travel import frozen_at
+from .strategies_registry import StrategyAdapter, StrategyResult
 
-# Static spread approximation in price units, per symbol. This is a v1
-# placeholder -- real backtests should replace this with spread actually
-# recorded from the broker (many brokers widen spread around news/session
-# opens, which this can't capture). See export_mt5_history.py for how to
-# pull real historical spread alongside OHLC if your broker's history
-# provides it.
 DEFAULT_SPREAD_MODEL: Dict[str, float] = {
     "XAUUSDm": 0.30,
     "XAGUSDm": 0.03,
@@ -52,15 +44,18 @@ DEFAULT_SPREAD_MODEL: Dict[str, float] = {
 @dataclass
 class SimulatedTrade:
     symbol: str
+    strategy: str
     direction: str
     setup_reason: str
     entry_time: pd.Timestamp
     entry_price: float
     stop_loss: float
     take_profit: float
-    edge_score: float
-    edge_state: str
-    score_components: Dict[str, float]
+    confidence: float = 0.0
+    edge_score: Optional[float] = None
+    edge_state: Optional[str] = None
+    order_type: str = "MARKET"
+    signal_time: Optional[pd.Timestamp] = None  # when the setup fired (may precede entry_time for LIMIT fills)
     exit_time: Optional[pd.Timestamp] = None
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None  # "SL" | "TP" | "TIMEOUT"
@@ -70,79 +65,46 @@ class SimulatedTrade:
 @dataclass
 class BacktestConfig:
     symbol: str
-    rr_multiple: float = 2.0          # take_profit distance = SL distance * rr_multiple
-    max_bars_in_trade: int = 200      # walk-forward cap before forced TIMEOUT exit
-    ltf_bars: int = 60                # bars fed as "ltf_df" to EntryEngine
-    micro_bars: int = 30              # bars fed as "micro_df"
-    htf_bars: int = 100               # bars fed as "htf_df"
+    rr_multiple: float = 2.0          # used only when a strategy doesn't supply its own take_profit
+    max_bars_in_trade: int = 200
+    max_limit_wait_bars: int = 30     # how long a LIMIT setup waits for a fill before expiring
     ltf_timeframe: str = "M5"
-    micro_timeframe: str = "M1"
-    htf_timeframe: str = "H1"
     spread: Optional[float] = None    # overrides DEFAULT_SPREAD_MODEL for this symbol
+    warmup_bars: int = 110            # bars to skip at the start so H1/M15 rolling windows are populated
 
 
 class BacktestEngine:
-    """
-    v1 covers the EntryEngine -> EdgeEngine pipeline (the deterministic
-    ICT/SMC "sole entry engine" per its own docstring in the live file).
-    Wiring in the other strategy_* functions is mechanical from here: each
-    just needs a small adapter that turns its (direction, stop_loss)-style
-    return into the same SimulatedTrade flow -- see run_backtest.py for
-    where to add one.
-    """
-
-    def __init__(self, bot_module, dataset: HistoricalDataset, config: BacktestConfig):
+    def __init__(self, bot_module, dataset: HistoricalDataset, config: BacktestConfig, adapter: StrategyAdapter):
         self.bot = bot_module
         self.dataset = dataset
         self.config = config
-        self.entry_engine = bot_module.EntryEngine()
-        self.edge_engine = bot_module.EdgeEngine()
+        self.adapter = adapter
 
     def run(self) -> List[SimulatedTrade]:
         cfg = self.config
         ltf_series = self.dataset.frames[cfg.ltf_timeframe]
         trades: List[SimulatedTrade] = []
 
-        i = max(cfg.ltf_bars, 20)  # warmup
+        i = cfg.warmup_bars
         n = len(ltf_series)
         while i < n:
             as_of = ltf_series["time"].iloc[i]
 
-            htf_df = self.dataset.window(cfg.htf_timeframe, as_of, cfg.htf_bars)
-            ltf_df = self.dataset.window(cfg.ltf_timeframe, as_of, cfg.ltf_bars)
-            micro_df = self.dataset.window(cfg.micro_timeframe, as_of, cfg.micro_bars)
-
-            if len(htf_df) < 55 or len(ltf_df) < 20 or len(micro_df) < 12:
+            result = self.adapter.call(self.bot, self.dataset, as_of, cfg.symbol)
+            if result is None:
                 i += 1
                 continue
 
-            with frozen_at(self.bot, as_of.to_pydatetime()):
-                setup = self.entry_engine.evaluate_setup(htf_df, ltf_df, micro_df)
-
-            if setup is None:
+            trade = self._simulate_trade(result, as_of, ltf_series, i)
+            if trade is None:
+                # LIMIT setup never filled within max_limit_wait_bars -- not
+                # a trade, but also not nothing: still worth knowing how
+                # often this strategy fires without ever getting a fill.
                 i += 1
                 continue
 
-            ctx = self.bot.TradeContext(
-                liquidity_distance=setup["liquidity_distance"],
-                liquidity_strength=setup["liquidity_strength"],
-                momentum_state=setup["momentum_state"],
-                structure_alignment=setup["structure_alignment"],
-                session_strength=0.7,   # v1: not session-aware yet, see README
-                volatility_state=0.7,
-            )
-            edge = self.edge_engine.calculate(ctx)
-
-            if not edge.allow_entry:
-                i += 1
-                continue
-
-            trade = self._simulate_trade(setup, edge, ctx, as_of, ltf_series, i)
             trades.append(trade)
 
-            # v1 simplification: don't evaluate new entries while this
-            # trade is open (avoids overlapping-position P&L accounting).
-            # Advance i past the trade's exit bar.
             if trade.exit_time is not None:
                 exit_idx = ltf_series[ltf_series["time"] == trade.exit_time].index
                 i = int(exit_idx[0]) + 1 if len(exit_idx) else i + 1
@@ -151,31 +113,44 @@ class BacktestEngine:
 
         return trades
 
-    def _simulate_trade(self, setup, edge, ctx, as_of, ltf_series, start_idx) -> SimulatedTrade:
+    def _simulate_trade(self, result: StrategyResult, signal_time, ltf_series, signal_idx) -> Optional[SimulatedTrade]:
         cfg = self.config
-        direction = setup["signal"]
-        entry_price = setup["entry_price"]
-        stop_loss = setup["stop_loss"]
-        sl_dist = abs(entry_price - stop_loss)
-        take_profit = (entry_price + sl_dist * cfg.rr_multiple if direction == "BUY"
-                        else entry_price - sl_dist * cfg.rr_multiple)
-
+        direction = result.direction
         spread = cfg.spread if cfg.spread is not None else DEFAULT_SPREAD_MODEL.get(cfg.symbol, 0.0)
-        # Charge the spread as a worse entry fill -- BUY fills at ask
-        # (entry_price + spread), SELL fills at bid (entry_price - spread).
-        filled_entry = entry_price + spread if direction == "BUY" else entry_price - spread
+
+        if result.order_type == "LIMIT":
+            fill = self._wait_for_limit_fill(result, ltf_series, signal_idx)
+            if fill is None:
+                return None
+            filled_close_price, entry_idx = fill
+            entry_time = ltf_series["time"].iloc[entry_idx]
+            raw_entry = result.limit_entry
+            start_idx = entry_idx
+        else:
+            raw_entry = result.entry_price if result.entry_price is not None else ltf_series["close"].iloc[signal_idx]
+            entry_time = signal_time
+            start_idx = signal_idx
+
+        stop_loss = result.stop_loss
+        sl_dist = abs(raw_entry - stop_loss)
+        if sl_dist <= 0:
+            return None  # degenerate SL -- can't size or measure R, skip rather than divide by zero
+
+        take_profit = result.take_profit
+        if take_profit is None:
+            take_profit = (raw_entry + sl_dist * cfg.rr_multiple if direction == "BUY"
+                            else raw_entry - sl_dist * cfg.rr_multiple)
+
+        # Charge the spread as a worse entry fill: BUY fills at ask
+        # (raw_entry + spread), SELL fills at bid (raw_entry - spread).
+        filled_entry = raw_entry + spread if direction == "BUY" else raw_entry - spread
 
         trade = SimulatedTrade(
-            symbol=cfg.symbol, direction=direction,
-            setup_reason=setup["reason"], entry_time=as_of,
-            entry_price=filled_entry, stop_loss=stop_loss, take_profit=take_profit,
-            edge_score=edge.score, edge_state=edge.state,
-            score_components={
-                "liquidity_distance": ctx.liquidity_distance,
-                "liquidity_strength": ctx.liquidity_strength,
-                "momentum_state": ctx.momentum_state,
-                "structure_alignment": ctx.structure_alignment,
-            },
+            symbol=cfg.symbol, strategy=self.adapter.name, direction=direction,
+            setup_reason=result.reason, entry_time=entry_time, entry_price=filled_entry,
+            stop_loss=stop_loss, take_profit=take_profit, confidence=result.confidence,
+            edge_score=result.edge_score, edge_state=result.edge_state,
+            order_type=result.order_type, signal_time=signal_time,
         )
 
         for j in range(start_idx + 1, min(start_idx + 1 + cfg.max_bars_in_trade, len(ltf_series))):
@@ -188,10 +163,8 @@ class BacktestEngine:
                 hit_tp = bar["low"] <= take_profit
 
             if hit_sl and hit_tp:
-                # Both touched in the same bar -- can't know which came
-                # first from OHLC alone. Assume SL first (conservative,
-                # standard backtesting convention -- never let ambiguity
-                # inflate the result).
+                # Both touched in the same bar -- ambiguous from OHLC alone.
+                # Assume SL first (conservative, standard convention).
                 trade.exit_time, trade.exit_price, trade.exit_reason = bar["time"], stop_loss, "SL"
                 break
             if hit_sl:
@@ -201,11 +174,29 @@ class BacktestEngine:
                 trade.exit_time, trade.exit_price, trade.exit_reason = bar["time"], take_profit, "TP"
                 break
         else:
-            # Never resolved within max_bars_in_trade -- close at the last
-            # seen price rather than leave it open forever.
             last = ltf_series.iloc[min(start_idx + cfg.max_bars_in_trade, len(ltf_series) - 1)]
             trade.exit_time, trade.exit_price, trade.exit_reason = last["time"], last["close"], "TIMEOUT"
 
         realized = (trade.exit_price - trade.entry_price) if direction == "BUY" else (trade.entry_price - trade.exit_price)
-        trade.r_multiple = realized / sl_dist if sl_dist > 0 else 0.0
+        trade.r_multiple = realized / sl_dist
         return trade
+
+    def _wait_for_limit_fill(self, result: StrategyResult, ltf_series, signal_idx):
+        """
+        A LIMIT order only fills once price actually trades through
+        limit_entry. Scans forward up to max_limit_wait_bars; returns
+        (fill_price, bar_index) on the first bar that touches the limit
+        level, or None if it never fills (the setup expires -- correctly
+        recorded as no trade, not a loss).
+        """
+        cfg = self.config
+        limit_price = result.limit_entry
+        if limit_price is None:
+            return None
+        direction = result.direction
+        for j in range(signal_idx + 1, min(signal_idx + 1 + cfg.max_limit_wait_bars, len(ltf_series))):
+            bar = ltf_series.iloc[j]
+            touched = (bar["low"] <= limit_price <= bar["high"])
+            if touched:
+                return limit_price, j
+        return None

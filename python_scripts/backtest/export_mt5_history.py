@@ -22,7 +22,9 @@ import pandas as pd
 TIMEFRAMES = {
     "M1": mt5.TIMEFRAME_M1,
     "M5": mt5.TIMEFRAME_M5,
+    "M15": mt5.TIMEFRAME_M15,   # needed for SMC_FVG_OB_RETEST's HTF confluence check
     "H1": mt5.TIMEFRAME_H1,
+    "H4": mt5.TIMEFRAME_H4,     # needed for SHAAKUNI_SSM
 }
 
 
