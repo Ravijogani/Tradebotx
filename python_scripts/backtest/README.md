@@ -27,7 +27,7 @@ current configuration.
 | `SHAAKUNI_SSM` | Yes | **Yes** | Places a LIMIT order, not a market order |
 | `SWAPPY_3C` | Yes | **Yes** | Now matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below) |
 | `EMA_SCALP_CROSS` | Yes | **Yes** | Now backtestable — extracted from the main loop into `strategy_ema_scalp_cross()`, with two behavior fixes made in the process (see below) |
-| AOX (layered execution) | Yes | **Yes** | Not backtestable here — see "not wired" below |
+| `AOX` (layered execution) | Yes | **Yes** | Now backtestable via a dedicated stateful driver, not a `StrategyAdapter` — see "AOX wiring" below |
 | `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy |
 | `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy |
 | `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" |
@@ -140,6 +140,76 @@ before deciding whether any belong in the live cascade — but don't read
 their backtest results as "how the bot is performing," because none of
 them currently place a single real order.
 
+### AOX wiring
+
+AOX (`run_aox_layered_entry`) manages a 3-phase state machine per symbol
+(Layer 1 SD-zone tap 25% → Layer 2 SMT+CISD+FPFVG "Turtle Soup" 25% →
+Layer 3 mitigation-block "Hippo" 50%) that persists across many bar-closes
+and appeared to place real orders itself — unlike every other strategy
+here, which makes one stateless decision per bar. Wiring it in took two
+steps:
+
+1. **Split detection from execution.** `run_aox_layered_entry` was
+   refactored into `detect_aox_phase_signal(aox_state, df_m5, df_m1,
+   effective_trend, symbol)` — the pure phase-gating logic, every check
+   and threshold unchanged — plus a thin wrapper that calls
+   `execute_aox_layer()` with whatever the pure function decided. Same
+   split every other extraction in this harness follows: the live file
+   keeps one function that's independently testable, not two divergent
+   copies of the decision logic.
+2. **A dedicated stateful driver, not a `StrategyAdapter`.** `aox_driver.py`
+   walks the M5 series bar by bar itself, keeps one `aox_state` dict alive
+   across the whole run (same shape `get_aox_state()` uses live), and
+   calls `detect_aox_phase_signal()` at every bar — so a layer that fires
+   is recorded as its own `SimulatedTrade` while the state machine keeps
+   evolving underneath it (Layer 2 can fire while Layer 1's trade is still
+   open, exactly like live). Run it with `--strategy AOX` or `--all` in
+   `run_backtest.py`. `check_smt_divergence`'s correlated-pair gate (e.g.
+   XAUUSDm↔XAGUSDm) needs a second symbol's M15 data — pass
+   `--corr-symbol`/`--corr-m15`, or it passes through with no veto (same
+   "no data → no veto" behavior the live function already has for a
+   missing feed).
+
+**A real bug found and fixed along the way (not something the extraction
+introduced — it was already there):** `reset_aox_state(symbol)` existed,
+fully implemented, with **zero call sites anywhere in the file**. Combined
+with `run_aox_layered_entry`'s call site running *before* the main loop's
+shared `state.symbol_cooldowns` check, AOX never actually honored its own
+"reset after 2 hours" comment — once a symbol completed one full 3-layer
+cycle, its phase stuck at 3 forever (no phase-3 branch existed in the
+detection logic, so every subsequent call just returned `None`). AOX went
+permanently inert per-symbol for the life of the running process, with no
+error or log to indicate it. Fixed by having `run_aox_layered_entry` check
+the shared cooldown dict directly and call `reset_aox_state()` once it
+clears; `aox_driver.py` mirrors the identical rule with its own local
+`cooldown_until` (the harness runs one strategy at a time, so there's no
+other cooldown source to share the dict with).
+
+**Deliberately preserved, not fixed:** `detect_manipulation_spike`'s own
+docstring says it detects the spike "on M15," and the AOX reference spec
+calls the 15-minute chart the primary trend-refinement timeframe — but the
+call site (both before and after this extraction) passes `df_m5`, not a
+separate M15 series. Left exactly as found and flagged in
+`detect_aox_phase_signal`'s docstring: changing the timeframe here is a
+real design decision (needs an M15 feed threaded through this whole call
+chain), not something to bundle into a behavior-preserving extraction.
+
+**Verified mechanically, not just by compiling:** stepped
+`detect_aox_phase_signal` through Phase 1 → Phase 2 → Phase 3 directly
+(forcing `check_smt_divergence`/`detect_cisd_trigger`/`detect_fpfvg` to
+pass, since the codebase's synthetic random-walk test data has no genuine
+Turtle Soup setups) and confirmed each phase produces the correct
+`layer_name`/`risk_fraction`/`sl`/`tp` from a fabricated fib dict, with the
+correct `next_phase`. Phase 0 itself (spike + SD-zone + sniper-zone tap)
+never fired naturally against the synthetic data in ~5,760 M5 bars — the
+sniper zone is a genuinely narrow band (fractions of a point on Gold), and
+a random walk doesn't produce the structured retracements real manipulated
+moves do. That's a data-realism limit of synthetic history, not a driver
+bug — confirmed separately that the SD-zone/reached_sd4 check itself fires
+often (163 times in one run) and only the subsequent sniper-zone touch
+never lands. Re-run against real exported history before trusting any AOX
+trade count from this harness.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses
@@ -226,7 +296,10 @@ same historical data, not just summarized.
 - **One position at a time per strategy.** The engine doesn't evaluate
   new entries while a simulated trade from the same run is open, so it
   can't test correlated/stacked exposure across strategies running
-  simultaneously (which the live bot does).
+  simultaneously (which the live bot does). AOX's own driver is the one
+  deliberate exception — its layers are allowed to overlap in time by
+  design (see "AOX wiring" above), matching that live behavior instead of
+  this general rule.
 - **`SMC_ENTRY_ENGINE`'s `session_strength`/`volatility_state` are
   placeholder constants** (0.7) — the live cascade derives these
   elsewhere in the pipeline, not from `EntryEngine`'s own output (unsurprising,
@@ -239,12 +312,14 @@ same historical data, not just summarized.
 
 ## Extending this
 
-To wire in EMA_SCALP_CROSS or the AOX layered engine, the honest path is:
-extract them into standalone, testable functions in the live bot file
-first (separating AOX's signal-detection from its order-placement), with
-real testing on the actual MT5/Windows environment to confirm the
-extraction didn't change live behavior — then add an adapter here the same
-way every other strategy in `strategies_registry.py` is wired. Don't
-shortcut this by reimplementing their logic directly in the harness; that
-reintroduces exactly the live/backtest drift risk this whole harness
-exists to eliminate.
+Both EMA_SCALP_CROSS and AOX are now wired (see above for how each was
+extracted). For anything still dormant, or any future strategy, the same
+honest path applies: extract it into a standalone, testable function in
+the live bot file first, with real testing on the actual MT5/Windows
+environment to confirm the extraction didn't change live behavior — then
+add either a `StrategyAdapter` in `strategies_registry.py` (for a
+single-bar, single-trade decision) or a dedicated driver like
+`aox_driver.py` (for anything with cross-bar state). Don't shortcut this by
+reimplementing the logic directly in the harness; that reintroduces
+exactly the live/backtest drift risk this whole harness exists to
+eliminate.

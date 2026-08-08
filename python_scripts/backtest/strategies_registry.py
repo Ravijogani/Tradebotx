@@ -65,14 +65,21 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
   them clearly as "not currently reachable by the live bot," not blend
   their numbers in with strategies that actually trade real money today.
 
-  NOT wired at all, on purpose:
-    - "STRATEGY D" (run_aox_layered_entry) manages its own multi-call phase
-      state machine and appears to place real orders itself (returns bool,
-      not a signal dict) -- it's an execution engine, not a pure signal
-      generator, and needs either a refactor to separate signal-generation
-      from order-placement, or a materially different backtest approach
-      (capturing order *intent* instead of simulating fills the way this
-      engine does). Also left as a follow-up, not faked here.
+  NOT a StrategyAdapter here, on purpose (but IS wired -- see aox_driver.py):
+    - "STRATEGY D" / AOX. run_aox_layered_entry() was split into
+      detect_aox_phase_signal() (pure decision logic, no order placement)
+      + a thin execution wrapper, specifically so it could be backtested.
+      It's still not one of the adapters in this file, because AOX's phase
+      state persists across many bar-closes and its layers can overlap in
+      time (Layer 2 can fire while Layer 1's trade is still open) --
+      StrategyAdapter's single-bar, single-trade-at-a-time contract (built
+      for every other strategy here) can't express that. See aox_driver.py
+      for the dedicated stateful driver and run_backtest.py's --strategy
+      AOX / --all for how to run it. Fixed along the way: reset_aox_state()
+      was dead code (zero call sites), which combined with AOX's own call
+      site running before the main loop's cooldown check meant AOX
+      permanently locked up after one completed cycle per symbol -- see
+      run_aox_layered_entry's docstring in the bot file for the fix.
     - The live STRATEGY B additionally applies a location filter (near
       M5 support/resistance) and a stateful "3rd-time re-entry rule"
       (can_take_swappy_entry) on top of detect_swappy_3c()'s pattern

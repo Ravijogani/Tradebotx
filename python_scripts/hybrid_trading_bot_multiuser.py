@@ -7365,6 +7365,146 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
     return 0
 
 
+def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.DataFrame',
+                             effective_trend: str, symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    Pure detection half of the AOX layered engine -- extracted from
+    run_aox_layered_entry so the decision logic (does this phase's
+    condition hold right now) is testable independently of order
+    placement. Every check, threshold, and comment below is unchanged
+    from the inline version; this function only stops short of calling
+    execute_aox_layer / mt5.order_send itself.
+
+    NOTE ON TIMEFRAME: detect_manipulation_spike's own docstring says it
+    detects the spike "on M15," and the AOX reference spec explicitly
+    calls the 15-minute chart "the primary engine for trend refinement" --
+    but this call site (both before and after this extraction) passes
+    df_m5, not a separate M15 series. Preserved exactly as found rather
+    than silently "fixed": changing the timeframe here is a real design
+    decision (M15 needs an extra data feed threaded through this whole
+    call chain) worth deciding deliberately, not bundling into an
+    extraction meant to be behavior-preserving.
+
+    Returns a dict describing what execute_aox_layer should place
+    (direction, entry_price, sl, tp, risk_fraction, layer_name,
+    next_phase, state_updates) or None if this phase's conditions aren't
+    met yet.
+    """
+    try:
+        atr = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
+        cur_price = float(df_m5['close'].iloc[-1])
+
+        #  PHASE 0: Waiting for spike + SD zone tap
+        if aox_state['phase'] == 0:
+            spike = detect_manipulation_spike(df_m5, atr)
+            if not spike: return None
+            fib = compute_aox_fibonacci(spike)
+            direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
+
+            # Check effective trend alignment
+            if effective_trend != 'NEUTRAL':
+                if direction == 'BUY' and effective_trend == 'BEARISH': return None
+                if direction == 'SELL' and effective_trend == 'BULLISH': return None
+
+            # Check SD zone: price must be at -2.0 to -2.5 SD (minor) OR -4.0 to -4.5 SD (major reversal)
+            reached_sd2 = spike.get('reached_sd2', False)
+            reached_sd4 = spike.get('reached_sd4', False)
+            if not reached_sd2 and not reached_sd4:
+                return None
+            # SD4 major reversal zone = higher conviction, larger L1 allocation
+            _l1_alloc = 0.35 if reached_sd4 else 0.25
+            if reached_sd4:
+                logger.info(f"[AOX L1] {symbol}: SD4 MAJOR reversal zone -- using {_l1_alloc*100:.0f}% allocation")
+
+            # Check sniper zone
+            in_sniper = fib['sniper_entry'] <= cur_price <= fib['sniper_top']
+            if not in_sniper: return None
+
+            # TDO filter
+            tdo = get_true_day_open(symbol)
+            if tdo and tdo > 0:
+                if direction == 'BUY' and cur_price > tdo: return None
+                if direction == 'SELL' and cur_price < tdo: return None
+
+            # Macro window: HARD GATE -- AOX only executes during institutional 20-min windows
+            macro = get_active_macro_window()
+            if not macro:
+                logger.debug(f"[AOX L1] {symbol}: outside macro window -- skip (wait for 8:50/9:50/10:50/13:50 EST)")
+                return None
+            logger.info(f"[AOX L1] {symbol}: macro window active: {macro}")
+
+            # LAYER 1: at SD tap (25% minor zone, 35% major reversal zone)
+            sl1 = fib['sl_level'] + (0.001 if direction == 'SELL' else -0.001)
+            tp1 = fib['tp2_mid']
+            return {
+                'direction': direction, 'entry_price': cur_price, 'sl': sl1, 'tp': tp1,
+                'risk_fraction': _l1_alloc, 'layer_name': 'L1_SD_TAP', 'next_phase': 1,
+                'state_updates': {'spike': spike, 'fib': fib, 'direction': direction},
+            }
+
+        #  PHASE 1: Waiting for SMT + FPFVG (Turtle Soup)
+        elif aox_state['phase'] == 1:
+            direction = aox_state['direction']
+            spike     = aox_state['spike']
+            fib       = aox_state['fib']
+
+            # Check SMT divergence
+            smt_ok = check_smt_divergence(symbol, spike['type'])
+            if not smt_ok: return None
+
+            # CISD on M1
+            cisd = detect_cisd_trigger(df_m1, direction)
+            if not cisd: return None
+
+            # Find FPFVG (First Presented FVG) on M1 for Turtle Soup
+            fpfvg = detect_fpfvg(df_m1, direction)
+            if fpfvg == 0.0: return None
+
+            # LAYER 2: 25% at SMT confirmation + FVG
+            sl2 = fib['sl_level']
+            tp2 = fib['tp1_near']   # TP1 at 1.47 (first partial)
+            return {
+                'direction': direction, 'entry_price': cur_price, 'sl': sl2, 'tp': tp2,
+                'risk_fraction': 0.25, 'layer_name': 'L2_TURTLE', 'next_phase': 2,
+                'state_updates': {'fpfvg': fpfvg},
+            }
+
+        #  PHASE 2: Waiting for Mitigation Block (Hippo)
+        elif aox_state['phase'] == 2:
+            direction = aox_state['direction']
+            fib       = aox_state['fib']
+
+            # Hippo: price has reversed and is now at a mitigation/breaker block
+            # Detect: price pulled back to the FPFVG area and is rejecting
+            fpfvg = aox_state.get('fpfvg', 0)
+            if fpfvg == 0: return None
+
+            fvg_dist = abs(cur_price - fpfvg)
+            near_fvg = fvg_dist <= atr * 1.5
+
+            # Confirm reversal direction is holding
+            ema9 = float(df_m5['close'].ewm(span=9, adjust=False).mean().iloc[-1])
+            reversal_holding = (direction == 'BUY'  and cur_price > ema9) or                                (direction == 'SELL' and cur_price < ema9)
+
+            if not (near_fvg and reversal_holding): return None
+
+            # LAYER 3: 50% at Hippo/Mitigation block
+            sl3 = fib['sl_level']
+            tp3 = fib['tp2_far']   # Final target: 2.64 level
+            return {
+                'direction': direction, 'entry_price': cur_price, 'sl': sl3, 'tp': tp3,
+                'risk_fraction': 0.50, 'layer_name': 'L3_HIPPO', 'next_phase': 3,
+                'state_updates': {},
+            }
+
+    except Exception as e:
+        logger.error(f"[AOX LAYERED] {symbol}: {e}")
+        import traceback
+        logger.debug(traceback.format_exc()[-300:])
+
+    return None
+
+
 def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
                            df_m1: 'pd.DataFrame', effective_trend: str,
                            account_equity: float) -> bool:
@@ -7376,135 +7516,62 @@ def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
     Layer 2 (25%): SMT divergence confirmed + FPFVG sweep (Turtle Soup)
     Layer 3 (50%): Mitigation/Breaker block after reversal begins
 
+    Now a thin wrapper around detect_aox_phase_signal() (the pure
+    decision logic, extracted so it's independently testable/backtestable)
+    + execute_aox_layer() (the actual order placement). Behavior is
+    unchanged from before this split -- same checks, same thresholds,
+    same state transitions -- only the two concerns are no longer
+    tangled in one function.
+
     Returns True if any layer was executed this iteration.
+
+    BUG FIX (was dead code before this fix): reset_aox_state() existed but
+    had zero call sites anywhere in the file, and this function's own call
+    site in the main loop runs BEFORE the shared symbol_cooldowns check
+    (~line 9360), so neither the cooldown this function sets on phase-3
+    completion nor any other cooldown (loss cooldown, spike-ban, etc.) ever
+    actually blocked AOX from re-entering. Net effect: once a symbol
+    completed one full 3-layer cycle, its phase stuck at 3 forever (the
+    old detect_aox_phase_signal has no phase==3 branch, so it just
+    returned None every call from then on) -- AOX silently went permanently
+    inert per-symbol for the life of the process, with no error or log to
+    indicate it. Fixed by checking + honoring the shared cooldown dict here
+    directly, and resetting the state machine back to phase 0 once a
+    cooldown clears -- deliberately using the SAME shared dict every other
+    cooldown reason already writes to (not a new AOX-only one), so a loss
+    cooldown or spike-ban on this symbol now also pauses AOX and clears its
+    state, consistent with reset_aox_state's own "reset after completion or
+    invalidation" docstring.
     """
+    if symbol in state.symbol_cooldowns:
+        if datetime.now(timezone.utc) < state.symbol_cooldowns[symbol]:
+            return False
+        del state.symbol_cooldowns[symbol]
+        reset_aox_state(symbol)
+
     aox_st = get_aox_state(symbol)
-    executed = False
+    signal = detect_aox_phase_signal(aox_st, df_m5, df_m1, effective_trend, symbol)
+    if not signal:
+        return False
 
-    try:
-        atr = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
-        cur_price = float(df_m5['close'].iloc[-1])
+    ticket = execute_aox_layer(
+        symbol, signal['direction'], signal['entry_price'], signal['sl'], signal['tp'],
+        signal['risk_fraction'], signal['layer_name'], account_equity,
+    )
+    if not ticket:
+        return False
 
-        #  PHASE 0: Waiting for spike + SD zone tap 
-        if aox_st['phase'] == 0:
-            spike = detect_manipulation_spike(df_m5, atr)
-            if not spike: return False
-            fib = compute_aox_fibonacci(spike)
-            direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
-
-            # Check effective trend alignment
-            if effective_trend != 'NEUTRAL':
-                if direction == 'BUY' and effective_trend == 'BEARISH': return False
-                if direction == 'SELL' and effective_trend == 'BULLISH': return False
-
-            # Check SD zone: price must be at -2.0 to -2.5 SD (minor) OR -4.0 to -4.5 SD (major reversal)
-            reached_sd2 = spike.get('reached_sd2', False)
-            reached_sd4 = spike.get('reached_sd4', False)
-            if not reached_sd2 and not reached_sd4:
-                return False
-            # SD4 major reversal zone = higher conviction, larger L1 allocation
-            _l1_alloc = 0.35 if reached_sd4 else 0.25
-            if reached_sd4:
-                logger.info(f"[AOX L1] {symbol}: SD4 MAJOR reversal zone -- using {_l1_alloc*100:.0f}% allocation")
-
-            # Check sniper zone
-            in_sniper = fib['sniper_entry'] <= cur_price <= fib['sniper_top']
-            if not in_sniper: return False
-
-            # TDO filter
-            tdo = get_true_day_open(symbol)
-            if tdo and tdo > 0:
-                if direction == 'BUY' and cur_price > tdo: return False
-                if direction == 'SELL' and cur_price < tdo: return False
-
-            # Macro window: HARD GATE -- AOX only executes during institutional 20-min windows
-            macro = get_active_macro_window()
-            if not macro:
-                logger.debug(f"[AOX L1] {symbol}: outside macro window -- skip (wait for 8:50/9:50/10:50/13:50 EST)")
-                return False
-            logger.info(f"[AOX L1] {symbol}: macro window active: {macro}")
-
-            # LAYER 1: at SD tap (25% minor zone, 35% major reversal zone)
-            sl1 = fib['sl_level'] + (0.001 if direction == 'SELL' else -0.001)
-            tp1 = fib['tp2_mid']
-            ticket1 = execute_aox_layer(symbol, direction, cur_price,
-                                         sl1, tp1, _l1_alloc, "L1_SD_TAP", account_equity)
-            if ticket1:
-                aox_st.update({
-                    'phase': 1, 'spike': spike, 'fib': fib,
-                    'direction': direction, 'layer1_ticket': ticket1
-                })
-                logger.info(f"[AOX L1] {symbol}: 25% placed @ SD tap | macro={macro}")
-                executed = True
-
-        #  PHASE 1: Waiting for SMT + FPFVG (Turtle Soup) 
-        elif aox_st['phase'] == 1:
-            direction = aox_st['direction']
-            spike     = aox_st['spike']
-            fib       = aox_st['fib']
-
-            # Check SMT divergence
-            smt_ok = check_smt_divergence(symbol, spike['type'])
-            if not smt_ok: return False
-
-            # CISD on M1
-            cisd = detect_cisd_trigger(df_m1, direction)
-            if not cisd: return False
-
-            # Find FPFVG (First Presented FVG) on M1 for Turtle Soup
-            fpfvg = detect_fpfvg(df_m1, direction)
-            if fpfvg == 0.0: return False
-
-            # LAYER 2: 25% at SMT confirmation + FVG
-            sl2 = fib['sl_level']
-            tp2 = fib['tp1_near']   # TP1 at 1.47 (first partial)
-            ticket2 = execute_aox_layer(symbol, direction, cur_price,
-                                         sl2, tp2, 0.25, "L2_TURTLE", account_equity)
-            if ticket2:
-                aox_st['phase'] = 2
-                aox_st['layer2_ticket'] = ticket2
-                aox_st['fpfvg'] = fpfvg
-                logger.info(f"[AOX L2] {symbol}: 25% placed @ SMT+FPFVG | fpfvg={fpfvg:.4f}")
-                executed = True
-
-        #  PHASE 2: Waiting for Mitigation Block (Hippo) 
-        elif aox_st['phase'] == 2:
-            direction = aox_st['direction']
-            fib       = aox_st['fib']
-
-            # Hippo: price has reversed and is now at a mitigation/breaker block
-            # Detect: price pulled back to the FPFVG area and is rejecting
-            fpfvg = aox_st.get('fpfvg', 0)
-            if fpfvg == 0: return False
-
-            fvg_dist = abs(cur_price - fpfvg)
-            near_fvg = fvg_dist <= atr * 1.5
-
-            # Confirm reversal direction is holding
-            ema9 = float(df_m5['close'].ewm(span=9, adjust=False).mean().iloc[-1])
-            reversal_holding = (direction == 'BUY'  and cur_price > ema9) or                                (direction == 'SELL' and cur_price < ema9)
-
-            if not (near_fvg and reversal_holding): return False
-
-            # LAYER 3: 50% at Hippo/Mitigation block
-            sl3 = fib['sl_level']
-            tp3 = fib['tp2_far']   # Final target: 2.64 level
-            ticket3 = execute_aox_layer(symbol, direction, cur_price,
-                                         sl3, tp3, 0.50, "L3_HIPPO", account_equity)
-            if ticket3:
-                aox_st['phase'] = 3
-                aox_st['layer3_ticket'] = ticket3
-                logger.info(f"[AOX L3] {symbol}: 50% placed @ Hippo | Full position active")
-                executed = True
-                # Mark complete -- reset after 2 hours or when all positions close
-                state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(hours=2)
-
-    except Exception as e:
-        logger.error(f"[AOX LAYERED] {symbol}: {e}")
-        import traceback
-        logger.debug(traceback.format_exc()[-300:])
-
-    return executed
+    aox_st.update(signal['state_updates'])
+    aox_st['phase'] = signal['next_phase']
+    # next_phase is 1/2/3 for layer 1/2/3 respectively -- same mapping the
+    # original inline code used (layer N's ticket is stored right when the
+    # phase advances to N).
+    aox_st[f"layer{signal['next_phase']}_ticket"] = ticket
+    logger.info(f"[AOX {signal['layer_name']}] {symbol}: {signal['risk_fraction']:.0%} placed | phase -> {signal['next_phase']}")
+    if signal['next_phase'] == 3:
+        # Mark complete -- reset after 2 hours or when all positions close
+        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(hours=2)
+    return True
 
 
 class ShaakuniSSM:

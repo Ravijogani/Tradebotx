@@ -104,6 +104,20 @@ def copy_rates_from_pos(symbol, timeframe, start_pos, count):
     return None
 
 
+def copy_rates_from(symbol, timeframe, date_from, count):
+    # get_true_day_open() calls this directly (not through get_market_data,
+    # so replay_data.py's patch doesn't intercept it). Returning None is
+    # safe -- get_true_day_open already treats a failed fetch as "no TDO
+    # filter available" and callers already handle that gracefully. See
+    # replay_data.py for the backtest-safe TDO replacement that's patched
+    # in during AOX replay instead of relying on this stub.
+    return None
+
+
+def copy_rates_range(symbol, timeframe, date_from, date_to):
+    return None
+
+
 def order_send(request):
     _log.error("mt5_stub.order_send() called -- backtest harness must not place real orders")
     return SimpleNamespace(retcode=-1, order=0, comment="blocked by backtest mt5_stub")

@@ -41,6 +41,40 @@ DEFAULT_SPREAD_MODEL: Dict[str, float] = {
 }
 
 
+def simulate_exit(direction: str, stop_loss: float, take_profit: float,
+                   ltf_series: pd.DataFrame, start_idx: int, max_bars_in_trade: int):
+    """
+    Scans forward from `start_idx` (exclusive) for the first bar whose
+    high/low touches stop_loss or take_profit; returns (exit_time,
+    exit_price, exit_reason). Falls back to a TIMEOUT exit at the last
+    scanned bar's close if neither is touched within max_bars_in_trade.
+
+    Extracted out of BacktestEngine._simulate_trade unchanged (same
+    ambiguous-same-bar tie-break: assume SL first) so AoxDriver can reuse
+    the exact same exit simulation for AOX's layers instead of
+    reimplementing it -- two copies of "how does a trade end" is exactly
+    the kind of drift this harness exists to avoid.
+    """
+    for j in range(start_idx + 1, min(start_idx + 1 + max_bars_in_trade, len(ltf_series))):
+        bar = ltf_series.iloc[j]
+        if direction == "BUY":
+            hit_sl = bar["low"] <= stop_loss
+            hit_tp = bar["high"] >= take_profit
+        else:
+            hit_sl = bar["high"] >= stop_loss
+            hit_tp = bar["low"] <= take_profit
+
+        if hit_sl:
+            # Both touched in the same bar is ambiguous from OHLC alone --
+            # assume SL first (conservative, standard convention).
+            return bar["time"], stop_loss, "SL"
+        if hit_tp:
+            return bar["time"], take_profit, "TP"
+
+    last = ltf_series.iloc[min(start_idx + max_bars_in_trade, len(ltf_series) - 1)]
+    return last["time"], last["close"], "TIMEOUT"
+
+
 @dataclass
 class SimulatedTrade:
     symbol: str
@@ -153,29 +187,8 @@ class BacktestEngine:
             order_type=result.order_type, signal_time=signal_time,
         )
 
-        for j in range(start_idx + 1, min(start_idx + 1 + cfg.max_bars_in_trade, len(ltf_series))):
-            bar = ltf_series.iloc[j]
-            if direction == "BUY":
-                hit_sl = bar["low"] <= stop_loss
-                hit_tp = bar["high"] >= take_profit
-            else:
-                hit_sl = bar["high"] >= stop_loss
-                hit_tp = bar["low"] <= take_profit
-
-            if hit_sl and hit_tp:
-                # Both touched in the same bar -- ambiguous from OHLC alone.
-                # Assume SL first (conservative, standard convention).
-                trade.exit_time, trade.exit_price, trade.exit_reason = bar["time"], stop_loss, "SL"
-                break
-            if hit_sl:
-                trade.exit_time, trade.exit_price, trade.exit_reason = bar["time"], stop_loss, "SL"
-                break
-            if hit_tp:
-                trade.exit_time, trade.exit_price, trade.exit_reason = bar["time"], take_profit, "TP"
-                break
-        else:
-            last = ltf_series.iloc[min(start_idx + cfg.max_bars_in_trade, len(ltf_series) - 1)]
-            trade.exit_time, trade.exit_price, trade.exit_reason = last["time"], last["close"], "TIMEOUT"
+        trade.exit_time, trade.exit_price, trade.exit_reason = simulate_exit(
+            direction, stop_loss, take_profit, ltf_series, start_idx, cfg.max_bars_in_trade)
 
         realized = (trade.exit_price - trade.entry_price) if direction == "BUY" else (trade.entry_price - trade.exit_price)
         trade.r_multiple = realized / sl_dist
