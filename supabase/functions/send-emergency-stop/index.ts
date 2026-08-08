@@ -17,7 +17,7 @@ serve(async (req) => {
       const authUser = await getAuthUser(req);
       if (!authUser) return unauthorized(corsHeaders);
       const body = await req.clone().json().catch(() => ({}));
-      const targetEmail = (body as any).email;
+      const targetEmail = body.email;
       if (typeof targetEmail === 'string' && targetEmail.toLowerCase() !== (authUser.email || '').toLowerCase()) {
         return forbidden(corsHeaders);
       }

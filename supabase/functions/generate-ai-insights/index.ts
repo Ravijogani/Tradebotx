@@ -1,8 +1,55 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { handleError } from "../_shared/error-handler.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
+
+// OpenAI-compatible function-tool definition sent to the AI gateway.
+interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+interface TradeRecommendation {
+  symbol: string;
+  direction: string;
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  reasoning: string;
+  confidence: number;
+}
+
+interface StrategyOptimization {
+  strategyName: string;
+  currentPerformance: string;
+  suggestedChanges: string[];
+  expectedImprovement: string;
+  reasoning: string;
+}
+
+interface PerformancePredictions {
+  expectedWinRate: number;
+  optimalPositionSize: number;
+  bestTradingTimes: string[];
+  drawdownRisk: string;
+}
+
+// Parsed AI tool-call response — shape depends on analysisType (only the
+// fields for that call's type are populated; see the tool schemas below).
+interface AIInsightData {
+  recommendations?: TradeRecommendation[];
+  sentiment?: string;
+  riskAppetite?: string;
+  factors?: string[];
+  confidence?: number;
+  predictions?: PerformancePredictions;
+  optimizations?: StrategyOptimization[];
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -77,8 +124,8 @@ serve(async (req) => {
     };
 
     let systemPrompt = '';
-    let tools: any[] = [];
-    let toolChoice: any = undefined;
+    let tools: ToolDefinition[] = [];
+    let toolChoice: { type: "function"; function: { name: string } } | undefined = undefined;
 
     switch (analysisType) {
       case 'trade_recommendation':
@@ -315,7 +362,7 @@ serve(async (req) => {
   }
 });
 
-async function createInsights(supabaseClient: any, userId: string, analysisType: string, data: any) {
+async function createInsights(supabaseClient: SupabaseClient, userId: string, analysisType: string, data: AIInsightData) {
   const insights = [];
 
   try {
@@ -368,7 +415,10 @@ async function createInsights(supabaseClient: any, userId: string, analysisType:
               user_id: userId,
               insight_type: 'predictive_analytics',
               title: 'Performance Predictions',
-              description: `Expected win rate: ${data.predictions.winRate}%. Drawdown risk: ${data.predictions.drawdownRisk}`,
+              // The tool schema field is expectedWinRate, not winRate — the
+              // AI's response never populates `.winRate`, so this always
+              // rendered "undefined%" until now.
+              description: `Expected win rate: ${data.predictions.expectedWinRate}%. Drawdown risk: ${data.predictions.drawdownRisk}`,
               confidence_score: data.confidence || 0.7,
               data: data,
               expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()

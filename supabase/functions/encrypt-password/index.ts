@@ -70,7 +70,7 @@ serve(async (req) => {
         .single();
 
       if (profileData) {
-        const planType = (subscriptionData?.plans as any)?.plan_type || 'free';
+        const planType = (subscriptionData?.plans as { plan_type?: string } | null)?.plan_type || 'free';
         
         await supabaseClient.functions.invoke('send-setup-completion-alert', {
           body: {

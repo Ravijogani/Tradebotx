@@ -11,10 +11,12 @@ interface StrategyBlock {
     name: string;
     block_type: string;
     description: string;
-    config_schema: any;
-    default_config: any;
+    // Genuinely block-type-specific JSON blobs — same convention as
+    // PlacedBlock in src/components/strategy-builder/StrategyBuilder.tsx.
+    config_schema: Record<string, unknown>;
+    default_config: Record<string, unknown>;
   };
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   position: { x: number; y: number };
   connections: string[];
 }

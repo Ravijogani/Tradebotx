@@ -95,7 +95,7 @@ serve(async (req) => {
           .limit(1)
           .single();
 
-        const profile = setting.profiles as any;
+        const profile = setting.profiles as { email?: string; full_name?: string } | null;
         const userEmail = profile?.email;
         const userName = profile?.full_name || userEmail?.split("@")[0] || "Trader";
 

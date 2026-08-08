@@ -3,6 +3,17 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { corsHeaders } from "../_shared/cors.ts";
 
+// Matches the shape src/components/strategy-builder/AIStrategyAssistant.tsx
+// sends in its request body's availableBlocks array.
+interface AvailableBlock {
+  id: string;
+  name: string;
+  block_type: string;
+  category: string;
+  description: string;
+  default_config: Record<string, unknown>;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -39,7 +50,7 @@ serve(async (req) => {
     console.log('Available blocks count:', availableBlocks?.length || 0);
 
     // Build the system prompt with available blocks info
-    const blockCategories = availableBlocks.reduce((acc: Record<string, any[]>, block: any) => {
+    const blockCategories = (availableBlocks as AvailableBlock[]).reduce((acc: Record<string, AvailableBlock[]>, block: AvailableBlock) => {
       const cat = block.category || block.block_type || 'other';
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(block);
@@ -47,7 +58,7 @@ serve(async (req) => {
     }, {});
 
     const blocksDescription = Object.entries(blockCategories)
-      .map(([cat, blocks]) => `${cat}: ${(blocks as any[]).map(b => b.name).join(', ')}`)
+      .map(([cat, blocks]) => `${cat}: ${blocks.map(b => b.name).join(', ')}`)
       .join('\n');
 
     const systemPrompt = `You are an expert trading strategy builder assistant. Your job is to convert natural language trading strategy descriptions into structured block configurations.
