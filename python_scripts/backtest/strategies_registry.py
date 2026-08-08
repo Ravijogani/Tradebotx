@@ -25,14 +25,25 @@ the ACTUAL live cascade below produced, not EntryEngine's output. v1's
 backtest was validating a fully-built, carefully-documented, but
 completely dead class. It's moved to STRATEGIES_DORMANT here.
 
-  LIVE right now:
+  LIVE right now (has a real call site in the file):
     - strategy_liquidity_fvg_engine()   ("STRATEGY C" / SSM FVG retest)
     - strategy_shaakuni_ssm()           ("SHAAKUNI SSM")
     - strategy_liquidity_grab()         (fallback)
     - strategy_ict_killzone()           (fallback)
-    - detect_swappy_3c()                ("STRATEGY B", pattern-detection
-                                          part only -- see its adapter's
-                                          docstring for what's excluded)
+    - detect_swappy_3c()                ("STRATEGY B" -- see its adapter's
+                                          docstring for what's still
+                                          excluded vs the full live path)
+
+  NOTE on "live" vs "enabled": per an explicit decision to run the live
+  cascade on only three setups (Shaakuni SSM, Swappy 3C, AOX), STRATEGY A
+  (EMA scalp), STRATEGY C (SMC FVG retest), and both generic fallbacks are
+  now gated off by default via config.ENABLE_STRATEGY_* flags in
+  AITradingConfig -- their call sites still exist (so `live=True` here is
+  still accurate in the sense that flipping a flag re-enables them
+  immediately), but they don't fire in the current default configuration.
+  Test SMC_FVG_OB_RETEST/ICT_KILLZONE/LIQUIDITY_GRAB here if you're
+  deciding whether to re-enable any of them; don't read their presence as
+  "this is what the bot trades today."
 
   Defined, fully implemented, but NEVER CALLED anywhere in the file:
     - EntryEngine.evaluate_setup (see correction above)
@@ -240,15 +251,28 @@ def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
                            take_profit=r.get("tp"))
 
 
-def _adapt_swappy_3c_pattern_only(bot, dataset: HistoricalDataset, as_of, symbol):
+def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
     """
-    Pattern-detection part of live "STRATEGY B" only. The live pipeline
-    additionally requires the setup to be near M5 support/resistance and
-    applies a stateful "3rd-time re-entry rule" (can_take_swappy_entry) on
-    top of this -- neither is replicated here, so this measures the raw
-    pattern's quality, not full STRATEGY B live behavior. SL uses the same
-    "swing extreme in last 15 M5 bars + 0.3xATR" construction the live
-    call site uses.
+    Matches the live entry mechanics after the fix (see hybrid_trading_bot_
+    multiuser.py's STRATEGY B and place_swappy_pending_order): a stop
+    entry at _sw['stop_entry'] (above/below the 3-candle high/low), not a
+    market fill at candle 3's close, and 3:1 reward:risk TP -- both taken
+    directly from place_swappy_pending_order's own logic, the function
+    this adapter is meant to mirror.
+
+    Still excludes two things the live cascade additionally applies on
+    top of detect_swappy_3c: the near-support/resistance location filter,
+    and the stateful "3rd-time re-entry rule" (can_take_swappy_entry) --
+    both depend on cross-call state that would need careful, deliberate
+    handling to replay correctly (symbol-scoped level history across the
+    whole backtest run), not a quick addition. So this measures "how does
+    the pattern + real entry/exit mechanics perform," not the complete
+    live filter stack.
+
+    order_type="LIMIT" here reuses the engine's existing "wait for price
+    to touch this level" fill simulation -- that mechanic is identical for
+    a limit order and a stop order (only which side price approaches
+    from differs, and the engine's touch check is direction-agnostic).
     """
     with replay_context(bot, dataset, as_of):
         trend = _get_trend(bot, symbol)
@@ -264,9 +288,15 @@ def _adapt_swappy_3c_pattern_only(bot, dataset: HistoricalDataset, as_of, symbol
         atr_m5 = float(bot.calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
         scan = df_m5.iloc[-15:]
         sl = float(scan['low'].min()) - atr_m5 * 0.3 if direction == "BUY" else float(scan['high'].max()) + atr_m5 * 0.3
+        stop_entry = sw['stop_entry']
+        sl_dist = abs(stop_entry - sl)
+        if sl_dist <= 0:
+            return None
+        tp = stop_entry + sl_dist * 3.0 if direction == "BUY" else stop_entry - sl_dist * 3.0
     return StrategyResult(direction=direction, stop_loss=sl,
                            reason=f"SWAPPY_3C_{sw['pattern']}",
-                           confidence=sw.get("strength", 0.0))
+                           confidence=sw.get("strength", 0.0),
+                           order_type="LIMIT", limit_entry=stop_entry, take_profit=tp)
 
 
 # ---------------------------------------------------------------------
@@ -388,7 +418,7 @@ STRATEGIES_LIVE = [
     StrategyAdapter("LIQUIDITY_GRAB", True, _adapt_liquidity_grab),
     StrategyAdapter("SMC_FVG_OB_RETEST", True, _adapt_liquidity_fvg_engine),
     StrategyAdapter("SHAAKUNI_SSM", True, _adapt_shaakuni_ssm),
-    StrategyAdapter("SWAPPY_3C_PATTERN_ONLY", True, _adapt_swappy_3c_pattern_only),
+    StrategyAdapter("SWAPPY_3C", True, _adapt_swappy_3c),
 ]
 
 STRATEGIES_DORMANT = [

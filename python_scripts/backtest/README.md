@@ -15,21 +15,44 @@ believing it to be "the deterministic SMC entry engine" (that's its own
 docstring's description); `EntryEngine` is in fact never instantiated
 anywhere in the file.
 
-| Strategy | Live today? | Notes |
-|---|---|---|
-| `ICT_KILLZONE` | **Yes** | Fallback strategy in the live cascade |
-| `LIQUIDITY_GRAB` | **Yes** | Fallback strategy in the live cascade |
-| `SMC_FVG_OB_RETEST` | **Yes** | "STRATEGY C" — the SSM/FVG-retest engine |
-| `SHAAKUNI_SSM` | **Yes** | Places a LIMIT order, not a market order |
-| `SWAPPY_3C_PATTERN_ONLY` | **Partially** | Only the pattern-detection half of live "STRATEGY B" — see its adapter's docstring for what's excluded (a location filter + a stateful "3rd-time re-entry rule") |
-| `SMC_ENTRY_ENGINE` | **No** | Never instantiated anywhere — fully built, unused |
-| `ADVANCED_SMC` | **No** | Defined, never called |
-| `WYCKOFF_PATTERNS` | **No** | Defined, never called |
-| `VOLUME_PROFILE` | **No** | Defined, never called |
-| `SUPPORT_RESISTANCE` | **No** | Defined, never called |
-| `VOLUME_IMBALANCE` | **No** | Defined, never called |
-| `TREND_PULLBACK` | **No** | Defined, never called |
-| `MEAN_REVERSION_BB` | **No** | Defined, never called |
+**As of the decision to run the live cascade on only three setups**
+(Shaakuni SSM, Swappy 3C, AOX), everything below except those three is
+gated off by default via `config.ENABLE_STRATEGY_*` flags in
+`AITradingConfig` — the code paths still exist (flip a flag to
+re-enable), but they don't fire in the current configuration.
+
+| Strategy | Reachable via a call site | Enabled by default today | Notes |
+|---|---|---|---|
+| `SHAAKUNI_SSM` | Yes | **Yes** | Places a LIMIT order, not a market order |
+| `SWAPPY_3C` | Yes | **Yes** | Now matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below) |
+| AOX (layered execution) | Yes | **Yes** | Not backtestable here — see "not wired" below |
+| `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy |
+| `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy |
+| `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" |
+| `SMC_ENTRY_ENGINE` | **No** | No | Never instantiated anywhere — fully built, unused |
+| `ADVANCED_SMC` | **No** | No | Defined, never called |
+| `WYCKOFF_PATTERNS` | **No** | No | Defined, never called |
+| `VOLUME_PROFILE` | **No** | No | Defined, never called |
+| `SUPPORT_RESISTANCE` | **No** | No | Defined, never called |
+| `VOLUME_IMBALANCE` | **No** | No | Defined, never called |
+| `TREND_PULLBACK` | **No** | No | Defined, never called |
+| `MEAN_REVERSION_BB` | **No** | No | Defined, never called |
+
+### The Swappy 3C entry bug (fixed)
+
+`detect_swappy_3c` always recommended a stop entry above/below the
+3-candle high/low (`order_type: BUY_STOP`/`SELL_STOP`, trigger at
+`stop_entry`) — a breakout-confirmation entry. The live caller (STRATEGY
+B) ignored that and built a generic setup dict using candle 3's close as
+a market-style entry instead. There was already a fully-built, correctly
+implemented `place_swappy_pending_order()` (proper stop order, 3:1 RR per
+the Swappy spec, 25-minute expiry) and `check_swappy_expirations()`
+(cancels stale pending orders, tracks the 3rd-time re-entry rule) — both
+100% dead code, never called anywhere. Fixed by wiring STRATEGY B to call
+`place_swappy_pending_order()` directly (mirroring how AOX self-manages
+its own execution) and calling `check_swappy_expirations()` once per
+cycle. The `SWAPPY_3C` adapter here was updated to match: it now models a
+stop entry with 3:1 RR instead of a market fill.
 
 Two more live strategies exist but are **not wired here on purpose**:
 

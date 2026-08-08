@@ -743,7 +743,20 @@ class AITradingConfig:
     # Local-First Strategy Engine Flags
     ENABLE_LOCAL_NEWS_FILTER: bool = True
     ENABLE_CONFLUENCE_ENGINE: bool = True
-    
+
+    # STRATEGY SELECTION -- per explicit decision, the live cascade only
+    # trades the three documented institutional setups (Shaakuni SSM,
+    # Swappy 3C, AOX layered execution). Those three are NOT gated by a
+    # flag here -- they were never conditionally skippable in the cascade
+    # and stay that way. These four flags disable everything else that
+    # was live before this decision: STRATEGY A (EMA scalp cross), STRATEGY
+    # C (SMC FVG retest), and the two generic fallbacks. Set any of these
+    # back to True to re-enable that strategy in the live cascade.
+    ENABLE_STRATEGY_EMA_SCALP: bool = False
+    ENABLE_STRATEGY_SMC_FVG_RETEST: bool = False
+    ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK: bool = False
+    ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK: bool = False
+
     # AI Analysis Intervals
     AI_GLOBAL_CONTEXT_INTERVAL: int = 3600
     AI_LEARNING_INTERVAL: int = 3600
@@ -8636,6 +8649,16 @@ def ai_trading_session():
                     break
                 state._last_emergency_time = time.time()
             
+            # --- 0.6 SWAPPY PENDING ORDER HOUSEKEEPING (throttled: max every 30s) ---
+            # check_swappy_expirations() cancels pending Swappy stop orders once
+            # price invalidates the setup, and tracks SL hits for the 3rd-time
+            # re-entry rule. Was fully built but never called anywhere -- wired
+            # in here alongside place_swappy_pending_order() (see STRATEGY B).
+            if not hasattr(state, '_last_swappy_check_time'): state._last_swappy_check_time = 0.0
+            if time.time() - state._last_swappy_check_time >= 30.0:
+                check_swappy_expirations()
+                state._last_swappy_check_time = time.time()
+
             # --- 1. UPDATE GLOBAL CONTEXT (Every 4 hours, time-based not iteration-based) ---
             if not hasattr(state, '_last_global_ctx_time'):
                 state._last_global_ctx_time = 0.0
@@ -8883,8 +8906,8 @@ def ai_trading_session():
                 # Rules: H4 bias  (already checked) + M5 EMA pullback  (already checked)
                 #        + 9 EMA crossing 15 EMA in bias direction on M5
                 # No HTF OB needed. Fires on EMA crossover at any M5 location.
-                # 
-                if not setup:
+                #
+                if not setup and config.ENABLE_STRATEGY_EMA_SCALP:
                     try:
                         _e9  = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-1])
                         _e9p = float(df_m5['close'].ewm(span=9,  adjust=False).mean().iloc[-2])
@@ -9010,30 +9033,41 @@ def ai_trading_session():
                                     _sl_sw = float(_sw_scan['low'].min()) - _atr_m5 * 0.3
                                 else:
                                     _sl_sw = float(_sw_scan['high'].max()) + _atr_m5 * 0.3
-                                setup = {
-                                    'signal':    _trade_direction,
-                                    'reason':    f"SWAPPY_3C_{_sw['pattern']}",
-                                    'stop_loss': _sl_sw,
-                                    'strategy_type': 'SWAPPY',
-                                    'liquidity_distance':  0.6,
-                                    'liquidity_strength':  _sw['strength'],
-                                    'momentum_state':      _sw['strength'],
-                                    'structure_alignment': 0.65,
-                                    'entry_price':         _sw['entry_level'] or _cur_price,
-                                    'swappy_reason':       _sw['reason'],
-                                    'at_support': _near_support,
-                                    'at_resist':  _near_resist,
-                                    'htf_needed': False,  # Swappy never needs HTF OB
-                                }
-                                logger.debug(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} near_support={_near_support} near_resist={_near_resist}")
+
+                                # BUG FIX: this used to build a generic `setup` dict with
+                                # entry_price = _sw['entry_level'] (candle 3's close) and let
+                                # it flow through the shared pipeline as a MARKET order. But
+                                # detect_swappy_3c's own return says order_type=BUY_STOP/
+                                # SELL_STOP with the trigger at _sw['stop_entry'] (above/below
+                                # the 3-candle high/low) -- i.e. an entry on breakout
+                                # confirmation, not a market fill at C3's close. There's
+                                # already a fully-built place_swappy_pending_order() (correct
+                                # stop-order placement, 3:1 RR per the Swappy spec, 25-minute
+                                # expiry) that was never called anywhere -- wire it in here
+                                # instead of reimplementing it, same pattern AOX uses
+                                # (self-contained placement + continue, skipping the shared
+                                # setup/EdgeEngine pipeline for this symbol this cycle).
+                                _sw_placed = place_swappy_pending_order(
+                                    symbol, _sw, _trade_direction,
+                                    entry_price=_sw['stop_entry'], sl=_sl_sw,
+                                    account_equity=account_info.equity,
+                                )
+                                if _sw_placed:
+                                    logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
+                                                f"at {_sw['stop_entry']:.4f} (near_support={_near_support} near_resist={_near_resist})")
+                                    state.daily_trades += 1
+                                    continue  # pending order placed -- skip rest of pipeline this iteration
+                                else:
+                                    logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
+                                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
 
                 # 
                 # STRATEGY C: SSM / ICT FVG RETEST (institutional sweep)
                 # Rules: HTF OB zone  + sweep + displacement + FVG retest
                 # This is the only strategy that USES the HTF zone.
                 # Higher L3 confidence required (institutional setup).
-                # 
-                if not setup:
+                #
+                if not setup and config.ENABLE_STRATEGY_SMC_FVG_RETEST:
                     # SSM-specific HTF zone check (only for this strategy)
                     _ssm_in_zone = _htf_zone['in_zone']
                     _s = strategy_liquidity_fvg_engine(symbol, df_m5, df_h1, effective_trend,
@@ -9092,7 +9126,7 @@ def ai_trading_session():
                                    f"{_ssm_result['signal']} @ {_ssm_result.get('limit_entry',0):.4f}")
 
                 # Generic Liquidity Grab and Kill Zone (fallback)
-                if not setup:
+                if not setup and config.ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK:
                     _s = strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
                     if _s:
                         setup = {
@@ -9109,7 +9143,7 @@ def ai_trading_session():
                             'htf_needed': True,
                         }
 
-                if not setup:
+                if not setup and config.ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK:
                     _s = strategy_ict_killzone(df_m5, df_h1, h1_trend, symbol, df_m1)
                     if _s:
                         setup = {
