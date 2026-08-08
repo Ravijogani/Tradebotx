@@ -31,14 +31,40 @@ current configuration.
 | `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy |
 | `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy |
 | `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" |
-| `SMC_ENTRY_ENGINE` | **No** | No | Never instantiated anywhere — fully built, unused |
-| `ADVANCED_SMC` | **No** | No | Defined, never called |
-| `WYCKOFF_PATTERNS` | **No** | No | Defined, never called |
-| `VOLUME_PROFILE` | **No** | No | Defined, never called |
-| `SUPPORT_RESISTANCE` | **No** | No | Defined, never called |
-| `VOLUME_IMBALANCE` | **No** | No | Defined, never called |
-| `TREND_PULLBACK` | **No** | No | Defined, never called |
-| `MEAN_REVERSION_BB` | **No** | No | Defined, never called |
+| `SMC_ENTRY_ENGINE` | **No** | No | Never instantiated anywhere — fully built, unused. Now lives in `strategies_research.py`, not the live file (see below) |
+| `ADVANCED_SMC` | **No** | No | Defined, never called. Moved to `strategies_research.py` |
+| `WYCKOFF_PATTERNS` | **No** | No | Defined, never called. Moved to `strategies_research.py` — despite the name, not genuine Wyckoff method (see below) |
+| `VOLUME_PROFILE` | **No** | No | Defined, never called. Moved to `strategies_research.py` |
+| `SUPPORT_RESISTANCE` | **No** | No | Defined, never called. Moved to `strategies_research.py` |
+| `VOLUME_IMBALANCE` | **No** | No | Defined, never called. Moved to `strategies_research.py` |
+| `TREND_PULLBACK` | **No** | No | Defined, never called. Moved to `strategies_research.py` |
+| `MEAN_REVERSION_BB` | **No** | No | Defined, never called. Moved to `strategies_research.py` — philosophically the odd one out (counter-trend fade vs everything else here being momentum/liquidity-based) |
+
+### Dormant strategies moved out of the live file (2026-08)
+
+`EntryEngine` and the 7 `strategy_*` functions above never had a live call
+site, but used to sit physically inside `hybrid_trading_bot_multiuser.py`
+mixed in with code that does trade real money. That's exactly the shape of
+bug this whole engagement kept finding elsewhere (Swappy 3C's correct
+pending-order function was dead for the same reason — fully built, nobody
+calling it). They now live in `python_scripts/strategies_research.py`,
+imported by `strategies_registry.py`'s dormant adapters instead of being
+called via `bot.*`. **Verified behavior-preserving, not just compiling**:
+ran all 8 against the same synthetic dataset before and after the move —
+trade counts and full CSV output are byte-for-byte identical.
+
+Two things worth knowing before considering any of these for promotion:
+- **`SMC_ENTRY_ENGINE` (`EntryEngine`) is the strongest candidate here.**
+  Real touch-and-reject sweep detection, real market-structure-shift
+  detection off actual swing highs/lows, a real FVG check, and it requires
+  all three to align — a genuine confluence entry, not a single-indicator
+  trigger. Its EdgeEngine score inputs are measured from the specific
+  setup, not fixed per-strategy constants the way the live fallback
+  strategies' `confidence` values are.
+- **`WYCKOFF_PATTERNS` isn't real Wyckoff method** despite the name — no
+  range/cause-and-effect schematic, no spring/upthrust/test/SOS/LPS
+  detection, it's a volume-climax reversal filter. Don't read a good
+  backtest number here as validating Wyckoff method specifically.
 
 ### The Swappy 3C entry bug (fixed)
 

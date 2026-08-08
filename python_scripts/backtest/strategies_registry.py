@@ -51,7 +51,13 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
   re-enable any of them; don't read their presence as "this is what the
   bot trades today."
 
-  Defined, fully implemented, but NEVER CALLED anywhere in the file:
+  Fully implemented, never had a live call site, and now physically moved
+  out of hybrid_trading_bot_multiuser.py into strategies_research.py
+  (2026-08 -- see that module's docstring for the full rationale: keeping
+  unreachable strategy code mixed into the live file made it easy to
+  reintroduce exactly the kind of bug this whole engagement kept finding,
+  e.g. Swappy 3C's correct pending-order function sitting dead for the
+  same reason):
     - EntryEngine.evaluate_setup (see correction above)
     - strategy_advanced_smc
     - strategy_wyckoff_patterns
@@ -60,10 +66,11 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
     - strategy_volume_imbalance
     - strategy_trend_pullback
     - strategy_mean_reversion_bb
-  These are wired here too (STRATEGIES_DORMANT below) so they can be
-  evaluated -- but their `live=False` flag means the report should label
-  them clearly as "not currently reachable by the live bot," not blend
-  their numbers in with strategies that actually trade real money today.
+  These are wired here too (STRATEGIES_DORMANT below, now calling
+  strategies_research.* instead of bot.*) so they can still be evaluated
+  -- but their `live=False` flag means the report should label them
+  clearly as "not currently reachable by the live bot," not blend their
+  numbers in with strategies that actually trade real money today.
 
   NOT a StrategyAdapter here, on purpose (but IS wired -- see aox_driver.py):
     - "STRATEGY D" / AOX. run_aox_layered_entry() was split into
@@ -87,13 +94,26 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
       that adapter's docstring.
 """
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
 
 from .data import HistoricalDataset
 from .replay_data import replay_context
+
+# strategies_research.py lives one directory up (python_scripts/, sibling
+# to this backtest/ package), holding EntryEngine + the 7 dormant
+# strategy_* functions moved out of the live bot file (see that module's
+# docstring). Ensure python_scripts/ is importable regardless of the
+# caller's cwd -- same defensive approach bot_loader.py uses to locate the
+# bot file itself.
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+import strategies_research
 
 
 @dataclass
@@ -137,13 +157,16 @@ def _get_trend(bot, symbol: str) -> Optional[str]:
 def _adapt_entry_engine(bot, dataset: HistoricalDataset, as_of, symbol):
     """
     NOT LIVE -- see this module's docstring. EntryEngine is never
-    instantiated anywhere in the bot file; kept here (in
-    STRATEGIES_DORMANT) because it's cleanly self-contained and its score
-    components are genuinely derived from the setup's measured
+    instantiated anywhere in the bot file; it now lives in
+    strategies_research.py (moved out of the live file entirely -- see
+    that module's docstring) because it's cleanly self-contained and its
+    score components are genuinely derived from the setup's measured
     liquidity/momentum/structure quality (unlike the fixed per-strategy-
     type constants the live cascade assigns for its fallback strategies),
     which makes it worth evaluating on its own methodological merits even
-    though it doesn't trade a single live order today.
+    though it doesn't trade a single live order today. TradeContext/
+    EdgeEngine below are still genuinely live (used elsewhere in the real
+    cascade), so those still come from `bot`, not strategies_research.
     """
     df_h1 = dataset.window("H1", as_of, 100)
     df_m5 = dataset.window("M5", as_of, 60)
@@ -151,7 +174,7 @@ def _adapt_entry_engine(bot, dataset: HistoricalDataset, as_of, symbol):
     if len(df_h1) < 55 or len(df_m5) < 20 or len(df_m1) < 12:
         return None
 
-    entry_engine = bot.EntryEngine()
+    entry_engine = strategies_research.EntryEngine()
     with replay_context(bot, dataset, as_of):
         setup = entry_engine.evaluate_setup(df_h1, df_m5, df_m1)
     if setup is None:
@@ -320,7 +343,7 @@ def _adapt_advanced_smc(bot, dataset, as_of, symbol):
         df_m1 = dataset.window("M1", as_of, 30)
         if len(df_m5) < 15 or len(df_h1) < 20 or len(df_m1) < 5:
             return None
-        r = bot.strategy_advanced_smc(df_m5, df_h1, trend, symbol, df_m1)
+        r = strategies_research.strategy_advanced_smc(df_m5, df_h1, trend, symbol, df_m1)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -338,7 +361,7 @@ def _adapt_wyckoff(bot, dataset, as_of, symbol):
         df_m1 = dataset.window("M1", as_of, 30)
         if len(df_m5) < 40:
             return None
-        r = bot.strategy_wyckoff_patterns(df_m5, df_h1, trend, symbol, df_m1)
+        r = strategies_research.strategy_wyckoff_patterns(df_m5, df_h1, trend, symbol, df_m1)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -354,7 +377,7 @@ def _adapt_volume_profile(bot, dataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 60)
         if len(df_m5) < 30:
             return None
-        r = bot.strategy_volume_profile(df_m5, trend, symbol)
+        r = strategies_research.strategy_volume_profile(df_m5, trend, symbol)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -367,7 +390,7 @@ def _adapt_support_resistance(bot, dataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 40)
         if len(df_m5) < 20:
             return None
-        r = bot.strategy_support_resistance(df_m5, "NEUTRAL")
+        r = strategies_research.strategy_support_resistance(df_m5, "NEUTRAL")
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -383,7 +406,7 @@ def _adapt_volume_imbalance(bot, dataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 20)
         if len(df_m5) < 5:
             return None
-        r = bot.strategy_volume_imbalance(df_m5, trend, symbol)
+        r = strategies_research.strategy_volume_imbalance(df_m5, trend, symbol)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -399,7 +422,7 @@ def _adapt_trend_pullback(bot, dataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 40)
         if len(df_m5) < 20:
             return None
-        r = bot.strategy_trend_pullback(df_m5, trend, symbol)
+        r = strategies_research.strategy_trend_pullback(df_m5, trend, symbol)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
@@ -412,7 +435,7 @@ def _adapt_mean_reversion_bb(bot, dataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 40)
         if len(df_m5) < 20:
             return None
-        r = bot.strategy_mean_reversion_bb(df_m5, symbol)
+        r = strategies_research.strategy_mean_reversion_bb(df_m5, symbol)
     if not r:
         return None
     return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],

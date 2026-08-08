@@ -117,8 +117,10 @@ for _mod_key in list(sys.modules.keys()):
 
 # =============================================================================
 # EMBEDDED ENGINE CLASSES (consolidated from engines/ folder)
-# EdgeEngine, EntryEngine, CapitalController, DecisionEngineV2,
-# RunnerManagementEngine, ScalpingExitEngine -- all inline, no external deps.
+# EdgeEngine, CapitalController, DecisionEngineV2, RunnerManagementEngine,
+# ScalpingExitEngine -- all inline, no external deps. (EntryEngine was here
+# too but moved to strategies_research.py -- never had a live call site;
+# see that module's docstring.)
 # =============================================================================
 
 class TradeContext:
@@ -225,182 +227,13 @@ class EdgeEngine:
         return result
 
 
-class EntryEngine:
-    """
-    ICT Algorithmic Liquidity Model -- Deterministic SMC Entry Engine.
-
-    QA FIX v11.5 -- "Touch and Reject" logic replaces "Fixed Price Window":
-    - Old: price must be within tolerance% of a level (missed 95% of sweeps)
-    - New: detect the CANDLE that swept/touched the level then CLOSED back
-           through it -- this is the actual ICT confirmation signal.
-    tolerance_pct widened from 0.001 to 0.0025 (0.25% = ~$6 on XAU@2500).
-    """
-
-    def __init__(self, tolerance: float = 0.0025):
-        self.tolerance_pct = tolerance
-
-    def _abs_tolerance(self, price: float) -> float:
-        return max(price * self.tolerance_pct, 0.001)
-
-    def get_htf_bias(self, df) -> str:
-        """H1/H4 bias: price must be 5% of range away from midpoint to avoid neutrals."""
-        if len(df) < 55:
-            return "NEUTRAL"
-        high = df["high"].rolling(50).max().iloc[-1]
-        low  = df["low"].rolling(50).min().iloc[-1]
-        eq   = (high + low) / 2
-        price = df["close"].iloc[-1]
-        margin = (high - low) * 0.05
-        if price > eq + margin:
-            return "BULLISH"
-        if price < eq - margin:
-            return "BEARISH"
-        return "NEUTRAL"
-
-    def detect_equal_highs_lows(self, df) -> dict:
-        if len(df) < 5:
-            return {"equal_highs": False, "equal_lows": False}
-        ref_price = df["close"].iloc[-1]
-        tol = self._abs_tolerance(ref_price)
-        highs = df["high"].tail(5)
-        lows  = df["low"].tail(5)
-        return {
-            "equal_highs": (max(highs) - min(highs)) < tol,
-            "equal_lows":  (max(lows)  - min(lows))  < tol,
-        }
-
-    def detect_sweep(self, df):
-        """
-        UPGRADED: Checks last 3 candles for Touch-and-Reject sweep.
-        Reference level = high/low of last 5 confirmed candles.
-        Valid sweep = wick through level + close BACK INSIDE the level.
-        """
-        if len(df) < 8:
-            return None
-        lookback = df.iloc[-6:-1]
-        ref_high = lookback["high"].max()
-        ref_low  = lookback["low"].min()
-        for offset in [-1, -2, -3]:
-            c = df.iloc[offset]
-            if c["high"] > ref_high and c["close"] < ref_high:
-                return "SELL_SWEEP"
-            if c["low"] < ref_low and c["close"] > ref_low:
-                return "BUY_SWEEP"
-        return None
-
-    def _swing_high(self, df, i: int) -> bool:
-        if i < 2 or i >= len(df) - 2: return False
-        return (df["high"].iloc[i] > df["high"].iloc[i-1] and
-                df["high"].iloc[i] > df["high"].iloc[i-2] and
-                df["high"].iloc[i] > df["high"].iloc[i+1] and
-                df["high"].iloc[i] > df["high"].iloc[i+2])
-
-    def _swing_low(self, df, i: int) -> bool:
-        if i < 2 or i >= len(df) - 2: return False
-        return (df["low"].iloc[i] < df["low"].iloc[i-1] and
-                df["low"].iloc[i] < df["low"].iloc[i-2] and
-                df["low"].iloc[i] < df["low"].iloc[i+1] and
-                df["low"].iloc[i] < df["low"].iloc[i+2])
-
-    def detect_mss(self, df):
-        """MSS: searches last 20 candles for swing, not just 5."""
-        if len(df) < 10:
-            return None
-        curr_low  = df["low"].iloc[-1]
-        curr_high = df["high"].iloc[-1]
-        lookback = min(len(df) - 3, 20)
-        for i in range(len(df) - 2, len(df) - lookback, -1):
-            if self._swing_low(df, i):
-                if curr_low < df["low"].iloc[i]:
-                    return "BEARISH"
-                break
-        for i in range(len(df) - 2, len(df) - lookback, -1):
-            if self._swing_high(df, i):
-                if curr_high > df["high"].iloc[i]:
-                    return "BULLISH"
-                break
-        return None
-
-    def detect_fvg(self, df):
-        """
-        Searches last 10 candle triplets for price NOW inside a FVG.
-        Relaxed displacement threshold from 1.5x to 1.2x avg body.
-        """
-        if len(df) < 12:
-            return None
-        avg_body = abs(df["close"] - df["open"]).rolling(10).mean().iloc[-1]
-        price_now = df["close"].iloc[-1]
-        for offset in range(3, min(12, len(df))):
-            c1 = df.iloc[-offset - 2]
-            c2 = df.iloc[-offset - 1]
-            c3 = df.iloc[-offset]
-            body = abs(c2["close"] - c2["open"])
-            if body <= avg_body * 1.2:
-                continue
-            if c3["low"] > c1["high"] and c1["high"] <= price_now <= c3["low"]:
-                return {"direction": "BULLISH", "top": c3["low"], "bottom": c1["high"],
-                        "midpoint": (c1["high"] + c3["low"]) / 2}
-            if c3["high"] < c1["low"] and c3["high"] <= price_now <= c1["low"]:
-                return {"direction": "BEARISH", "top": c1["low"], "bottom": c3["high"],
-                        "midpoint": (c3["high"] + c1["low"]) / 2}
-        return None
-
-    def evaluate_setup(self, htf_df, ltf_df, micro_df):
-        """
-        Full ICT pipeline. HTF bias is advisory not blocking:
-        sweep+MSS+FVG alignment can fire even in NEUTRAL bias
-        with reduced structure_alignment score.
-        """
-        bias = self.get_htf_bias(htf_df)
-        liquidity = self.detect_equal_highs_lows(ltf_df)
-        sweep = self.detect_sweep(ltf_df)
-        if not sweep:
-            return None
-        mss = self.detect_mss(ltf_df)
-        if not mss:
-            return None
-        fvg = self.detect_fvg(micro_df)
-        if not fvg:
-            return None
-
-        recent_high = ltf_df["high"].rolling(10).max().iloc[-1]
-        recent_low  = ltf_df["low"].rolling(10).min().iloc[-1]
-        body_avg    = abs(ltf_df["close"] - ltf_df["open"]).rolling(10).mean().iloc[-1]
-        last_body   = abs(ltf_df["close"].iloc[-1] - ltf_df["open"].iloc[-1])
-        momentum_score = min(last_body / body_avg, 2.0) / 2.0 if body_avg > 0 else 0.5
-        atr_ltf = float(ltf_df["high"].rolling(14).max().iloc[-1] - ltf_df["low"].rolling(14).min().iloc[-1]) / 14.0
-
-        str_align_bear = 1.0 if bias == "BEARISH" else (0.7 if bias == "NEUTRAL" else 0.5)
-        str_align_bull = 1.0 if bias == "BULLISH" else (0.7 if bias == "NEUTRAL" else 0.5)
-
-        if sweep == "SELL_SWEEP" and mss == "BEARISH" and fvg["direction"] == "BEARISH":
-            dist = abs(fvg["midpoint"] - recent_high)
-            liq_dist = max(0.0, 1.0 - (dist / max(recent_high * 0.005, 1e-9)))
-            return {
-                "signal": "SELL", "entry_price": fvg["midpoint"],
-                "stop_loss": fvg["top"] + atr_ltf * 1.5,
-                "reason": "BEARISH_ICT_SETUP",
-                "fvg": fvg, "liquidity_targets": liquidity,
-                "liquidity_distance": liq_dist,
-                "liquidity_strength": 1.0 if liquidity["equal_highs"] else 0.5,
-                "momentum_state": momentum_score,
-                "structure_alignment": str_align_bear,
-            }
-
-        if sweep == "BUY_SWEEP" and mss == "BULLISH" and fvg["direction"] == "BULLISH":
-            dist = abs(fvg["midpoint"] - recent_low)
-            liq_dist = max(0.0, 1.0 - (dist / max(recent_low * 0.005, 1e-9)))
-            return {
-                "signal": "BUY", "entry_price": fvg["midpoint"],
-                "stop_loss": fvg["bottom"] - atr_ltf * 1.5,
-                "reason": "BULLISH_ICT_SETUP",
-                "fvg": fvg, "liquidity_targets": liquidity,
-                "liquidity_distance": liq_dist,
-                "liquidity_strength": 1.0 if liquidity["equal_lows"] else 0.5,
-                "momentum_state": momentum_score,
-                "structure_alignment": str_align_bull,
-            }
-        return None
+# EntryEngine ("ICT Algorithmic Liquidity Model -- Deterministic SMC Entry
+# Engine") moved to strategies_research.py -- never instantiated anywhere
+# in this file (confirmed by grepping call sites, not just defs). See that
+# module's docstring for why dormant strategy code lives there now instead
+# of here, and for this specific class's promotion-worthiness assessment.
+# Import it (from strategies_research import EntryEngine) if/when it's
+# deliberately wired into the live cascade -- don't recreate it here.
 
 
 class CapitalController:
@@ -412,7 +245,8 @@ class CapitalController:
 
     def calculate(self, edge_score: float, symbol_metrics: float,
                   session: str, drawdown: float, symbol: str = "",
-                  open_positions_count: int = 0, account_equity: float = 0) -> float:
+                  open_positions_count: int = 0, account_equity: float = 0,
+                  pattern_health: float = 1.0) -> float:
         """
         Professional risk sizing. Considers:
         1. Edge quality (higher edge = slightly more size)
@@ -420,6 +254,22 @@ class CapitalController:
         3. Drawdown (reduce size as losses accumulate)
         4. Asset volatility (BTC/ETH/XAG = smaller to match dollar risk)
         5. Total open exposure (reduce size if already have open positions)
+        6. This symbol's own recent live trade-score (symbol_metrics)
+        7. This setup's historical pattern-match edge health (pattern_health)
+
+        BUG FIX: symbol_metrics was a parameter here (and the live call site
+        already computed a real value for it via
+        symbol_tracker.get_symbol_metrics(symbol)['trade_score']) but this
+        method's body never once read it -- a real symbol performing badly
+        got exactly the same size as one performing well. Also added
+        pattern_health: PatternRecognitionSystem.get_edge_health_score()
+        (a real 0.0-1.5 confidence multiplier straight from its own
+        docstring) was previously only ever called in the mid-trade
+        management loop, and even there its result was computed and then
+        never read by anything -- it never reached position sizing at
+        entry time at all. Wiring both in here is what "the bot throttles
+        a setup that's currently cold" actually requires; the data plumbing
+        already existed; nothing was using it.
         """
         edge_mult = max(0.5, min(1.2, edge_score / 65.0))  # tighter range for stability
 
@@ -446,7 +296,20 @@ class CapitalController:
         # Reduce size when already have open positions (exposure management)
         exposure_mult = max(0.5, 1.0 - (open_positions_count * 0.3))
 
-        risk = self.base_risk * edge_mult * sess_agg * dd_adj * vol_scale * exposure_mult
+        # This symbol's own recent live performance (SymbolPerformanceTracker's
+        # trade_score). Clamped to a moderate band -- same reasoning as
+        # edge_mult's clamp: this should nudge size, not swing it wildly on
+        # a small sample of recent trades for one symbol.
+        sym_perf_mult = max(0.6, min(1.3, symbol_metrics))
+
+        # Historical pattern-match edge health for this exact symbol+direction
+        # setup (PatternRecognitionSystem.get_edge_health_score -- already
+        # native 0.0-1.5, clamp matches its own documented range minus the
+        # extremes, same conservative-nudge reasoning as sym_perf_mult).
+        pattern_mult = max(0.5, min(1.3, pattern_health))
+
+        risk = (self.base_risk * edge_mult * sess_agg * dd_adj * vol_scale *
+                exposure_mult * sym_perf_mult * pattern_mult)
         return max(0.25, min(1.5, risk))  # Hard cap at 1.5% for scalping
 
     def allow_stacking(self, edge_score: float, regime: str, lifecycle: str) -> bool:
@@ -3259,43 +3122,9 @@ def strategy_ict_killzone(df_entry: pd.DataFrame, df_structure: pd.DataFrame, tr
                     return {"direction": "SELL", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
     return None
 
-def strategy_advanced_smc(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    spec = get_symbol_specs(symbol)
-    if not spec or not spec.get('pip_size'): 
-        logger.warning(f"SMC: Cannot get pip_size for {symbol}")
-        return None
-    pip_size = spec['pip_size']
-    
-    # FIX: pip_size for Gold = 0.01, so 5 pips = $0.05 -- way too small for an OB.
-    # Use 0.3x ATR as minimum OB size -- scales correctly for all assets.
-    atr_now = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    min_ob_size = atr_now * 0.3  # OB must be at least 30% of current ATR
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    
-    swing_highs, swing_lows = identify_swing_highs_lows(df_structure, config.SMC_SWING_LOOKBACK)
-    bos = detect_break_of_structure(df_structure, swing_highs, swing_lows)
-    
-    for i in range(len(df_entry) - config.SMC_VALIDATION_CANDLES - 1, 5, -1):
-        candle_open, candle_close = df_entry['open'].iloc[i], df_entry['close'].iloc[i]
-        candle_high, candle_low = df_entry['high'].iloc[i], df_entry['low'].iloc[i]
-
-        if candle_close < candle_open: # Bearish candle
-            if i + 1 < len(df_entry) and df_entry['close'].iloc[i+1] > candle_high:
-                ob_high, ob_low = candle_high, candle_low
-                if (ob_high - ob_low) >= min_ob_size and ob_low <= current_price <= ob_high:
-                    if current_price > df_entry['open'].iloc[-1]:
-                        confidence = 0.75 + (0.10 if bos == "BULLISH_BOS" else 0)
-                        return {"direction": "BUY", "stop_loss": ob_low - (atr * 1.5), "strategy_name": "ADVANCED_SMC", "confidence": confidence}
-
-        elif candle_close > candle_open: # Bullish candle
-            if i + 1 < len(df_entry) and df_entry['close'].iloc[i+1] < candle_low:
-                ob_high, ob_low = candle_high, candle_low
-                if (ob_high - ob_low) >= min_ob_size and ob_low <= current_price <= ob_high:
-                    if current_price < df_entry['open'].iloc[-1]:
-                        confidence = 0.75 + (0.10 if bos == "BEARISH_BOS" else 0)
-                        return {"direction": "SELL", "stop_loss": ob_high + (atr * 1.5), "strategy_name": "ADVANCED_SMC", "confidence": confidence}
-    return None
+# strategy_advanced_smc moved to strategies_research.py -- no live call
+# site (confirmed by grepping call sites, not just defs). See that
+# module's docstring for the full dormant-strategy rationale.
 
 def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
     """
@@ -3335,165 +3164,14 @@ def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, 
                             "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
     return None
 
-def strategy_wyckoff_patterns(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    if len(df_entry) < config.VOLUME_LOOKBACK + 10: return None
-    volume_avg = df_entry['tick_volume'].rolling(window=config.VOLUME_LOOKBACK).mean()
-    volume_surge = df_entry['tick_volume'].iloc[-1] > (volume_avg.iloc[-1] * config.VOLUME_SURGE_MULTIPLIER)
-    price_range = df_entry['high'].iloc[-1] - df_entry['low'].iloc[-1]
-    avg_range = (df_entry['high'] - df_entry['low']).rolling(window=20).mean().iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-
-    if (trend != "BULLISH" and df_entry['low'].iloc[-1] < df_entry['low'].iloc[-2] and
-        df_entry['close'].iloc[-1] > df_entry['close'].iloc[-2] and volume_surge and
-        price_range > avg_range * 1.2 and df_entry['close'].iloc[-1] > df_entry['high'].iloc[-2]):
-        return {"direction": "BUY", "stop_loss": df_entry['low'].iloc[-1] - (atr * 1.5), "strategy_name": "WYCKOFF_PATTERNS", "confidence": 0.8}
-    
-    if (trend != "BEARISH" and df_entry['high'].iloc[-1] > df_entry['high'].iloc[-2] and
-        df_entry['close'].iloc[-1] < df_entry['close'].iloc[-2] and volume_surge and
-        price_range > avg_range * 1.2 and df_entry['close'].iloc[-1] < df_entry['low'].iloc[-2]):
-        return {"direction": "SELL", "stop_loss": df_entry['high'].iloc[-1] + (atr * 1.5), "strategy_name": "WYCKOFF_PATTERNS", "confidence": 0.8}
-    return None
-
-def strategy_volume_profile(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
-    if 'tick_volume' not in df_entry.columns or len(df_entry) < config.VOLUME_PROFILE_PERIODS: return None
-    df_vp = df_entry.iloc[-config.VOLUME_PROFILE_PERIODS:]
-    prices = pd.concat([df_vp['low'], df_vp['high']])
-    volumes = pd.concat([df_vp['tick_volume'] / 2, df_vp['tick_volume'] / 2])
-    price_bins = pd.cut(prices, bins=20)
-    volume_by_bin = volumes.groupby(price_bins, observed=True).sum()
-    if volume_by_bin.empty: return None
-    poc_bin = volume_by_bin.idxmax()
-    poc = poc_bin.mid
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    proximity = atr * 0.5
-
-    if trend != "BEARISH" and abs(current_price - poc) < proximity and current_price > poc:
-        if df_entry['close'].iloc[-1] > df_entry['open'].iloc[-1]:
-            return {"direction": "BUY", "stop_loss": poc - atr, "strategy_name": "VOLUME_PROFILE", "confidence": 0.75}
-
-    if trend != "BULLISH" and abs(current_price - poc) < proximity and current_price < poc:
-        if df_entry['close'].iloc[-1] < df_entry['open'].iloc[-1]:
-            return {"direction": "SELL", "stop_loss": poc + atr, "strategy_name": "VOLUME_PROFILE", "confidence": 0.75}
-    return None
-
-def strategy_support_resistance(df_entry: pd.DataFrame, trend: str) -> Optional[Dict[str, Any]]:
-    # 1. Setup Data
-    if len(df_entry) < 20: return None
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    
-    # 2. Get recent Swing Lows/Highs
-    # FIX: lookback=5 misses wide swings on Gold/Crypto. Use 3 for scalping sensitivity.
-    swing_highs_idx, swing_lows_idx = identify_swing_highs_lows(df_entry, lookback=3)
-    
-    # --- SNIPER LOGIC: WICK REJECTION ---
-    # We want to catch the bounce off the level, not just the touch.
-    
-    # BUY SETUP
-    if swing_lows_idx:
-        last_support = df_entry['low'].iloc[swing_lows_idx[-1]]
-        proximity = atr * 0.5 
-        
-        # Check if current LOW wicked the support
-        if abs(df_entry['low'].iloc[-1] - last_support) < proximity:
-            # Check for Rejection: Close > Open AND Long Lower Wick
-            candle = df_entry.iloc[-1]
-            body = abs(candle['close'] - candle['open'])
-            lower_wick = candle['open'] - candle['low'] if candle['close'] > candle['open'] else candle['close'] - candle['low']
-            
-            # Hammer Pattern: Wick is 2x Body
-            if lower_wick > (body * 1.5) and candle['close'] > candle['open']:
-                 return {
-                    "direction": "BUY", 
-                    "stop_loss": candle['low'] - (atr * 1.2), 
-                    "strategy_name": "SUPPORT_RESISTANCE", 
-                    "confidence": 0.85
-                }
-
-    # SELL SETUP
-    if swing_highs_idx:
-        last_resistance = df_entry['high'].iloc[swing_highs_idx[-1]]
-        proximity = atr * 0.5
-        
-        # Check if current HIGH wicked the resistance
-        if abs(df_entry['high'].iloc[-1] - last_resistance) < proximity:
-            # Check for Rejection: Close < Open AND Long Upper Wick
-            candle = df_entry.iloc[-1]
-            body = abs(candle['close'] - candle['open'])
-            upper_wick = candle['high'] - candle['open'] if candle['close'] < candle['open'] else candle['high'] - candle['close']
-            
-            # Shooting Star Pattern
-            if upper_wick > (body * 1.5) and candle['close'] < candle['open']:
-                return {
-                    "direction": "SELL", 
-                    "stop_loss": candle['high'] + (atr * 1.2), 
-                    "strategy_name": "SUPPORT_RESISTANCE", 
-                    "confidence": 0.85
-                }
-
-    return None
-
-def strategy_volume_imbalance(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
-    """
-    ICT Concept: Fair Value Gap (FVG) / Imbalance
-    Replaces lagging EMA crosses with Price Action gaps.
-    """
-    if len(df_entry) < 3: return None
-    
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    
-    # 1. Bearish FVG (Sell)
-    # Candle 1 Low > Candle 3 High
-    c1_low = df_entry['low'].iloc[-3]
-    c3_high = df_entry['high'].iloc[-1]
-    
-    if trend != "BULLISH" and c1_low > c3_high:
-        gap_size = c1_low - c3_high
-        if gap_size > (atr * 0.2): # Significant Gap
-            # If price retraces into the gap, SELL
-            if c3_high < current_price < c1_low:
-                 return {"direction": "SELL", "stop_loss": c1_low + (atr * 1.0), "strategy_name": "VOLUME_IMBALANCE", "confidence": 0.8}
-
-    # 2. Bullish FVG (Buy)
-    # Candle 1 High < Candle 3 Low
-    c1_high = df_entry['high'].iloc[-3]
-    c3_low = df_entry['low'].iloc[-1]
-    
-    if trend != "BEARISH" and c1_high < c3_low:
-        gap_size = c3_low - c1_high
-        if gap_size > (atr * 0.2): 
-             # If price retraces into the gap, BUY
-             if c1_high < current_price < c3_low:
-                 return {"direction": "BUY", "stop_loss": c1_high - (atr * 1.0), "strategy_name": "VOLUME_IMBALANCE", "confidence": 0.8}
-                 
-    return None
-
-def strategy_trend_pullback(df_entry: pd.DataFrame, trend: str, symbol: str) -> Optional[Dict[str, Any]]:
-    ema_slow = df_entry['close'].ewm(span=config.MOMENTUM_EMA_SLOW, adjust=False).mean().iloc[-1]
-    last_candle, prev_candle = df_entry.iloc[-1], df_entry.iloc[-2]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1]
-    if trend == "BULLISH" and prev_candle['low'] < ema_slow and last_candle['close'] > last_candle['open'] and last_candle['close'] > prev_candle['high']:
-        return {"direction": "BUY", "stop_loss": prev_candle['low'] - (atr * 0.8), "strategy_name": "TREND_PULLBACK", "confidence": 0.75}  # FIX: added ATR buffer
-    if trend == "BEARISH" and prev_candle['high'] > ema_slow and last_candle['close'] < last_candle['open'] and last_candle['close'] < prev_candle['low']:
-        return {"direction": "SELL", "stop_loss": prev_candle['high'] + (atr * 0.8), "strategy_name": "TREND_PULLBACK", "confidence": 0.75}  # FIX: added ATR buffer
-    return None
-
-def strategy_mean_reversion_bb(df_entry: pd.DataFrame, symbol: str) -> Optional[Dict[str, Any]]:
-    close = df_entry['close']
-    sma = close.rolling(window=config.BB_PERIOD).mean()
-    std = close.rolling(window=config.BB_PERIOD).std()
-    upper = sma + (std * config.BB_STD_DEV)
-    lower = sma - (std * config.BB_STD_DEV)
-    last_candle = df_entry.iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1]
-    if last_candle['high'] > upper.iloc[-1] and last_candle['close'] < upper.iloc[-1]:
-        return {"direction": "SELL", "stop_loss": last_candle['high'] + (atr * 1.0), "strategy_name": "MEAN_REVERSION_BB", "confidence": 0.7}  # FIX: added ATR buffer
-    if last_candle['low'] < lower.iloc[-1] and last_candle['close'] > lower.iloc[-1]:
-        return {"direction": "BUY", "stop_loss": last_candle['low'] - (atr * 1.0), "strategy_name": "MEAN_REVERSION_BB", "confidence": 0.7}  # FIX: added ATR buffer
-    return None
-
+# strategy_wyckoff_patterns / strategy_volume_profile / strategy_support_resistance /
+# strategy_volume_imbalance / strategy_trend_pullback / strategy_mean_reversion_bb
+# moved to strategies_research.py -- none had a live call site (confirmed
+# by grepping call sites, not just defs). See that module's docstring for
+# why (and for a per-strategy note on the two that need a closer look
+# before any promotion: WYCKOFF_PATTERNS isn't real Wyckoff method despite
+# the name, and MEAN_REVERSION_BB is a counter-trend fade, philosophically
+# the odd one out against every other momentum/liquidity strategy here).
 
 # =============================================================================
 # EMA MOMENTUM FILTER (9/15 EMA + Slope Gate)
@@ -9469,6 +9147,20 @@ def ai_trading_session():
                 # Previously only used BASE_RISK * EdgeEngine multiplier -- ignored session,
                 # drawdown, and symbol volatility scaling entirely.
                 sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+
+                # Historical pattern-match edge health for THIS symbol+direction,
+                # now actually reaching position sizing (see CapitalController.
+                # calculate's docstring -- this call existed already in the
+                # mid-trade management loop but its result was never wired
+                # anywhere, and nothing called it at entry time at all).
+                # Failure is non-fatal -- an unavailable/erroring pattern
+                # store degrades to 1.0 (neutral), never blocks a trade.
+                try:
+                    pattern_health = pattern_recognizer.get_edge_health_score(symbol, setup['signal'], {})
+                except Exception as _phe:
+                    logger.debug(f"[SCAN] {symbol}: pattern health lookup failed ({_phe}) -- using neutral 1.0")
+                    pattern_health = 1.0
+
                 final_risk = cap_ctrl.calculate(
                     edge_score           = edge_score,
                     symbol_metrics       = sym_metrics,
@@ -9477,8 +9169,11 @@ def ai_trading_session():
                     symbol               = symbol,
                     open_positions_count = len(my_bot_positions),
                     account_equity       = account_info.equity,
+                    pattern_health       = pattern_health,
                 )
                 final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 10%
+                logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
+                             f"pattern_health={pattern_health:.2f} dd={current_drawdown:.1f}% -> final_risk={final_risk:.2f}%")
 
                 # =========================================================
                 # STEP 4: BUILD SIGNAL AND EXECUTE
