@@ -5,10 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Play, Square, TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import type { Tables } from "@/integrations/supabase/types";
 
 export const StrategySelector = () => {
-  const [strategies, setStrategies] = useState<any[]>([]);
-  const [userStrategies, setUserStrategies] = useState<any[]>([]);
+  const [strategies, setStrategies] = useState<Tables<"strategies">[]>([]);
+  const [userStrategies, setUserStrategies] = useState<Tables<"user_strategies">[]>([]);
   const [loading, setLoading] = useState(true);
   const [adminApproved, setAdminApproved] = useState(false);
   const [planType, setPlanType] = useState<string>('');
@@ -42,7 +43,7 @@ export const StrategySelector = () => {
         console.error("Error loading setup:", setupError);
       }
 
-      const type = (subscription?.plans as any)?.plan_type || '';
+      const type = (subscription?.plans as Pick<Tables<"plans">, "plan_type"> | null)?.plan_type || '';
       setPlanType(type);
       const isApproved = setup?.admin_approved === true;
       console.log("StrategySelector - Admin approved:", isApproved);

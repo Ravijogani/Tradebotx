@@ -13,17 +13,9 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Edit, Trash2, Upload, FileCode, TrendingUp } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Tables } from "@/integrations/supabase/types";
 
-interface Strategy {
-  id: string;
-  name: string;
-  description: string;
-  plan_type: string;
-  python_script_path: string;
-  is_active: boolean;
-  performance_data: any;
-  created_at: string;
-}
+type Strategy = Tables<"strategies">;
 
 const ADMIN_EMAIL = "admin@tradebotx.com";
 
@@ -210,7 +202,7 @@ export const AdminStrategies = () => {
     setFormData({
       name: strategy.name,
       description: strategy.description,
-      plan_type: strategy.plan_type as any,
+      plan_type: strategy.plan_type,
       python_file: null,
       is_active: strategy.is_active,
     });
@@ -429,7 +421,7 @@ export const AdminStrategies = () => {
               <Label htmlFor="plan">Subscription Plan *</Label>
               <Select
                 value={formData.plan_type}
-                onValueChange={(value: any) => setFormData({ ...formData, plan_type: value })}
+                onValueChange={(value: "free" | "pro" | "enterprise") => setFormData({ ...formData, plan_type: value })}
               >
                 <SelectTrigger>
                   <SelectValue />

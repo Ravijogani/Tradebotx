@@ -14,12 +14,14 @@ import { useToast } from "@/hooks/use-toast";
 import logo from "@/assets/tradebotx-logo.png";
 import logoWhite from "@/assets/tradebotx-logo-white.png";
 import { useTheme } from "@/components/theme-provider";
+import type { User } from "@supabase/supabase-js";
+import type { Tables } from "@/integrations/supabase/types";
 
 const StrategyBuilderPage = () => {
   const [loading, setLoading] = useState(true);
   const [hasAccess, setHasAccess] = useState(false);
   const [planType, setPlanType] = useState<string | null>(null);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
   const { theme } = useTheme();
@@ -44,7 +46,7 @@ const StrategyBuilderPage = () => {
         .eq("user_id", authUser.id)
         .single();
 
-      const userPlanType = (subscription?.plans as any)?.plan_type;
+      const userPlanType = (subscription?.plans as Pick<Tables<"plans">, "plan_type"> | null)?.plan_type;
       setPlanType(userPlanType);
 
       // Enterprise users only, and only while their subscription is actually

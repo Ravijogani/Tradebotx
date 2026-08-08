@@ -8,7 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, User, Mail, Building2, CreditCard, Settings as SettingsIcon, Palette } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { useTheme } from "@/components/theme-provider";
+import { useTheme, type Theme } from "@/components/theme-provider";
+import type { Tables } from "@/integrations/supabase/types";
 import {
   Select,
   SelectContent,
@@ -20,7 +21,7 @@ import { TelegramNotificationSettings } from "./TelegramNotificationSettings";
 
 export const UserSettings = ({ user }: { user: SupabaseUser }) => {
   const [loading, setLoading] = useState(false);
-  const [setupData, setSetupData] = useState<any>(null);
+  const [setupData, setSetupData] = useState<Tables<"user_setup"> | null>(null);
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
 
@@ -45,9 +46,13 @@ export const UserSettings = ({ user }: { user: SupabaseUser }) => {
     setLoading(true);
 
     const formData = new FormData(e.currentTarget);
+    // user_setup's column is risk_per_trade, not risk_percentage — using the
+    // wrong name here made every save of this form fail with a Postgres
+    // "column does not exist" error while the account_size half silently
+    // went through in the same update call.
     const updates = {
       account_size: parseFloat(formData.get("account_size") as string),
-      risk_percentage: parseFloat(formData.get("risk_percentage") as string),
+      risk_per_trade: parseFloat(formData.get("risk_per_trade") as string),
     };
 
     const { error } = await supabase
@@ -100,7 +105,7 @@ export const UserSettings = ({ user }: { user: SupabaseUser }) => {
           <CardContent className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="theme">Theme</Label>
-              <Select value={theme} onValueChange={(value: any) => setTheme(value)}>
+              <Select value={theme} onValueChange={(value: Theme) => setTheme(value)}>
                 <SelectTrigger id="theme">
                   <SelectValue placeholder="Select theme" />
                 </SelectTrigger>
@@ -226,14 +231,14 @@ export const UserSettings = ({ user }: { user: SupabaseUser }) => {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="risk_percentage">Risk per Trade (%)</Label>
+                    <Label htmlFor="risk_per_trade">Risk per Trade (%)</Label>
                     <Input
-                      id="risk_percentage"
-                      name="risk_percentage"
+                      id="risk_per_trade"
+                      name="risk_per_trade"
                       type="number"
                       step="0.1"
                       max="100"
-                      defaultValue={setupData.risk_percentage || 2}
+                      defaultValue={setupData.risk_per_trade || 2}
                       required
                       className="bg-background/50"
                     />

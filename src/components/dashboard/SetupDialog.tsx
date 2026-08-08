@@ -9,11 +9,19 @@ import { ExternalLink, Info, CheckCircle2, AlertCircle, Loader2, TrendingUp } fr
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { z } from "zod";
 import { OnboardingAssistant } from "./OnboardingAssistant";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface SetupDialogProps {
   open: boolean;
   onComplete: () => void;
 }
+
+// Payload sent to the encrypt-password edge function, which stashes the
+// password separately and writes the rest straight into user_setup.
+type SetupPayload = Pick<
+  Tables<"user_setup">,
+  "mt5_account" | "mt5_server" | "account_size" | "risk_per_trade" | "max_positions" | "telegram_chat_id" | "admin_approved"
+> & Partial<Pick<Tables<"user_setup">, "broker_name" | "broker_account_id" | "broker_referral_code">>;
 
 interface BrokerOption {
   name: string;
@@ -100,8 +108,10 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
         .single();
 
       if (subscription?.plans) {
-        const type = (subscription.plans as any).plan_type;
-        setPlanType(type === 'free' || type === 'starter' ? 'free' : 'paid');
+        // 'starter' was checked here too, but the plan_type enum only ever
+        // has free/pro/enterprise — that branch was dead.
+        const type = (subscription.plans as Pick<Tables<"plans">, "plan_type">).plan_type;
+        setPlanType(type === 'free' ? 'free' : 'paid');
       }
     };
 
@@ -174,7 +184,7 @@ export const SetupDialog = ({ open, onComplete }: SetupDialogProps) => {
       if (!user) throw new Error("Not authenticated");
 
       // Prepare setup data (without password)
-      const setupData: any = {
+      const setupData: SetupPayload = {
         mt5_account: formData.mt5Account.trim(),
         mt5_server: formData.mt5Server.trim(),
         account_size: parseFloat(formData.accountSize),

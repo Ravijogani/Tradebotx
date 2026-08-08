@@ -46,28 +46,40 @@ export const StrategyMarketplace = ({ currentStrategy, onStrategyImport }: Strat
     setLoading(true);
     setLoadError(false);
     try {
-      // Load shared strategies from database
+      // Load shared strategies from database. custom_strategies.user_id has
+      // no FK to profiles (it isn't even an FK to auth.users — see the
+      // CREATE TABLE), so a nested `profiles:user_id(...)` embed can't be
+      // resolved by PostgREST and the whole query would error. Fetch the
+      // author names separately and merge client-side instead (same pattern
+      // as CustomStrategyApproval.tsx, which hits the same table).
       const { data, error } = await supabase
         .from("custom_strategies")
-        .select(`
-          *,
-          profiles:user_id(full_name, email)
-        `)
+        .select("*")
         .eq("is_approved", true)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
+      const userIds = [...new Set((data || []).map(s => s.user_id))];
+      const profileMap = new Map<string, string>();
+      if (userIds.length > 0) {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", userIds);
+        profileData?.forEach(p => profileMap.set(p.id, p.full_name || "Anonymous"));
+      }
+
       // We only show what's actually true about a shared strategy — there's
       // no tracked download count, rating, or backtest performance for
       // community-shared strategies, so we don't fabricate any.
-      const marketplaceStrategies: MarketplaceStrategy[] = (data || []).map((s: any) => ({
+      const marketplaceStrategies: MarketplaceStrategy[] = (data || []).map((s) => ({
         id: s.id,
         name: s.name,
         description: s.description || "No description provided",
-        author: s.profiles?.full_name || "Anonymous",
+        author: profileMap.get(s.user_id) || "Anonymous",
         author_id: s.user_id,
-        blocks: (s.strategy_config as any)?.blocks || [],
+        blocks: (s.strategy_config as { blocks?: PlacedBlock[] } | null)?.blocks || [],
         created_at: s.created_at,
       }));
 

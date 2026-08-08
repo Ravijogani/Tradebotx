@@ -12,13 +12,14 @@ import {
   Wand2, RefreshCw, Download, User, Calendar
 } from "lucide-react";
 import { format } from "date-fns";
+import type { PlacedBlock } from "@/components/strategy-builder/StrategyBuilder";
 
 interface CustomStrategy {
   id: string;
   user_id: string;
   name: string;
   description: string;
-  strategy_config: any;
+  strategy_config: { blocks?: PlacedBlock[] } | null;
   is_active: boolean;
   is_approved: boolean;
   approved_by: string | null;
@@ -57,7 +58,10 @@ export const CustomStrategyApproval = () => {
 
       if (error) throw error;
 
-      setStrategies(data || []);
+      // strategy_config is a JSONB column (Json in the generated types); the
+      // block-list shape is enforced by the strategy builder that writes it,
+      // not by the DB, so narrow it here rather than typing the whole table.
+      setStrategies((data || []) as CustomStrategy[]);
 
       // Load user profiles
       const userIds = [...new Set((data || []).map(s => s.user_id))];
@@ -346,7 +350,7 @@ export const CustomStrategyApproval = () => {
             <div className="p-3 bg-muted/50 rounded-lg">
               <h4 className="font-medium text-sm mb-2">Strategy Blocks</h4>
               <div className="flex flex-wrap gap-2">
-                {(selectedStrategy?.strategy_config?.blocks || []).map((block: any) => (
+                {(selectedStrategy?.strategy_config?.blocks || []).map((block) => (
                   <Badge key={block.id} variant="outline">
                     {block.block?.name || "Unknown"}
                   </Badge>
