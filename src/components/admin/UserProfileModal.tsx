@@ -14,6 +14,7 @@ import {
   TrendingUp, Activity, Settings, Trash2, Save 
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Tables, Database } from "@/integrations/supabase/types";
 
 interface UserProfileModalProps {
   userId: string | null;
@@ -21,13 +22,33 @@ interface UserProfileModalProps {
   onClose: () => void;
 }
 
+type UserSubscriptionWithPlan = Tables<"user_subscriptions"> & {
+  plans?: Pick<Tables<"plans">, "name" | "plan_type" | "price"> | null;
+};
+type UserStrategyWithStrategy = Tables<"user_strategies"> & {
+  strategies?: Pick<Tables<"strategies">, "name"> | null;
+};
+type UserPerformance = Database["public"]["Functions"]["get_user_performance"]["Returns"][number];
+
+interface UserProfileData extends Omit<Tables<"profiles">, "referral_code"> {
+  user_subscriptions: UserSubscriptionWithPlan[];
+  user_setup: Tables<"user_setup">[];
+  user_roles: Pick<Tables<"user_roles">, "role">[];
+  user_strategies: UserStrategyWithStrategy[];
+  payment_history: Tables<"payment_history">[];
+  // Shadows profiles.referral_code (the user's own code string) with the
+  // joined referral_codes row — that's what loadUserData() actually builds
+  // (the object spread order means the joined value wins), not a typo.
+  referral_code: Tables<"referral_codes"> | null;
+}
+
 export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProps) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [userData, setUserData] = useState<any>(null);
-  const [performance, setPerformance] = useState<any>(null);
-  const [trades, setTrades] = useState<any[]>([]);
-  const [activity, setActivity] = useState<any[]>([]);
+  const [userData, setUserData] = useState<UserProfileData | null>(null);
+  const [performance, setPerformance] = useState<UserPerformance | null>(null);
+  const [trades, setTrades] = useState<Tables<"trades">[]>([]);
+  const [activity, setActivity] = useState<Tables<"admin_activity_logs">[]>([]);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -201,7 +222,12 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
     try {
       setSaving(true);
 
-      const { error } = await supabase.auth.admin.deleteUser(userId!);
+      // supabase.auth.admin.* requires the service-role key, which this
+      // browser client never has — goes through an edge function that
+      // verifies admin access and does the delete server-side instead.
+      const { error } = await supabase.functions.invoke("admin-delete-user", {
+        body: { userId },
+      });
       if (error) throw error;
 
       toast({ title: "Success", description: "User deleted successfully" });
@@ -312,7 +338,7 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
                 <CardContent>
                   <div className="flex gap-2">
                     {userData?.user_roles?.length > 0 ? (
-                      userData.user_roles.map((role: any, idx: number) => (
+                      userData.user_roles.map((role, idx: number) => (
                         <Badge key={idx} variant="secondary">{role.role}</Badge>
                       ))
                     ) : (
@@ -329,7 +355,7 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
                 <CardContent>
                   {userData?.user_strategies?.length > 0 ? (
                     <div className="space-y-2">
-                      {userData.user_strategies.map((strategy: any) => (
+                      {userData.user_strategies.map((strategy) => (
                         <div key={strategy.id} className="flex items-center justify-between p-2 border rounded">
                           <span>{strategy.strategies?.name || "Unknown"}</span>
                           <Badge variant={strategy.is_running ? "default" : "secondary"}>
@@ -563,7 +589,7 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
                     <CardContent>
                       {userData?.payment_history?.length > 0 ? (
                         <div className="space-y-2">
-                          {userData.payment_history.map((payment: any) => (
+                          {userData.payment_history.map((payment) => (
                             <div key={payment.id} className="flex items-center justify-between p-3 border rounded">
                               <div>
                                 <p className="font-medium">${payment.amount} {payment.currency}</p>
