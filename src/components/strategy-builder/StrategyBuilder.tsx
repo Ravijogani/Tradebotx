@@ -96,10 +96,11 @@ export const StrategyBuilder = () => {
         is_approved: s.is_approved
       }));
       setStrategies(loadedStrategies);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading data",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -214,10 +215,11 @@ export const StrategyBuilder = () => {
       toast({ title: "Strategy saved successfully" });
       setShowSaveDialog(false);
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error saving strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

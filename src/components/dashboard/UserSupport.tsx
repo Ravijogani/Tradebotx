@@ -46,10 +46,11 @@ export const UserSupport = () => {
 
       if (error) throw error;
       setTickets(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -67,10 +68,11 @@ export const UserSupport = () => {
 
       if (error) throw error;
       setMessages(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -102,10 +104,11 @@ export const UserSupport = () => {
       setFormData({ subject: "", description: "", priority: "medium" });
       setShowNewTicket(false);
       loadTickets();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -137,10 +140,11 @@ export const UserSupport = () => {
         title: "Message Sent",
         description: "Your message has been sent to support",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

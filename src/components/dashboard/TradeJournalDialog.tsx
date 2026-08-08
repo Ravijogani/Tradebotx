@@ -134,10 +134,11 @@ export const TradeJournalDialog = ({ tradeId, trigger }: TradeJournalDialogProps
         description: "Your trade notes have been saved successfully.",
       });
       setOpen(false);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

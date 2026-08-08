@@ -30,11 +30,12 @@ export const SystemHealthCheck = () => {
           details: botManager?.error || 'Connected successfully',
           url: botManager?.url,
         };
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         healthResults.checks.botManager = {
           name: 'Bot Manager',
           status: 'error',
-          details: error.message,
+          details: message,
         };
       }
 
@@ -46,11 +47,12 @@ export const SystemHealthCheck = () => {
           status: error ? 'unhealthy' : 'healthy',
           details: error ? error.message : 'Connected successfully',
         };
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         healthResults.checks.database = {
           name: 'Database',
           status: 'error',
-          details: error.message,
+          details: message,
         };
       }
 
@@ -66,11 +68,12 @@ export const SystemHealthCheck = () => {
           status: data && data.length > 0 ? 'healthy' : 'warning',
           details: data ? `${data.length} strategies available` : 'No strategies configured',
         };
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         healthResults.checks.strategies = {
           name: 'Active Strategies',
           status: 'error',
-          details: error.message,
+          details: message,
         };
       }
 
@@ -87,11 +90,12 @@ export const SystemHealthCheck = () => {
           details: data ? `${data.length} bots currently running` : 'No bots running',
           count: data?.length || 0,
         };
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         healthResults.checks.runningBots = {
           name: 'Running Bots',
           status: 'error',
-          details: error.message,
+          details: message,
         };
       }
 
@@ -102,10 +106,11 @@ export const SystemHealthCheck = () => {
         description: "System health status updated",
       });
 
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Health Check Failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

@@ -83,7 +83,7 @@ export const SessionTimeoutWarning = ({
         });
         onSessionRefresh?.();
       }
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Session Refresh Failed",
         description: "Please log in again.",

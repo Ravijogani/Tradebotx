@@ -64,10 +64,11 @@ export const InvoiceBuilder = () => {
 
       setInvoices(invoicesRes.data || []);
       setUsers(usersRes.data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading data",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -207,10 +208,11 @@ export const InvoiceBuilder = () => {
       setShowCreateDialog(false);
       resetForm();
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -253,10 +255,11 @@ export const InvoiceBuilder = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -291,10 +294,11 @@ export const InvoiceBuilder = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

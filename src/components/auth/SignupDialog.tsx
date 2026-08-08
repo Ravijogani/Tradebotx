@@ -117,7 +117,8 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
         title: "Verification code sent!",
         description: "Please check your email for the OTP",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       if (error instanceof z.ZodError) {
         const fieldErrors: Record<string, string> = {};
         error.issues.forEach((err) => {
@@ -134,7 +135,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
       } else {
         toast({
           title: "Error",
-          description: error.message,
+          description: message,
           variant: "destructive",
         });
       }

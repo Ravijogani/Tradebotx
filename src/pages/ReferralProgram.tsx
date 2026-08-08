@@ -33,10 +33,11 @@ const ReferralProgram = () => {
       }
 
       await loadReferralData(session.user.id);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -97,10 +98,11 @@ const ReferralProgram = () => {
         title: "Success",
         description: "Your referral code has been generated!",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

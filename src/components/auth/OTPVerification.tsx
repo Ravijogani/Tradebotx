@@ -65,10 +65,11 @@ export const OTPVerification = ({ open = true, onOpenChange, email, otpType, onV
       });
 
       onVerified();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Verification failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -100,10 +101,11 @@ export const OTPVerification = ({ open = true, onOpenChange, email, otpType, onV
         title: "OTP resent!",
         description: "Please check your email",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

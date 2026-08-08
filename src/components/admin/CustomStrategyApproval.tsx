@@ -73,10 +73,11 @@ export const CustomStrategyApproval = () => {
         });
         setProfiles(profileMap);
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading strategies",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -98,10 +99,11 @@ export const CustomStrategyApproval = () => {
 
       setGeneratedCode(data.code);
       toast({ title: "Code generated successfully" });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error generating code",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -121,10 +123,11 @@ export const CustomStrategyApproval = () => {
       toast({ title: "Strategy approved successfully" });
       loadStrategies();
       setShowCodeDialog(false);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error approving strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -143,10 +146,11 @@ export const CustomStrategyApproval = () => {
 
       toast({ title: "Strategy rejected" });
       loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error rejecting strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     }

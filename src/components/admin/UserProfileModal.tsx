@@ -142,10 +142,11 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
 
       if (!activityError) setActivity(activityData || []);
 
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -180,10 +181,11 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
 
       toast({ title: "Success", description: "User profile updated" });
       loadUserData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -204,10 +206,11 @@ export const UserProfileModal = ({ userId, open, onClose }: UserProfileModalProp
 
       toast({ title: "Success", description: "User deleted successfully" });
       onClose();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

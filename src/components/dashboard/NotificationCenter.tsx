@@ -57,7 +57,7 @@ export const NotificationCenter = () => {
       if (error) throw error;
       setNotifications(data || []);
       setUnreadCount(data?.filter((n: any) => !n.read).length || 0);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error loading notifications:", error);
     }
   };
@@ -75,7 +75,7 @@ export const NotificationCenter = () => {
         prev.map(n => n.id === id ? { ...n, read: true } : n)
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error marking as read:", error);
     }
   };
@@ -95,7 +95,7 @@ export const NotificationCenter = () => {
         prev.map(n => ({ ...n, read: true }))
       );
       setUnreadCount(0);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error marking all as read:", error);
     }
   };
@@ -114,7 +114,7 @@ export const NotificationCenter = () => {
         const notification = notifications.find(n => n.id === id);
         return notification && !notification.read ? prev - 1 : prev;
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error deleting notification:", error);
     }
   };

@@ -61,10 +61,11 @@ export const MultiAccountManager = () => {
 
       if (error) throw error;
       setAccounts(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading accounts",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -110,10 +111,11 @@ export const MultiAccountManager = () => {
         is_primary: false
       });
       loadAccounts();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error adding account",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -133,10 +135,11 @@ export const MultiAccountManager = () => {
       if (error) throw error;
       toast({ title: "Account deleted" });
       loadAccounts();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error deleting account",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     }
@@ -161,10 +164,11 @@ export const MultiAccountManager = () => {
 
       toast({ title: "Primary account updated" });
       loadAccounts();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error updating primary account",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     }
@@ -179,10 +183,11 @@ export const MultiAccountManager = () => {
 
       if (error) throw error;
       loadAccounts();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error updating account",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     }

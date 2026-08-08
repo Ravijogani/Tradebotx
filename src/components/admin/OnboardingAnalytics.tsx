@@ -132,7 +132,7 @@ export function OnboardingAnalytics() {
         conversionRate,
       });
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error loading onboarding stats:', error);
       toast({
         title: "Error",
@@ -162,7 +162,7 @@ export function OnboardingAnalytics() {
       // Reload stats
       await loadStats();
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error triggering nurture:', error);
       toast({
         title: "Error",

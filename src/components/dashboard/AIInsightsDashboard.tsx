@@ -53,7 +53,7 @@ export const AIInsightsDashboard = () => {
 
       if (error) throw error;
       setInsights(data || []);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error loading insights:', error);
       toast({
         title: "Error",
@@ -85,11 +85,12 @@ export const AIInsightsDashboard = () => {
       });
 
       await loadInsights();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('Error generating insights:', error);
       toast({
         title: "Analysis Failed",
-        description: error.message || "Failed to generate AI insights",
+        description: message || "Failed to generate AI insights",
         variant: "destructive",
       });
     } finally {
@@ -113,7 +114,7 @@ export const AIInsightsDashboard = () => {
       });
 
       await loadInsights();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating insight:', error);
       toast({
         title: "Error",

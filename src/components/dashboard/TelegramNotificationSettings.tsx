@@ -57,10 +57,11 @@ export const TelegramNotificationSettings = ({ userId }: TelegramNotificationSet
           ? "Telegram notifications are now enabled"
           : "Telegram notifications are disabled",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -104,10 +105,11 @@ export const TelegramNotificationSettings = ({ userId }: TelegramNotificationSet
         title: "Test notification sent!",
         description: "Check your Telegram to confirm receipt",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Test failed",
-        description: error.message || "Failed to send test notification",
+        description: message || "Failed to send test notification",
         variant: "destructive",
       });
     } finally {

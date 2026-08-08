@@ -90,11 +90,12 @@ export const AIStrategyAssistant = ({ availableBlocks, onStrategyGenerated }: AI
           variant: "destructive"
         });
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("AI Strategy error:", error);
       toast({
         title: "Failed to generate strategy",
-        description: error.message || "Please try again",
+        description: message || "Please try again",
         variant: "destructive"
       });
     } finally {

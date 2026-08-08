@@ -53,10 +53,11 @@ export const EmailTemplatesManager = () => {
 
       if (error) throw error;
       setTemplates(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -87,7 +88,8 @@ export const EmailTemplatesManager = () => {
 
       resetForm();
       loadTemplates();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       if (error instanceof z.ZodError) {
         toast({
           title: "Validation Error",
@@ -97,7 +99,7 @@ export const EmailTemplatesManager = () => {
       } else {
         toast({
           title: "Error",
-          description: error.message,
+          description: message,
           variant: "destructive",
         });
       }
@@ -116,10 +118,11 @@ export const EmailTemplatesManager = () => {
       if (error) throw error;
       toast({ title: "Success", description: "Template deleted" });
       loadTemplates();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -145,10 +148,11 @@ export const EmailTemplatesManager = () => {
       toast({ title: "Success", description: "Email sent successfully" });
       setSendDialogOpen(false);
       setSendData({ to: "", customSubject: "", customBody: "" });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

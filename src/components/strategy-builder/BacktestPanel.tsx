@@ -110,10 +110,11 @@ export const BacktestPanel = ({ blocks, strategyName }: BacktestPanelProps) => {
       });
 
       toast({ title: "Backtest completed" });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Backtest failed",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

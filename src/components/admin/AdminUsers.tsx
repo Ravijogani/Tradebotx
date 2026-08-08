@@ -75,10 +75,11 @@ export const AdminUsers = () => {
       }));
 
       setUsers(usersWithData || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading users",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -139,10 +140,11 @@ export const AdminUsers = () => {
       setSelectedUser(null);
       setApprovalNotes("");
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -188,10 +190,11 @@ export const AdminUsers = () => {
 
       setSelectedUsers([]);
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -241,10 +244,11 @@ export const AdminUsers = () => {
       setBulkEmailSubject("");
       setBulkEmailMessage("");
       setSelectedUsers([]);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -326,10 +330,11 @@ export const AdminUsers = () => {
 
       setUserToDelete(null);
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error deleting user",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -363,10 +368,11 @@ export const AdminUsers = () => {
 
       setSelectedUsers([]);
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

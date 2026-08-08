@@ -70,10 +70,11 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
 
             onOpenChange(false);
             window.location.reload();
-          } catch (error: any) {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             toast({
               title: "Payment Verification Failed",
-              description: error.message,
+              description: message,
               variant: "destructive",
             });
           }
@@ -88,10 +89,11 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
 
       const razorpay = new window.Razorpay(options);
       razorpay.open();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

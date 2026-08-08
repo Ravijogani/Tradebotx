@@ -98,10 +98,11 @@ export const PlatformSettings = () => {
           }
         });
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading settings",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -170,10 +171,11 @@ export const PlatformSettings = () => {
       });
 
       loadSettings();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

@@ -88,11 +88,12 @@ export const SupportTickets = () => {
       if (error) throw error;
       setTickets(data || []);
       setFilteredTickets(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Error loading tickets:", error);
       toast({
         title: "Error loading tickets",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -110,10 +111,11 @@ export const SupportTickets = () => {
 
       if (error) throw error;
       setMessages(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading messages",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -156,10 +158,11 @@ export const SupportTickets = () => {
       setCategory("general");
       setPriority("medium");
       loadTickets();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -185,10 +188,11 @@ export const SupportTickets = () => {
 
       setNewMessage("");
       loadMessages(selectedTicket.id);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

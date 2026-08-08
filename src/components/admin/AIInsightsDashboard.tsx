@@ -33,11 +33,12 @@ export const AIInsightsDashboard = () => {
         title: "AI Insights Updated",
         description: "Fresh insights generated successfully",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('Error fetching insights:', error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

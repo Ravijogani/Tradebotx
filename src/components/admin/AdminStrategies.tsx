@@ -56,10 +56,11 @@ export const AdminStrategies = () => {
 
       if (error) throw error;
       setStrategies(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading strategies",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -192,10 +193,11 @@ export const AdminStrategies = () => {
 
       resetForm();
       loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -239,10 +241,11 @@ export const AdminStrategies = () => {
 
       toast({ title: "Success", description: "Strategy deleted successfully" });
       loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -262,10 +265,11 @@ export const AdminStrategies = () => {
         description: `Strategy ${!strategy.is_active ? "activated" : "deactivated"}`,
       });
       loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

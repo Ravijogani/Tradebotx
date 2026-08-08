@@ -44,10 +44,11 @@ export const SubscriptionManager = () => {
 
       if (plansError) throw plansError;
       setAllPlans(plans || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

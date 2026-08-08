@@ -93,10 +93,11 @@ const Admin = () => {
         title: "OTP Sent",
         description: "Please check your email for the verification code",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Login Failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -119,10 +120,11 @@ const Admin = () => {
         description: "Login successful",
       });
       navigate("/admin/dashboard");
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Login Failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

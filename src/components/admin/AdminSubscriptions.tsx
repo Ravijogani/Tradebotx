@@ -59,10 +59,11 @@ export const AdminSubscriptions = () => {
         trial,
         revenue,
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading subscriptions",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

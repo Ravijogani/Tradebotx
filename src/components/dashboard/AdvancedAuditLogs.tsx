@@ -78,10 +78,11 @@ export const AdvancedAuditLogs = () => {
 
       if (error) throw error;
       setLogs(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading audit logs",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

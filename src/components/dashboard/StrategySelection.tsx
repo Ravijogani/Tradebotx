@@ -127,10 +127,11 @@ export const StrategySelection = () => {
 
       if (userStrategiesError) throw userStrategiesError;
       setUserStrategies(userStrategiesData || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading strategies",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -198,11 +199,12 @@ export const StrategySelection = () => {
 
       // Reload to get actual state
       await loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Start strategy error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to start strategy",
+        description: message || "Failed to start strategy",
         variant: "destructive",
       });
       await loadData();
@@ -254,11 +256,12 @@ export const StrategySelection = () => {
 
       // Reload to get actual state
       await loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Stop strategy error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to stop strategy",
+        description: message || "Failed to stop strategy",
         variant: "destructive",
       });
       await loadData();

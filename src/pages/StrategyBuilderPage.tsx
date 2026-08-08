@@ -52,10 +52,11 @@ const StrategyBuilderPage = () => {
       if (userPlanType === "enterprise" && (subscription?.status === "active" || subscription?.status === "trial")) {
         setHasAccess(true);
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error checking access",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
