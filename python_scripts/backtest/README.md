@@ -15,17 +15,19 @@ believing it to be "the deterministic SMC entry engine" (that's its own
 docstring's description); `EntryEngine` is in fact never instantiated
 anywhere in the file.
 
-**As of the decision to run the live cascade on only three setups**
-(Shaakuni SSM, Swappy 3C, AOX), everything below except those three is
-gated off by default via `config.ENABLE_STRATEGY_*` flags in
-`AITradingConfig` — the code paths still exist (flip a flag to
-re-enable), but they don't fire in the current configuration.
+**As of the decision to run the live cascade on only four setups**
+(Shaakuni SSM, Swappy 3C, AOX, and the 9/25/50/200 EMA scalp), everything
+below except those four is gated off by default via
+`config.ENABLE_STRATEGY_*` flags in `AITradingConfig` — the code paths
+still exist (flip a flag to re-enable), but they don't fire in the
+current configuration.
 
 | Strategy | Reachable via a call site | Enabled by default today | Notes |
 |---|---|---|---|
 | `SHAAKUNI_SSM` | Yes | **Yes** | Places a LIMIT order, not a market order |
 | `SWAPPY_3C` | Yes | **Yes** | Now matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below) |
 | AOX (layered execution) | Yes | **Yes** | Not backtestable here — see "not wired" below |
+| EMA scalp cross ("STRATEGY A") | Yes | **Yes** | Not backtestable here — see "not wired" below |
 | `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy |
 | `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy |
 | `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" |
@@ -69,6 +71,45 @@ Two more live strategies exist but are **not wired here on purpose**:
   order-placement, or a different backtest approach entirely (capturing
   order *intent* instead of this engine's simulate-fills-against-
   subsequent-bars model). Not faked here.
+
+### EMA scalp (9/25/50/200) -- what changed and what's still open
+
+Per the 9/15/50/200 EMA framework spec, two things were added/enabled:
+
+- **Enabled by default** (`ENABLE_STRATEGY_EMA_SCALP = True`). The existing
+  implementation already matched the spec reasonably well before this: a
+  9/25 EMA cross (the spec explicitly allows 25 as a documented variant of
+  15), a hard 200 EMA macro-trend gate, and the 50 EMA used as the primary
+  TP target (via `ema50_tp` -> `get_dynamic_trade_params`'s
+  `ema50_tp_hint`, already correctly wired -- verified before touching
+  anything, not new).
+- **Added: the "Distance Rule"** — the spec's no-trade-zone filter for when
+  the 9/25 cluster and 50 EMA are bunched/braided (ranging market, cross
+  is noise not momentum). Implemented as an ATR-relative gap requirement
+  (`config.EMA_DISTANCE_RULE_ATR_MULT`, starting value 0.5x M5 ATR) rather
+  than the spec's fixed "~15 pips", since a fixed pip count doesn't
+  translate across Gold/BTC/forex — same reasoning already used elsewhere
+  in this file (`strategy_advanced_smc`'s `min_ob_size`). Not empirically
+  validated; tune via this harness once EMA scalp is backtestable (see
+  below).
+
+**Deliberately NOT implemented:** the spec's core execution protocol is a
+limit entry at the 50% retracement of the trigger candle, not a market
+fill. The current code enters at the live market price via the shared
+`place_ai_trade` pipeline — verified that `entry_price` in the setup dict
+is informational only (the actual fill price comes from a fresh
+bid/ask tick at execution time), so simply changing that value would not
+have made this a real limit order. Implementing the retracement entry
+correctly needs an actual order-type branch (`TRADE_ACTION_DEAL` vs
+`TRADE_ACTION_PENDING`) inside the shared execution function used by every
+other strategy's market orders too — a change to core, heavily-shared
+execution code that this sandbox cannot verify end-to-end (no Windows, no
+MT5 terminal, no way to confirm a real order got placed correctly).
+Flagged as a follow-up rather than shipped blind. The spec's remaining
+pieces — the "reverse close" invalidation rule, top-down Daily-candle
+bias (needs a D1 data feed the live pipeline doesn't currently fetch),
+and triple-layered position scaling (1:1.5R / 50 EMA / 25-EMA-trailed) —
+are bigger, separate subsystems, not included here either.
 
 Every report the harness prints is labeled `[LIVE]` or `[NOT LIVE — not
 reachable by the real trading loop today]` so this distinction is never

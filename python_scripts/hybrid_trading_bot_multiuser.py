@@ -745,17 +745,31 @@ class AITradingConfig:
     ENABLE_CONFLUENCE_ENGINE: bool = True
 
     # STRATEGY SELECTION -- per explicit decision, the live cascade only
-    # trades the three documented institutional setups (Shaakuni SSM,
-    # Swappy 3C, AOX layered execution). Those three are NOT gated by a
-    # flag here -- they were never conditionally skippable in the cascade
-    # and stay that way. These four flags disable everything else that
-    # was live before this decision: STRATEGY A (EMA scalp cross), STRATEGY
-    # C (SMC FVG retest), and the two generic fallbacks. Set any of these
-    # back to True to re-enable that strategy in the live cascade.
-    ENABLE_STRATEGY_EMA_SCALP: bool = False
+    # trades four documented setups: Shaakuni SSM, Swappy 3C, AOX layered
+    # execution, and the 9/25/50/200 EMA scalp. The first three are NOT
+    # gated by a flag here -- they were never conditionally skippable in
+    # the cascade and stay that way. EMA scalp has its own flag (below,
+    # now enabled) since it was previously disabled pending this decision.
+    # These three flags disable everything NOT in the four-setup list:
+    # STRATEGY C (SMC FVG retest) and the two generic fallbacks. Set any
+    # of these back to True to re-enable that strategy in the live cascade.
     ENABLE_STRATEGY_SMC_FVG_RETEST: bool = False
     ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK: bool = False
     ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK: bool = False
+
+    # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
+    ENABLE_STRATEGY_EMA_SCALP: bool = True
+    # "Distance Rule" from the 9/15/50/200 EMA framework spec: the 9/25
+    # cluster must be meaningfully separated from the 50 EMA before a cross
+    # is considered tradeable -- when they're bunched/braided (ranging
+    # market), a cross is noise, not momentum, and is far more likely to
+    # immediately reverse into the stop. Expressed as an ATR multiple
+    # rather than the spec's fixed "~15 pips" figure, since a fixed pip
+    # count doesn't translate sensibly across Gold/BTC/forex (see the
+    # identical reasoning already in strategy_advanced_smc's min_ob_size).
+    # Starting value, not empirically validated -- tune via the backtest
+    # harness (python_scripts/backtest/).
+    EMA_DISTANCE_RULE_ATR_MULT: float = 0.5
 
     # AI Analysis Intervals
     AI_GLOBAL_CONTEXT_INTERVAL: int = 3600
@@ -8925,6 +8939,15 @@ def ai_trading_session():
                             logger.debug(f'[EMA 200 GATE] {symbol}: {_trade_direction} blocked -- '
                                          f'price={_cur_price:.4f} {"below" if _trade_direction=="BUY" else "above"} '
                                          f'200 EMA={_e200:.4f}')
+                            state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                        # DISTANCE RULE (doc requirement): 9/25 cluster must be
+                        # meaningfully separated from the 50 EMA. Bunched/braided
+                        # EMAs = ranging market = a cross here is noise, not
+                        # momentum, and disproportionately reverses into the stop.
+                        elif abs(_e25 - _e50) <= (_atr_m5 * config.EMA_DISTANCE_RULE_ATR_MULT):
+                            logger.debug(f'[EMA DISTANCE] {symbol}: EMAs bunched '
+                                         f'(25={_e25:.4f} 50={_e50:.4f} gap={abs(_e25-_e50):.4f} '
+                                         f'< {_atr_m5*config.EMA_DISTANCE_RULE_ATR_MULT:.4f}) -- ranging, skip')
                             state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                         else:
                             # PATTERN PRE-FILTER (doc requirement):
