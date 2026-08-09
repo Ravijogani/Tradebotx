@@ -13,9 +13,12 @@ import autoTable from "jspdf-autotable";
 import SymbolPerformanceChart from "@/components/dashboard/SymbolPerformanceChart";
 import RiskMetricsCard from "@/components/dashboard/RiskMetricsCard";
 import WithdrawalMilestones from "@/components/dashboard/WithdrawalMilestones";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Trade = Tables<"trades">;
 
 const PLReports = () => {
-  const [trades, setTrades] = useState<any[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("30");
   const [stats, setStats] = useState({
@@ -41,10 +44,11 @@ const PLReports = () => {
       }
 
       await loadTrades(session.user.id);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -69,7 +73,7 @@ const PLReports = () => {
     calculateStats(data || []);
   };
 
-  const calculateStats = (tradesData: any[]) => {
+  const calculateStats = (tradesData: Trade[]) => {
     const completedTrades = tradesData.filter(t => t.status === 'closed' && t.profit_loss !== null);
     
     const totalPL = completedTrades.reduce((sum, t) => sum + Number(t.profit_loss || 0), 0);
@@ -147,15 +151,18 @@ const PLReports = () => {
     ]);
     
     autoTable(doc, {
-      startY: (doc as any).lastAutoTable.finalY + 15,
+      // jspdf-autotable attaches this at runtime but doesn't ship types for
+      // it in this version — narrower than a blanket any so a typo here
+      // would still be caught.
+      startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 15,
       head: [["Date", "Symbol", "Type", "Entry", "Exit", "P&L"]],
       body: tradesData,
       theme: "striped",
       headStyles: { fillColor: [59, 130, 246] },
     });
-    
+
     // Add footer
-    const pageCount = (doc as any).internal.getNumberOfPages();
+    const pageCount = doc.getNumberOfPages();
     doc.setFontSize(8);
     doc.setTextColor(128, 128, 128);
     for (let i = 1; i <= pageCount; i++) {

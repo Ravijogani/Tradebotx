@@ -19,13 +19,22 @@ import {
   RefreshCw
 } from "lucide-react";
 
+// ai_insights.data is JSONB — this is the shape the AI analysis edge
+// function writes per insight_type (trade_recommendation / sentiment_analysis).
+interface InsightData {
+  entry?: string;
+  stopLoss?: string;
+  takeProfit?: string;
+  factors?: string[];
+}
+
 interface AIInsight {
   id: string;
   insight_type: string;
   title: string;
   description: string;
   confidence_score: number;
-  data: any;
+  data: InsightData;
   status: string;
   created_at: string;
   expires_at?: string;
@@ -52,8 +61,10 @@ export const AIInsightsDashboard = () => {
         .limit(50);
 
       if (error) throw error;
-      setInsights(data || []);
-    } catch (error: any) {
+      // data is JSONB (Json in the generated types); its per-insight-type
+      // shape is defined by the AI analysis edge function that writes it.
+      setInsights((data || []) as AIInsight[]);
+    } catch (error) {
       console.error('Error loading insights:', error);
       toast({
         title: "Error",
@@ -85,11 +96,12 @@ export const AIInsightsDashboard = () => {
       });
 
       await loadInsights();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('Error generating insights:', error);
       toast({
         title: "Analysis Failed",
-        description: error.message || "Failed to generate AI insights",
+        description: message || "Failed to generate AI insights",
         variant: "destructive",
       });
     } finally {
@@ -113,7 +125,7 @@ export const AIInsightsDashboard = () => {
       });
 
       await loadInsights();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating insight:', error);
       toast({
         title: "Error",
@@ -345,7 +357,14 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-const InsightCard = ({ insight, getInsightIcon, getConfidenceColor, updateInsightStatus }: any) => (
+interface InsightCardProps {
+  insight: AIInsight;
+  getInsightIcon: (type: string) => JSX.Element;
+  getConfidenceColor: (score: number) => string;
+  updateInsightStatus: (insightId: string, newStatus: string) => void;
+}
+
+const InsightCard = ({ insight, getInsightIcon, getConfidenceColor, updateInsightStatus }: InsightCardProps) => (
   <Card className="hover:shadow-lg transition-all duration-300">
     <CardHeader className="p-4 sm:p-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">

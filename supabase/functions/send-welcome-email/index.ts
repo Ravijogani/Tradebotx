@@ -5,10 +5,7 @@ import { handleError } from "../_shared/error-handler.ts";
 
 import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -21,7 +18,7 @@ serve(async (req) => {
       const authUser = await getAuthUser(req);
       if (!authUser) return unauthorized(corsHeaders);
       const body = await req.clone().json().catch(() => ({}));
-      const targetEmail = (body as any).to;
+      const targetEmail = body.to;
       if (typeof targetEmail === 'string' && targetEmail.toLowerCase() !== (authUser.email || '').toLowerCase()) {
         return forbidden(corsHeaders);
       }
@@ -163,7 +160,7 @@ serve(async (req) => {
         console.error('Failed to send admin alert (non-blocking):', adminAlertError);
       }
       
-    } catch (emailError: any) {
+    } catch (emailError) {
       console.error('SMTP send error:', emailError);
       throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
     }
@@ -178,7 +175,7 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

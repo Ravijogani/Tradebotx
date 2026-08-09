@@ -27,12 +27,13 @@ echo OK: In correct directory
 echo.
 
 echo [3/8] Checking required files...
+if not exist "bot_manager_core.py" echo MISSING: bot_manager_core.py
 if not exist "bot_wrapper.py" echo MISSING: bot_wrapper.py
 if not exist "hybrid_trading_bot_multiuser.py" echo MISSING: hybrid_trading_bot_multiuser.py
 if not exist "requirements.txt" echo MISSING: requirements.txt
 if not exist "run_bot_manager.bat" echo MISSING: run_bot_manager.bat
 
-if exist "bot_manager_http_windows.py" if exist "bot_wrapper.py" if exist "hybrid_trading_bot_multiuser.py" (
+if exist "bot_manager_core.py" if exist "bot_manager_http_windows.py" if exist "hybrid_trading_bot_multiuser.py" (
     echo OK: All required Python files present
 ) else (
     echo ERROR: Some required files are missing!

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { TrendingUp, Download, ExternalLink, BarChart3, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import type { ValueType } from "recharts/types/component/DefaultTooltipContent";
 
 const backtestingReports = [
   {
@@ -39,8 +40,14 @@ const liveMetrics = [
   { label: "Avg Position Duration", value: "4.2h", trend: "neutral" }
 ];
 
+interface EquityPoint {
+  time: string;
+  equity: number;
+  balance: number;
+}
+
 export const LivePerformance = () => {
-  const [equityData, setEquityData] = useState<any[]>([]);
+  const [equityData, setEquityData] = useState<EquityPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -215,7 +222,7 @@ export const LivePerformance = () => {
                           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                         }}
                         labelStyle={{ color: 'hsl(var(--foreground))' }}
-                        formatter={(value: any) => [`$${Number(value).toFixed(2)}`, '']}
+                        formatter={(value: ValueType) => [`$${Number(value).toFixed(2)}`, '']}
                       />
                       <Line 
                         type="monotone" 

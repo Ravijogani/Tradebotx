@@ -44,13 +44,16 @@ parser = argparse.ArgumentParser(description='Multi-user Hybrid AI Intraday Trad
 parser.add_argument('--user-id', type=str, required=True, help='User ID')
 parser.add_argument('--strategy-id', type=str, required=True, help='Strategy ID')
 parser.add_argument('--mt5-login', type=int, required=True, help='MT5 Login')
-parser.add_argument('--mt5-password', type=str, required=True, help='MT5 Password')
+# Optional on the CLI on purpose — the bot manager passes these via
+# environment variables instead of argv so they don't show up in
+# `ps`/Task Manager/WMI process-listing output.
+parser.add_argument('--mt5-password', type=str, required=False, default=None, help='MT5 Password (prefer MT5_PASSWORD env var)')
 parser.add_argument('--mt5-server', type=str, required=True, help='MT5 Server')
 parser.add_argument('--mt5-path', type=str, required=False, default=None, help='Path to user-specific MT5 terminal64.exe')
 parser.add_argument('--telegram-chat-id', type=str, required=False, help='Telegram Chat ID')
-parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token')
+parser.add_argument('--telegram-bot-token', type=str, required=False, help='Telegram Bot Token (prefer TELEGRAM_BOT_TOKEN env var)')
 parser.add_argument('--supabase-url', type=str, required=True, help='Supabase URL')
-parser.add_argument('--supabase-key', type=str, required=True, help='Supabase Service Key')
+parser.add_argument('--supabase-key', type=str, required=False, default=None, help='Supabase Service Key (prefer SUPABASE_SERVICE_KEY env var)')
 parser.add_argument('--gemini-api-key', type=str, required=False, help='Gemini API Key')
 
 args = parser.parse_args()
@@ -59,17 +62,58 @@ args = parser.parse_args()
 USER_ID = args.user_id
 STRATEGY_ID = args.strategy_id
 TELEGRAM_CHAT_ID = args.telegram_chat_id
-TELEGRAM_BOT_TOKEN = args.telegram_bot_token
+MT5_PASSWORD_RESOLVED = args.mt5_password or os.getenv("MT5_PASSWORD", "")
+SUPABASE_KEY_RESOLVED = args.supabase_key or os.getenv("SUPABASE_SERVICE_KEY", "")
+TELEGRAM_BOT_TOKEN = args.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
 MT5_TERMINAL_PATH = args.mt5_path  # Per-user isolated MT5 instance
 
-# MAGIC NUMBER - Deterministic per user+strategy (no more hardcoded values)
+if not MT5_PASSWORD_RESOLVED:
+    print("[FATAL] MT5 password not provided (neither --mt5-password nor MT5_PASSWORD env var)")
+    sys.exit(1)
+if not SUPABASE_KEY_RESOLVED:
+    print("[FATAL] Supabase service key not provided (neither --supabase-key nor SUPABASE_SERVICE_KEY env var)")
+    sys.exit(1)
+
+# DATA DIRECTORY (for the magic-number collision registry below)
 import hashlib
-MAGIC_NUMBER = int(hashlib.md5(f"{USER_ID}_{STRATEGY_ID}".encode()).hexdigest()[:6], 16) % 900000 + 100000
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data", USER_ID)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# MAGIC NUMBER - Deterministic per user+strategy, with the same collision
+# guard as hybrid_trading_bot_multiuser.py: MT5 only needs this unique
+# within one account, so a small per-user registry (not a global one) is
+# enough to stop two strategies for the same user from ever managing each
+# other's positions via a hash collision.
+def _resolve_magic_number(user_id: str, strategy_id: str, data_dir: str) -> int:
+    base = int(hashlib.md5(f"{user_id}_{strategy_id}".encode()).hexdigest(), 16) % 2_000_000_000 + 10_000_000
+    registry_path = os.path.join(data_dir, "magic_numbers.json")
+    try:
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            registry = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        registry = {}
+    if strategy_id in registry:
+        return registry[strategy_id]
+    taken = set(registry.values())
+    candidate = base
+    while candidate in taken:
+        candidate += 1
+    registry[strategy_id] = candidate
+    try:
+        with open(registry_path, 'w', encoding='utf-8') as f:
+            json.dump(registry, f)
+    except OSError as e:
+        print(f"[MAGIC] WARNING: could not persist magic number registry: {e}")
+    return candidate
+
+
+MAGIC_NUMBER = _resolve_magic_number(USER_ID, STRATEGY_ID, DATA_DIR)
 print(f"[MAGIC] Intraday Magic number: {MAGIC_NUMBER} (user={USER_ID[:8]}, strategy={STRATEGY_ID[:8]})")
 print(f"[MT5] Terminal path: {MT5_TERMINAL_PATH or 'default (system)'}")
 
 # Initialize Supabase client (Move this up too)
-supabase: Client = create_client(args.supabase_url, args.supabase_key)
+supabase: Client = create_client(args.supabase_url, SUPABASE_KEY_RESOLVED)
 
 # =============================================================================
 # [ADJUST] INTRADAY CONFIGURATION - EDIT YOUR CREDENTIALS HERE
@@ -81,7 +125,7 @@ class IntradayTradingConfig:
     
     # [SECURE] MT5 CONNECTION - EDIT THESE WITH YOUR CREDENTIALS!
     MT5_LOGIN: int = args.mt5_login  # [WARNING] REQUIRED: Replace with your MT5 login
-    MT5_PASSWORD: str = args.mt5_password  # [WARNING] REQUIRED: Replace with your MT5 password
+    MT5_PASSWORD: str = MT5_PASSWORD_RESOLVED  # [WARNING] REQUIRED: Replace with your MT5 password
     MT5_SERVER: str = args.mt5_server  
     
     # [BOT] AI API CONFIGURATION
@@ -3950,11 +3994,12 @@ def intraday_trading_session():
                 h_now = datetime.now(timezone.utc).hour
                 bias_str = " ".join(f"{s.replace('USDm','')[:3]}:{v.replace('_ONLY','')[:4]}"
                                     for s,v in state.approved_bias.items()) if state.approved_bias else "none"
+                active_macro_window = get_active_macro_window() or "WAIT"
                 logger.info(
                     f"[STATUS] Eq:${account_info.equity:.2f} P&L:${state.daily_pnl:.2f} "
                     f"Trades:{state.daily_trades}/{config.MAX_DAILY_TRADES} "
                     f"Session:{get_current_session()} KillZone:{'YES' if in_kz else 'NO'} "
-                    f"Bias:[{bias_str}] Risk:{config.BASE_RISK_PERCENT:.1f}% Macro:{get_active_macro_window() or "WAIT"}"
+                    f"Bias:[{bias_str}] Risk:{config.BASE_RISK_PERCENT:.1f}% Macro:{active_macro_window}"
                 )
             
             # --- HEARTBEAT SYNC ---

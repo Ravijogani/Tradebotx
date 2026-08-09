@@ -8,12 +8,25 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Activity, AlertCircle, CheckCircle, XCircle, Power } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Tables } from "@/integrations/supabase/types";
+
+type RunningBot = Tables<"user_strategies"> & {
+  strategies?: Pick<Tables<"strategies">, "id" | "name" | "description"> | null;
+  profiles?: Pick<Tables<"profiles">, "id" | "full_name" | "email"> | null;
+};
+interface BotLog {
+  id: string;
+  message: string;
+  log_level: string;
+  created_at: string;
+  metadata: Record<string, unknown> | null;
+}
 
 export const BotMonitoringDashboard = () => {
-  const [runningBots, setRunningBots] = useState<any[]>([]);
-  const [botLogs, setBotLogs] = useState<any[]>([]);
+  const [runningBots, setRunningBots] = useState<RunningBot[]>([]);
+  const [botLogs, setBotLogs] = useState<BotLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBot, setSelectedBot] = useState<any>(null);
+  const [selectedBot, setSelectedBot] = useState<RunningBot | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -37,12 +50,24 @@ export const BotMonitoringDashboard = () => {
       )
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'bot_logs' },
+        // bot_audit_logs, not "bot_logs" — that table doesn't exist (see the
+        // same note in loadLogs below), so this listener never fired anything.
+        { event: 'INSERT', schema: 'public', table: 'bot_audit_logs' },
         (payload) => {
-          if (selectedBot && 
-              payload.new.user_id === selectedBot.user_id && 
-              payload.new.strategy_id === selectedBot.strategy_id) {
-            setBotLogs(prev => [payload.new, ...prev]);
+          const newLog = payload.new as Tables<"bot_audit_logs">;
+          if (selectedBot &&
+              newLog.user_id === selectedBot.user_id &&
+              newLog.strategy_id === selectedBot.strategy_id) {
+            const metadata = typeof newLog.metadata === 'object' && newLog.metadata !== null
+              ? newLog.metadata as Record<string, unknown>
+              : {};
+            setBotLogs(prev => [{
+              id: newLog.id,
+              message: `${newLog.action}: ${(metadata.strategy_name as string) || 'Strategy'}`,
+              log_level: newLog.action === 'start' ? 'info' : newLog.action === 'stop' ? 'warning' : 'info',
+              created_at: newLog.created_at,
+              metadata,
+            }, ...prev]);
           }
         }
       )
@@ -87,10 +112,11 @@ export const BotMonitoringDashboard = () => {
       }));
 
       setRunningBots(botsWithDetails || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading bots",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -112,24 +138,25 @@ export const BotMonitoringDashboard = () => {
       if (error) throw error;
       
       // Transform audit logs to match expected format
-      const formattedLogs = (data || []).map(log => {
-        const metadata = typeof log.metadata === 'object' && log.metadata !== null 
-          ? log.metadata as Record<string, any>
+      const formattedLogs: BotLog[] = (data || []).map(log => {
+        const metadata = typeof log.metadata === 'object' && log.metadata !== null
+          ? log.metadata as Record<string, unknown>
           : {};
         return {
           id: log.id,
-          message: `${log.action}: ${metadata.strategy_name || 'Strategy'}`,
+          message: `${log.action}: ${(metadata.strategy_name as string) || 'Strategy'}`,
           log_level: log.action === 'start' ? 'info' : log.action === 'stop' ? 'warning' : 'info',
           created_at: log.created_at,
-          metadata: log.metadata
+          metadata
         };
       });
       
       setBotLogs(formattedLogs);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading logs",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -153,10 +180,11 @@ export const BotMonitoringDashboard = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -180,10 +208,11 @@ export const BotMonitoringDashboard = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

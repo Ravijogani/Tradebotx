@@ -14,9 +14,34 @@ interface RazorpayDialogProps {
   userId: string;
 }
 
+// Minimal shape of the Razorpay Checkout widget (loaded externally via
+// script tag — there's no @types package for it) covering only what this
+// component actually uses.
+interface RazorpayPaymentResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (response: RazorpayPaymentResponse) => void;
+  prefill: { email?: string };
+  theme: { color: string };
+}
+
+interface RazorpayInstance {
+  open: () => void;
+}
+
 declare global {
   interface Window {
-    Razorpay: any;
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
   }
 }
 
@@ -48,7 +73,7 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
         name: 'TradeBotX',
         description: `${planName} Plan Subscription`,
         order_id: orderData.id,
-        handler: async function (response: any) {
+        handler: async function (response: RazorpayPaymentResponse) {
           try {
             // Verify payment on backend
             const { error: verifyError } = await supabase.functions.invoke('verify-razorpay-payment', {
@@ -70,10 +95,11 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
 
             onOpenChange(false);
             window.location.reload();
-          } catch (error: any) {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             toast({
               title: "Payment Verification Failed",
-              description: error.message,
+              description: message,
               variant: "destructive",
             });
           }
@@ -88,10 +114,11 @@ export const RazorpayDialog = ({ open, onOpenChange, planId, planName, amount, u
 
       const razorpay = new window.Razorpay(options);
       razorpay.open();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

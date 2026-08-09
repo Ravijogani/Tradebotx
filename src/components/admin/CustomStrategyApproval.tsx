@@ -12,13 +12,14 @@ import {
   Wand2, RefreshCw, Download, User, Calendar
 } from "lucide-react";
 import { format } from "date-fns";
+import type { PlacedBlock } from "@/components/strategy-builder/StrategyBuilder";
 
 interface CustomStrategy {
   id: string;
   user_id: string;
   name: string;
   description: string;
-  strategy_config: any;
+  strategy_config: { blocks?: PlacedBlock[] } | null;
   is_active: boolean;
   is_approved: boolean;
   approved_by: string | null;
@@ -57,7 +58,10 @@ export const CustomStrategyApproval = () => {
 
       if (error) throw error;
 
-      setStrategies(data || []);
+      // strategy_config is a JSONB column (Json in the generated types); the
+      // block-list shape is enforced by the strategy builder that writes it,
+      // not by the DB, so narrow it here rather than typing the whole table.
+      setStrategies((data || []) as CustomStrategy[]);
 
       // Load user profiles
       const userIds = [...new Set((data || []).map(s => s.user_id))];
@@ -73,10 +77,11 @@ export const CustomStrategyApproval = () => {
         });
         setProfiles(profileMap);
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading strategies",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -98,10 +103,11 @@ export const CustomStrategyApproval = () => {
 
       setGeneratedCode(data.code);
       toast({ title: "Code generated successfully" });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error generating code",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -121,10 +127,11 @@ export const CustomStrategyApproval = () => {
       toast({ title: "Strategy approved successfully" });
       loadStrategies();
       setShowCodeDialog(false);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error approving strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -143,10 +150,11 @@ export const CustomStrategyApproval = () => {
 
       toast({ title: "Strategy rejected" });
       loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error rejecting strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     }
@@ -333,6 +341,7 @@ export const CustomStrategyApproval = () => {
             <DialogTitle>{selectedStrategy?.name}</DialogTitle>
             <DialogDescription>
               {selectedStrategy?.description || "Strategy configuration and generated code"}
+              {" — approving publishes it to the strategy marketplace for other users to import into their own builder. It does not start a live bot; the generated code below is reference/export only."}
             </DialogDescription>
           </DialogHeader>
 
@@ -341,7 +350,7 @@ export const CustomStrategyApproval = () => {
             <div className="p-3 bg-muted/50 rounded-lg">
               <h4 className="font-medium text-sm mb-2">Strategy Blocks</h4>
               <div className="flex flex-wrap gap-2">
-                {(selectedStrategy?.strategy_config?.blocks || []).map((block: any) => (
+                {(selectedStrategy?.strategy_config?.blocks || []).map((block) => (
                   <Badge key={block.id} variant="outline">
                     {block.block?.name || "Unknown"}
                   </Badge>
@@ -410,7 +419,7 @@ export const CustomStrategyApproval = () => {
                   ) : (
                     <CheckCircle className="h-4 w-4 mr-2" />
                   )}
-                  Approve & Deploy
+                  Approve for Marketplace
                 </Button>
               )}
             </div>

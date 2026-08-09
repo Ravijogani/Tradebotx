@@ -99,11 +99,12 @@ export const QuickStrategyControl = () => {
       })).filter(item => item.strategy); // Filter out any without strategy details
 
       setStrategies(transformedData);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Error loading strategies:", error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -218,11 +219,12 @@ export const QuickStrategyControl = () => {
 
       // Reload to get actual state from server
       await loadStrategies();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Handle start/stop error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to process request",
+        description: message || "Failed to process request",
         variant: "destructive",
       });
       // Reload strategies to sync with actual backend state

@@ -4,10 +4,7 @@ import { getEmailTemplate, loginAlertContent } from "../_shared/email-templates.
 
 import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -20,7 +17,7 @@ serve(async (req) => {
       const authUser = await getAuthUser(req);
       if (!authUser) return unauthorized(corsHeaders);
       const body = await req.clone().json().catch(() => ({}));
-      const targetEmail = (body as any).email;
+      const targetEmail = body.email;
       if (typeof targetEmail === 'string' && targetEmail.toLowerCase() !== (authUser.email || '').toLowerCase()) {
         return forbidden(corsHeaders);
       }
@@ -82,7 +79,7 @@ serve(async (req) => {
       console.log('Login alert sent successfully to:', email);
       
       await client.close();
-    } catch (emailError: any) {
+    } catch (emailError) {
       console.error('SMTP send error:', emailError);
       throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
     }
@@ -97,9 +94,10 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error sending login alert:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

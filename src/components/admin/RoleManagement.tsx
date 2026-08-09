@@ -49,10 +49,11 @@ export const RoleManagement = () => {
       })) || [];
 
       setUsers(usersWithRoles);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -123,10 +124,11 @@ export const RoleManagement = () => {
       });
 
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }
@@ -170,10 +172,11 @@ export const RoleManagement = () => {
       });
 
       loadUsers();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

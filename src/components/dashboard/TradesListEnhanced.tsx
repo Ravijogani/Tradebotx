@@ -30,15 +30,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { TradeJournalDialog } from "./TradeJournalDialog";
 import { ShareableTradeCard } from "./ShareableTradeCard";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Trade = Tables<"trades">;
 
 export const TradesListEnhanced = () => {
-  const [trades, setTrades] = useState<any[]>([]);
-  const [filteredTrades, setFilteredTrades] = useState<any[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [filteredTrades, setFilteredTrades] = useState<Trade[]>([]);
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [symbolFilter, setSymbolFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -61,7 +65,7 @@ export const TradesListEnhanced = () => {
           console.log('Trade change:', payload);
           // Get current user to verify this trade belongs to them
           const { data: { user } } = await supabase.auth.getUser();
-          if (user && payload.new && (payload.new as any).user_id === user.id) {
+          if (user && payload.new && (payload.new as Partial<Trade>).user_id === user.id) {
             loadTrades();
           }
         }
@@ -131,9 +135,9 @@ export const TradesListEnhanced = () => {
     const rows = filteredTrades.map((trade) => [
       trade.symbol,
       trade.trade_type,
-      parseFloat(trade.entry_price).toFixed(2),
-      trade.exit_price ? parseFloat(trade.exit_price).toFixed(2) : "N/A",
-      trade.profit_loss ? parseFloat(trade.profit_loss).toFixed(2) : "0.00",
+      trade.entry_price.toFixed(2),
+      trade.exit_price ? trade.exit_price.toFixed(2) : "N/A",
+      trade.profit_loss ? trade.profit_loss.toFixed(2) : "0.00",
       trade.status,
       new Date(trade.opened_at).toLocaleString(),
     ]);
@@ -167,9 +171,9 @@ export const TradesListEnhanced = () => {
       body: filteredTrades.map((trade) => [
         trade.symbol,
         trade.trade_type,
-        `$${parseFloat(trade.entry_price).toFixed(2)}`,
-        trade.exit_price ? `$${parseFloat(trade.exit_price).toFixed(2)}` : "N/A",
-        trade.profit_loss ? `$${parseFloat(trade.profit_loss).toFixed(2)}` : "$0.00",
+        `$${trade.entry_price.toFixed(2)}`,
+        trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : "N/A",
+        trade.profit_loss ? `$${trade.profit_loss.toFixed(2)}` : "$0.00",
         trade.status,
         format(new Date(trade.opened_at), "MMM dd, yyyy"),
       ]),
@@ -252,7 +256,7 @@ export const TradesListEnhanced = () => {
                     <Calendar
                       mode="range"
                       selected={{ from: dateRange.from, to: dateRange.to }}
-                      onSelect={(range: any) => setDateRange(range || {})}
+                      onSelect={(range: DateRange | undefined) => setDateRange(range || {})}
                       numberOfMonths={2}
                       className="pointer-events-auto"
                     />
@@ -328,7 +332,7 @@ export const TradesListEnhanced = () => {
                   className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group gap-2 sm:gap-4 min-w-0"
                 >
                   <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-                    {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
+                    {trade.profit_loss && trade.profit_loss >= 0 ? (
                       <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors flex-shrink-0">
                         <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-success" />
                       </div>
@@ -355,13 +359,13 @@ export const TradesListEnhanced = () => {
                       {trade.profit_loss && (
                         <div
                           className={`text-base sm:text-lg font-bold ${
-                            parseFloat(trade.profit_loss) >= 0
+                            trade.profit_loss >= 0
                               ? "text-success"
                               : "text-destructive"
                           }`}
                         >
-                          {parseFloat(trade.profit_loss) >= 0 ? "+" : ""}
-                          ${parseFloat(trade.profit_loss).toFixed(2)}
+                          {trade.profit_loss >= 0 ? "+" : ""}
+                          ${trade.profit_loss.toFixed(2)}
                         </div>
                       )}
                       <Badge

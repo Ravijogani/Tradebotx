@@ -8,10 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { 
-  Store, Search, TrendingUp, Star, Users, 
-  Download, Share2, Eye, Filter, Crown,
-  BarChart3, Shield, Clock, ArrowUpRight
+import {
+  Store, Search, Share2, Download,
+  Blocks, AlertCircle
 } from "lucide-react";
 import type { PlacedBlock, CustomStrategy } from "./StrategyBuilder";
 
@@ -21,19 +20,8 @@ interface MarketplaceStrategy {
   description: string;
   author: string;
   author_id: string;
-  downloads: number;
-  rating: number;
-  reviews: number;
-  is_premium: boolean;
-  price?: number;
-  performance: {
-    winRate: number;
-    totalReturn: number;
-    maxDrawdown: number;
-  };
   blocks: PlacedBlock[];
   created_at: string;
-  tags: string[];
 }
 
 interface StrategyMarketplaceProps {
@@ -47,6 +35,7 @@ export const StrategyMarketplace = ({ currentStrategy, onStrategyImport }: Strat
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStrategy, setSelectedStrategy] = useState<MarketplaceStrategy | null>(null);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -54,46 +43,51 @@ export const StrategyMarketplace = ({ currentStrategy, onStrategyImport }: Strat
   }, []);
 
   const loadMarketplaceStrategies = async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
-      // Load shared strategies from database
+      // Load shared strategies from database. custom_strategies.user_id has
+      // no FK to profiles (it isn't even an FK to auth.users — see the
+      // CREATE TABLE), so a nested `profiles:user_id(...)` embed can't be
+      // resolved by PostgREST and the whole query would error. Fetch the
+      // author names separately and merge client-side instead (same pattern
+      // as CustomStrategyApproval.tsx, which hits the same table).
       const { data, error } = await supabase
         .from("custom_strategies")
-        .select(`
-          *,
-          profiles:user_id(full_name, email)
-        `)
+        .select("*")
         .eq("is_approved", true)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      // Transform to marketplace format with mock performance data
-      const marketplaceStrategies: MarketplaceStrategy[] = (data || []).map((s: any) => ({
+      const userIds = [...new Set((data || []).map(s => s.user_id))];
+      const profileMap = new Map<string, string>();
+      if (userIds.length > 0) {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", userIds);
+        profileData?.forEach(p => profileMap.set(p.id, p.full_name || "Anonymous"));
+      }
+
+      // We only show what's actually true about a shared strategy — there's
+      // no tracked download count, rating, or backtest performance for
+      // community-shared strategies, so we don't fabricate any.
+      const marketplaceStrategies: MarketplaceStrategy[] = (data || []).map((s) => ({
         id: s.id,
         name: s.name,
         description: s.description || "No description provided",
-        author: s.profiles?.full_name || "Anonymous",
+        author: profileMap.get(s.user_id) || "Anonymous",
         author_id: s.user_id,
-        downloads: Math.floor(Math.random() * 500),
-        rating: 3.5 + Math.random() * 1.5,
-        reviews: Math.floor(Math.random() * 50),
-        is_premium: Math.random() > 0.7,
-        price: Math.random() > 0.7 ? Math.floor(Math.random() * 50) + 10 : undefined,
-        performance: {
-          winRate: 45 + Math.random() * 25,
-          totalReturn: 10 + Math.random() * 50,
-          maxDrawdown: 5 + Math.random() * 15
-        },
-        blocks: (s.strategy_config as any)?.blocks || [],
+        blocks: (s.strategy_config as { blocks?: PlacedBlock[] } | null)?.blocks || [],
         created_at: s.created_at,
-        tags: ["trending", "verified"].filter(() => Math.random() > 0.5)
       }));
 
       setStrategies(marketplaceStrategies);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error loading marketplace:", error);
-      // Show mock data if no real strategies
       setStrategies([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -208,6 +202,14 @@ export const StrategyMarketplace = ({ currentStrategy, onStrategyImport }: Strat
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               Loading marketplace...
             </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-4">
+              <AlertCircle className="h-8 w-8 text-destructive/60 mb-2" />
+              <p className="text-sm text-muted-foreground">Couldn't load the marketplace</p>
+              <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={loadMarketplaceStrategies}>
+                Try again
+              </Button>
+            </div>
           ) : filteredStrategies.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-4">
               <Store className="h-8 w-8 text-muted-foreground/50 mb-2" />
@@ -227,82 +229,42 @@ export const StrategyMarketplace = ({ currentStrategy, onStrategyImport }: Strat
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-medium text-sm truncate">{strategy.name}</span>
-                            {strategy.is_premium && (
-                              <Crown className="h-3 w-3 text-yellow-500" />
-                            )}
-                          </div>
+                          <span className="font-medium text-sm truncate block">{strategy.name}</span>
                           <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
                             <span className="flex items-center gap-0.5">
-                              <Star className="h-2.5 w-2.5 fill-yellow-500 text-yellow-500" />
-                              {strategy.rating.toFixed(1)}
-                            </span>
-                            <span className="flex items-center gap-0.5">
-                              <Download className="h-2.5 w-2.5" />
-                              {strategy.downloads}
+                              <Blocks className="h-2.5 w-2.5" />
+                              {strategy.blocks.length} blocks
                             </span>
                             <span>by {strategy.author}</span>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs font-medium text-green-500">
-                            +{strategy.performance.totalReturn.toFixed(1)}%
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">
-                            {strategy.performance.winRate.toFixed(0)}% win
-                          </div>
+                        <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {new Date(strategy.created_at).toLocaleDateString()}
                         </div>
                       </div>
                     </div>
                   </DialogTrigger>
                   <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle className="flex items-center gap-2">
-                        {strategy.name}
-                        {strategy.is_premium && <Crown className="h-4 w-4 text-yellow-500" />}
-                      </DialogTitle>
+                      <DialogTitle>{strategy.name}</DialogTitle>
                       <DialogDescription>{strategy.description}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                      {/* Performance Stats */}
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="p-3 bg-green-500/10 rounded-lg text-center">
-                          <div className="text-lg font-bold text-green-500">
-                            {strategy.performance.winRate.toFixed(0)}%
-                          </div>
-                          <div className="text-xs text-muted-foreground">Win Rate</div>
-                        </div>
-                        <div className="p-3 bg-primary/10 rounded-lg text-center">
-                          <div className="text-lg font-bold text-primary">
-                            +{strategy.performance.totalReturn.toFixed(1)}%
-                          </div>
-                          <div className="text-xs text-muted-foreground">Return</div>
-                        </div>
-                        <div className="p-3 bg-red-500/10 rounded-lg text-center">
-                          <div className="text-lg font-bold text-red-500">
-                            -{strategy.performance.maxDrawdown.toFixed(1)}%
-                          </div>
-                          <div className="text-xs text-muted-foreground">Max DD</div>
-                        </div>
-                      </div>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                        Community-shared strategy — performance isn't independently tracked yet. Review the blocks below before importing.
+                      </p>
 
-                      {/* Author & Stats */}
-                      <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
-                            <span className="text-xs font-medium">{strategy.author[0]}</span>
-                          </div>
-                          <div>
-                            <div className="text-sm font-medium">{strategy.author}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {strategy.reviews} reviews
-                            </div>
-                          </div>
+                      {/* Author */}
+                      <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
+                          <span className="text-xs font-medium">{strategy.author[0]}</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
-                          <span className="font-medium">{strategy.rating.toFixed(1)}</span>
+                        <div>
+                          <div className="text-sm font-medium">{strategy.author}</div>
+                          <div className="text-xs text-muted-foreground">
+                            Shared {new Date(strategy.created_at).toLocaleDateString()}
+                          </div>
                         </div>
                       </div>
 

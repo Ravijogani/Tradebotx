@@ -13,23 +13,12 @@ import {
   Activity, AlertTriangle, CheckCircle, Info
 } from "lucide-react";
 import { format } from "date-fns";
+import type { LucideIcon } from "lucide-react";
+import type { Tables } from "@/integrations/supabase/types";
 
-interface AuditLog {
-  id: string;
-  user_id: string;
-  action_category: string;
-  action_type: string;
-  action_description: string;
-  resource_type: string | null;
-  resource_id: string | null;
-  old_values: any;
-  new_values: any;
-  ip_address: string | null;
-  user_agent: string | null;
-  created_at: string;
-}
+type AuditLog = Tables<"advanced_audit_logs">;
 
-const categoryIcons: Record<string, any> = {
+const categoryIcons: Record<string, LucideIcon> = {
   auth: LogIn,
   trading: Activity,
   settings: Settings,
@@ -78,10 +67,11 @@ export const AdvancedAuditLogs = () => {
 
       if (error) throw error;
       setLogs(data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading audit logs",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

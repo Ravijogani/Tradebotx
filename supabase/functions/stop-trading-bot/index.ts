@@ -1,10 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -99,7 +96,7 @@ serve(async (req) => {
 
         const stopResult = await stopResponse.json();
         console.log(`Bot stopped successfully on Lightsail:`, stopResult);
-      } catch (fetchError: any) {
+      } catch (fetchError) {
         console.error('Error calling bot manager:', fetchError);
         // Don't throw - database already updated, just log the error
         // The bot might have already crashed or stopped on its own
@@ -177,8 +174,10 @@ serve(async (req) => {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
-            chatId: setup.telegram_chat_id,
-            message: `⏹️ Trading bot stopped\n\nStrategy: ${userStrategy.strategies?.name}\nTotal Trades: ${perfData?.total_trades || 0}\nTotal P&L: $${(perfData?.total_profit_loss || 0).toFixed(2)}\nStopped at: ${new Date().toLocaleString()}`,
+            userId: user.id,
+            type: 'strategy_status',
+            title: 'Trading bot stopped',
+            message: `Strategy: ${userStrategy.strategies?.name}\nTotal Trades: ${perfData?.total_trades || 0}\nTotal P&L: $${(perfData?.total_profit_loss || 0).toFixed(2)}\nStopped at: ${new Date().toLocaleString()}`,
           }
         });
       } catch (telegramError) {
@@ -198,12 +197,13 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error stopping trading bot:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Failed to stop trading bot',
+        error: message || 'Failed to stop trading bot',
       }),
       {
         status: 400,

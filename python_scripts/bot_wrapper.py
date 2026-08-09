@@ -9,7 +9,7 @@ import json
 import os
 import requests
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, timedelta
 import MetaTrader5 as mt5
 import time
 import logging

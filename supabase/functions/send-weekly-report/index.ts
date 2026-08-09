@@ -1,10 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.80.0";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 interface WeeklyStats {
   totalTrades: number;
@@ -98,7 +95,7 @@ serve(async (req) => {
           .limit(1)
           .single();
 
-        const profile = setting.profiles as any;
+        const profile = setting.profiles as { email?: string; full_name?: string } | null;
         const userEmail = profile?.email;
         const userName = profile?.full_name || userEmail?.split("@")[0] || "Trader";
 

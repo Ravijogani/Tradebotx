@@ -57,10 +57,11 @@ export const TelegramNotificationSettings = ({ userId }: TelegramNotificationSet
           ? "Telegram notifications are now enabled"
           : "Telegram notifications are disabled",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -80,10 +81,21 @@ export const TelegramNotificationSettings = ({ userId }: TelegramNotificationSet
 
     setTestingSend(true);
     try {
+      // send-telegram-notification looks up the chat ID server-side by userId
+      // (it never trusts a client-supplied chat ID), so make sure whatever the
+      // user just typed is actually saved before testing against it.
+      const { error: saveError } = await supabase
+        .from("user_setup")
+        .update({ telegram_chat_id: telegramChatId })
+        .eq("user_id", userId);
+      if (saveError) throw saveError;
+
       const { error } = await supabase.functions.invoke('send-telegram-notification', {
         body: {
-          chatId: telegramChatId,
-          message: `🔔 Test Notification\n\nThis is a test message from TradeBotX.\n\nIf you received this, your Telegram notifications are working correctly! 🎉`,
+          userId,
+          type: 'account_notification',
+          title: 'Test notification',
+          message: `This is a test message from TradeBotX.\n\nIf you received this, your Telegram notifications are working correctly!`,
         }
       });
 
@@ -93,10 +105,11 @@ export const TelegramNotificationSettings = ({ userId }: TelegramNotificationSet
         title: "Test notification sent!",
         description: "Check your Telegram to confirm receipt",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Test failed",
-        description: error.message || "Failed to send test notification",
+        description: message || "Failed to send test notification",
         variant: "destructive",
       });
     } finally {

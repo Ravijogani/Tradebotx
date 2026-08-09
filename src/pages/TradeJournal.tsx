@@ -48,26 +48,21 @@ import logo from "@/assets/tradebotx-logo.png";
 import logoWhite from "@/assets/tradebotx-logo-white.png";
 import { useTheme } from "@/components/theme-provider";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
+import type { LucideIcon } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface JournalEntry {
   id: string;
   trade_id: string;
-  notes: string;
-  tags: string[];
-  screenshot_urls: string[];
+  notes: string | null;
+  tags: string[] | null;
+  screenshot_urls: string[] | null;
   created_at: string;
   updated_at: string;
-  trade: {
-    symbol: string;
-    trade_type: string;
-    profit_loss: number;
-    entry_price: number;
-    exit_price: number;
-    opened_at: string;
-    closed_at: string;
-    status: string;
-    quantity: number;
-  };
+  // trade_notes.trade_id is NOT NULL + ON DELETE CASCADE, so the embedded
+  // trade always exists for any note row that survives.
+  trade: Pick<Tables<"trades">, "symbol" | "trade_type" | "profit_loss" | "entry_price" | "exit_price" | "opened_at" | "closed_at" | "status" | "quantity">;
 }
 
 // ── Monthly P&L Calendar (TradeFXBook-inspired) ──
@@ -228,7 +223,7 @@ function MonthlyPnLCalendar({ entries, calendarMonth, setCalendarMonth }: {
 
 // ── TradeFXBook-style Stat Card ──
 function StatCard({ icon: Icon, label, value, subValue, badgeText, iconBg }: {
-  icon: any; label: string; value: string; subValue?: string; badgeText?: string; iconBg: string;
+  icon: LucideIcon; label: string; value: string; subValue?: string; badgeText?: string; iconBg: string;
 }) {
   return (
     <Card className="relative overflow-hidden">
@@ -251,7 +246,7 @@ function StatCard({ icon: Icon, label, value, subValue, badgeText, iconBg }: {
 
 // ── Main Component ──
 export default function TradeJournal() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
@@ -300,8 +295,9 @@ export default function TradeJournal() {
     if (error) {
       toast({ title: "Error", description: "Failed to load journal entries", variant: "destructive" });
     } else {
-      setEntries(data as any);
-      setFilteredEntries(data as any);
+      const journalEntries = (data || []) as JournalEntry[];
+      setEntries(journalEntries);
+      setFilteredEntries(journalEntries);
     }
     setLoading(false);
   };
@@ -410,7 +406,7 @@ export default function TradeJournal() {
       entry.trade.trade_type,
       `$${entry.trade.profit_loss?.toFixed(2) || '0.00'}`,
       entry.tags?.join(', ') || '-',
-      entry.notes?.substring(0, 50) + (entry.notes?.length > 50 ? '...' : '')
+      (entry.notes || '').substring(0, 50) + ((entry.notes?.length || 0) > 50 ? '...' : '')
     ]);
     autoTable(doc, {
       head: [['Date', 'Symbol', 'Type', 'P/L', 'Tags', 'Notes']],

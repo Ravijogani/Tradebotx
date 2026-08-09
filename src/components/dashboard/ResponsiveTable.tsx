@@ -32,13 +32,13 @@ export const ResponsiveTable = ({ children, className = "" }: ResponsiveTablePro
 /**
  * Responsive card list for mobile - converts tables to stacked cards
  */
-interface ResponsiveCardListProps {
-  items: any[];
-  renderCard: (item: any, index: number) => ReactNode;
+interface ResponsiveCardListProps<T> {
+  items: T[];
+  renderCard: (item: T, index: number) => ReactNode;
   renderTable: () => ReactNode;
 }
 
-export const ResponsiveCardList = ({ items, renderCard, renderTable }: ResponsiveCardListProps) => {
+export const ResponsiveCardList = <T,>({ items, renderCard, renderTable }: ResponsiveCardListProps<T>) => {
   return (
     <>
       {/* Desktop: Table view */}

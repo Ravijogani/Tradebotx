@@ -25,11 +25,12 @@ import { AdminOverview } from "@/components/admin/AdminOverview";
 import { OnboardingAnalytics } from "@/components/admin/OnboardingAnalytics";
 import { CustomStrategyApproval } from "@/components/admin/CustomStrategyApproval";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import type { User } from "@supabase/supabase-js";
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -81,11 +82,12 @@ const AdminDashboard = () => {
       }
 
       setIsAdmin(true);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Admin access check error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to verify access",
+        description: message || "Failed to verify access",
         variant: "destructive",
       });
       navigate("/admin");
@@ -102,10 +104,11 @@ const AdminDashboard = () => {
         description: "You have been logged out successfully",
       });
       navigate("/admin");
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     }

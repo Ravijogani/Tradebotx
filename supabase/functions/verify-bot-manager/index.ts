@@ -2,10 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -71,14 +68,15 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Bot manager verification failed:', error);
     return new Response(
       JSON.stringify({
         success: false,
         configured: true,
         healthy: false,
-        error: error.message,
+        error: message,
       }),
       {
         status: 200,

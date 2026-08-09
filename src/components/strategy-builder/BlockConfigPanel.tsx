@@ -8,9 +8,21 @@ import { Badge } from "@/components/ui/badge";
 import { Trash2 } from "lucide-react";
 import type { PlacedBlock } from "./StrategyBuilder";
 
+// A minimal JSON-Schema-shaped property definition — only the fields this
+// panel actually reads out of strategy_blocks.config_schema, which is a
+// genuine per-block-type JSON Schema (its full shape varies block to block).
+interface JsonSchemaProperty {
+  type?: string;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+}
+
+type ConfigValue = string | number | undefined;
+
 interface BlockConfigPanelProps {
   block: PlacedBlock;
-  onChange: (config: any) => void;
+  onChange: (config: Record<string, unknown>) => void;
   onDelete: () => void;
 }
 
@@ -18,12 +30,12 @@ export const BlockConfigPanel = ({ block, onChange, onDelete }: BlockConfigPanel
   const { config_schema, default_config } = block.block;
   const config = block.config;
 
-  const handleChange = (key: string, value: any) => {
+  const handleChange = (key: string, value: ConfigValue) => {
     onChange({ ...config, [key]: value });
   };
 
-  const renderField = (key: string, schema: any) => {
-    const value = config[key] ?? default_config[key];
+  const renderField = (key: string, schema: JsonSchemaProperty) => {
+    const value = (config[key] ?? default_config[key]) as ConfigValue;
 
     // Enum (dropdown)
     if (schema.enum) {
@@ -72,7 +84,7 @@ export const BlockConfigPanel = ({ block, onChange, onDelete }: BlockConfigPanel
           <Label className="capitalize">{key.replace(/_/g, " ")}</Label>
           <Input
             type="number"
-            value={value}
+            value={value ?? ""}
             onChange={(e) => handleChange(key, parseFloat(e.target.value) || 0)}
           />
         </div>
@@ -85,7 +97,7 @@ export const BlockConfigPanel = ({ block, onChange, onDelete }: BlockConfigPanel
         <div key={key} className="space-y-2">
           <Label className="capitalize">{key.replace(/_/g, " ")}</Label>
           <Input
-            value={value || ""}
+            value={value ?? ""}
             onChange={(e) => handleChange(key, e.target.value)}
           />
         </div>
@@ -95,7 +107,7 @@ export const BlockConfigPanel = ({ block, onChange, onDelete }: BlockConfigPanel
     return null;
   };
 
-  const properties = config_schema?.properties || {};
+  const properties = (config_schema?.properties as Record<string, JsonSchemaProperty> | undefined) || {};
 
   return (
     <ScrollArea className="h-full">
@@ -119,7 +131,7 @@ export const BlockConfigPanel = ({ block, onChange, onDelete }: BlockConfigPanel
 
         {/* Config Fields */}
         <div className="space-y-4">
-          {Object.entries(properties).map(([key, schema]) => 
+          {Object.entries(properties).map(([key, schema]) =>
             renderField(key, schema)
           )}
         </div>

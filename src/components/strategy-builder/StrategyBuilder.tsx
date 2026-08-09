@@ -25,14 +25,18 @@ import { AIStrategyAssistant } from "./AIStrategyAssistant";
 import { StrategyTemplates } from "./StrategyTemplates";
 import { StrategyMarketplace } from "./StrategyMarketplace";
 
+// config_schema/default_config/config are all genuinely block-type-specific
+// JSON blobs (each block type — indicator, condition, action, filter — has
+// its own shape) rather than one fixed shape, so Record<string, unknown> is
+// the honest type rather than a fully-modeled union of every block's config.
 export interface StrategyBlock {
   id: string;
   block_type: string;
   name: string;
   description: string;
   category: string;
-  config_schema: any;
-  default_config: any;
+  config_schema: Record<string, unknown>;
+  default_config: Record<string, unknown>;
   icon: string;
   is_premium: boolean;
 }
@@ -41,7 +45,7 @@ export interface PlacedBlock {
   id: string;
   blockId: string;
   block: StrategyBlock;
-  config: any;
+  config: Record<string, unknown>;
   position: { x: number; y: number };
   connections: string[];
 }
@@ -85,21 +89,22 @@ export const StrategyBuilder = () => {
       if (blocksRes.error) throw blocksRes.error;
       if (strategiesRes.error) throw strategiesRes.error;
 
-      setBlocks(blocksRes.data || []);
+      setBlocks((blocksRes.data || []) as unknown as StrategyBlock[]);
       
       const loadedStrategies = (strategiesRes.data || []).map(s => ({
         id: s.id,
         name: s.name,
         description: s.description || "",
-        blocks: (s.strategy_config as any)?.blocks || [],
+        blocks: (s.strategy_config as { blocks?: PlacedBlock[] } | null)?.blocks || [],
         is_active: s.is_active,
         is_approved: s.is_approved
       }));
       setStrategies(loadedStrategies);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading data",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -127,7 +132,7 @@ export const StrategyBuilder = () => {
     setSelectedBlock(block);
   };
 
-  const handleBlockConfigChange = (blockId: string, config: any) => {
+  const handleBlockConfigChange = (blockId: string, config: Record<string, unknown>) => {
     setCurrentStrategy(prev => ({
       ...prev,
       blocks: prev.blocks.map(b => 
@@ -214,10 +219,11 @@ export const StrategyBuilder = () => {
       toast({ title: "Strategy saved successfully" });
       setShowSaveDialog(false);
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error saving strategy",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

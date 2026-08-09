@@ -4,10 +4,7 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { getEmailTemplate, otpEmailContent } from "../_shared/email-templates.ts";
 import { handleError } from "../_shared/error-handler.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -145,7 +142,7 @@ serve(async (req) => {
       console.log('OTP email sent successfully to:', email);
       
       await client.close();
-    } catch (emailError: any) {
+    } catch (emailError) {
       console.error('SMTP send error:', emailError);
       throw new Error(`Failed to send email: ${emailError?.message || 'Unknown error'}`);
     }
@@ -161,7 +158,7 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

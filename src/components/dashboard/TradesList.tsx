@@ -3,9 +3,10 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import type { Tables } from "@/integrations/supabase/types";
 
 export const TradesList = () => {
-  const [trades, setTrades] = useState<any[]>([]);
+  const [trades, setTrades] = useState<Tables<"trades">[]>([]);
 
   useEffect(() => {
     loadTrades();
@@ -81,7 +82,7 @@ export const TradesList = () => {
               className="flex items-center justify-between p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-all duration-200 group"
             >
               <div className="flex items-center gap-4">
-                {trade.profit_loss && parseFloat(trade.profit_loss) >= 0 ? (
+                {trade.profit_loss && trade.profit_loss >= 0 ? (
                   <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center group-hover:bg-success/20 transition-colors">
                     <ArrowUpRight className="w-5 h-5 text-success" />
                   </div>
@@ -107,13 +108,13 @@ export const TradesList = () => {
                 {trade.profit_loss && (
                   <div
                     className={`text-lg font-bold ${
-                      parseFloat(trade.profit_loss) >= 0
+                      trade.profit_loss >= 0
                         ? "text-success"
                         : "text-destructive"
                     }`}
                   >
-                    {parseFloat(trade.profit_loss) >= 0 ? "+" : ""}
-                    ${parseFloat(trade.profit_loss).toFixed(2)}
+                    {trade.profit_loss >= 0 ? "+" : ""}
+                    ${trade.profit_loss.toFixed(2)}
                   </div>
                 )}
                 <Badge 

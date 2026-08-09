@@ -32,12 +32,13 @@ import { AIInsightsDashboard } from "./AIInsightsDashboard";
 import { RunningBotsPanel } from "./RunningBotsPanel";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { RefreshCw } from "lucide-react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { TelegramFAB } from "@/components/TelegramFAB";
 import { MultiAccountManager } from "./MultiAccountManager";
 import { AdvancedAuditLogs } from "./AdvancedAuditLogs";
 import { WeeklyReportSettings } from "./WeeklyReportSettings";
 
-export const DashboardLayout = ({ user }: { user: any }) => {
+export const DashboardLayout = ({ user }: { user: SupabaseUser }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") || "dashboard";
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -177,7 +178,7 @@ export const DashboardLayout = ({ user }: { user: any }) => {
 
           {/* Main Content */}
           <main 
-            ref={pullToRefresh.ref as any}
+            ref={pullToRefresh.ref}
             className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-x-hidden overflow-y-auto"
           >
             <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6">

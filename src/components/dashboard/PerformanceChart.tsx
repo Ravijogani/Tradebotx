@@ -4,11 +4,21 @@ import { supabase } from "@/integrations/supabase/client";
 import { Line, LineChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
 import { Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { Tables } from "@/integrations/supabase/types";
 
 type TimeRange = "7d" | "30d" | "90d" | "1y";
+interface ChartPoint {
+  date: string;
+  value: number;
+}
+// trades.metadata is JSONB — this is the shape the bot writes for a live
+// running position, asserted here since the DB type can't verify it.
+interface TradeMetadata {
+  running_profit?: number;
+}
 
 export const PerformanceChart = () => {
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<ChartPoint[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
   const [loading, setLoading] = useState(true);
 
@@ -30,7 +40,7 @@ export const PerformanceChart = () => {
           { event: '*', schema: 'public', table: 'trades' },
           async (payload) => {
             // Only reload if this trade belongs to the current user
-            const tradeUserId = (payload.new as any)?.user_id || (payload.old as any)?.user_id;
+            const tradeUserId = (payload.new as Partial<Tables<"trades">>)?.user_id || (payload.old as Partial<Tables<"trades">>)?.user_id;
             if (tradeUserId === user.id) {
               // Debounce reload to prevent excessive updates
               clearTimeout(debounceTimer);
@@ -90,7 +100,7 @@ export const PerformanceChart = () => {
         // For open trades, use running_profit from metadata
         let pl = 0;
         if (trade.status === 'open' || trade.status === 'OPEN') {
-          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
           pl = parseFloat(String(metadata.running_profit || 0));
         } else {
           pl = parseFloat(String(trade.profit_loss || 0));
@@ -182,7 +192,7 @@ export const PerformanceChart = () => {
                   padding: "8px 12px",
                 }}
                 labelStyle={{ color: "hsl(var(--foreground))" }}
-                formatter={(value: any) => [`$${value.toFixed(2)}`, "P&L"]}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, "P&L"]}
               />
               <Area
                 type="monotone"

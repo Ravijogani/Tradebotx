@@ -5,14 +5,11 @@ import { handleError } from "../_shared/error-handler.ts";
 
 import { getAuthUser, isCronAuthorized, unauthorized, forbidden } from "../_shared/auth.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const newUserAlertSchema = z.object({
   userEmail: z.string().email().max(255),
-  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-\.]+$/, 'Invalid characters in name'),
+  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-.]+$/, 'Invalid characters in name'),
   signupTimestamp: z.string()
 });
 
@@ -139,7 +136,7 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

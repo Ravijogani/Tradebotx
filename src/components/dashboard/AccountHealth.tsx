@@ -12,6 +12,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ShareableAchievementCard } from "./ShareableAchievementCard";
 
+// trades.metadata is JSONB — this is the shape the bot writes for a live
+// running position, same convention as StatsOverview.tsx.
+interface TradeMetadata {
+  running_profit?: number;
+}
+
 export const AccountHealth = () => {
   const [accountData, setAccountData] = useState({
     balance: 0,
@@ -95,7 +101,7 @@ export const AccountHealth = () => {
       dailyPL = todayTrades.reduce((sum, trade) => {
         // For open trades, use running_profit from metadata
         if (trade.status === 'open') {
-          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
           return sum + (metadata.running_profit || 0);
         }
         // For closed trades, use final profit_loss
@@ -133,7 +139,7 @@ export const AccountHealth = () => {
       allTrades.forEach(trade => {
         let pl = 0;
         if (trade.status === 'open') {
-          const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+          const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
           pl = metadata.running_profit || 0;
         } else {
           pl = parseFloat(String(trade.profit_loss || 0));

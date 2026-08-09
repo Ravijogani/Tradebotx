@@ -1,10 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.80.0";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 interface StrategyBlock {
   id: string;
@@ -14,10 +11,12 @@ interface StrategyBlock {
     name: string;
     block_type: string;
     description: string;
-    config_schema: any;
-    default_config: any;
+    // Genuinely block-type-specific JSON blobs — same convention as
+    // PlacedBlock in src/components/strategy-builder/StrategyBuilder.tsx.
+    config_schema: Record<string, unknown>;
+    default_config: Record<string, unknown>;
   };
-  config: Record<string, any>;
+  config: Record<string, unknown>;
   position: { x: number; y: number };
   connections: string[];
 }
@@ -129,7 +128,10 @@ serve(async (req) => {
     }
 
     if (action === 'approve') {
-      // Approve and deploy strategy
+      // Approving publishes the strategy to the marketplace (custom_strategies
+      // with is_approved=true) so other users can import its blocks into their
+      // own builder. It does NOT create a runnable bot — no edge function or
+      // bot-manager script reads custom_strategies for that.
       await supabase
         .from('custom_strategies')
         .update({
@@ -141,9 +143,9 @@ serve(async (req) => {
 
       console.log(`Strategy ${strategyId} approved by admin ${user.id}`);
 
-      return new Response(JSON.stringify({ 
-        success: true, 
-        message: 'Strategy approved and ready for deployment'
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Strategy approved and published to the marketplace'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });

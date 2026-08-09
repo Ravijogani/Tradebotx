@@ -17,6 +17,15 @@ interface AIStrategyAssistantProps {
   onStrategyGenerated: (blocks: PlacedBlock[]) => void;
 }
 
+// Shape of a single block entry in the ai-strategy-assistant edge
+// function's response — matched against availableBlocks by id or name.
+interface AIBlockSuggestion {
+  blockId?: string;
+  name?: string;
+  config?: Record<string, unknown>;
+  connections?: string[];
+}
+
 const quickPrompts = [
   { icon: TrendingUp, label: "Scalping Strategy", prompt: "Create a scalping strategy for EURUSD using RSI and MACD with tight stop losses" },
   { icon: Shield, label: "Conservative", prompt: "Create a conservative swing trading strategy with low risk using moving averages" },
@@ -59,7 +68,7 @@ export const AIStrategyAssistant = ({ availableBlocks, onStrategyGenerated }: AI
 
       if (data.blocks && data.blocks.length > 0) {
         // Convert AI response to PlacedBlocks
-        const placedBlocks: PlacedBlock[] = data.blocks.map((blockData: any, index: number) => {
+        const placedBlocks: PlacedBlock[] = data.blocks.map((blockData: AIBlockSuggestion, index: number) => {
           const sourceBlock = availableBlocks.find(b => b.id === blockData.blockId || b.name === blockData.name);
           if (!sourceBlock) return null;
           
@@ -90,11 +99,12 @@ export const AIStrategyAssistant = ({ availableBlocks, onStrategyGenerated }: AI
           variant: "destructive"
         });
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("AI Strategy error:", error);
       toast({
         title: "Failed to generate strategy",
-        description: error.message || "Please try again",
+        description: message || "Please try again",
         variant: "destructive"
       });
     } finally {

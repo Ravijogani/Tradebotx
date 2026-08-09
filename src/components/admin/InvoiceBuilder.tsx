@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Plus, Trash2, FileText, Mail, Download, Eye } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { Tables, Json } from "@/integrations/supabase/types";
 
 interface InvoiceItem {
   description: string;
@@ -21,9 +22,15 @@ interface InvoiceItem {
   amount: number;
 }
 
+type InvoiceProfile = Pick<Tables<"profiles">, "id" | "full_name" | "email">;
+// items is stored as JSONB (Tables<"invoices">.items: Json) — asserted as
+// InvoiceItem[] at the read sites below since that's the shape this
+// component always writes, not something the DB type can verify for us.
+type Invoice = Tables<"invoices"> & { profiles?: Pick<InvoiceProfile, "full_name" | "email"> };
+
 export const InvoiceBuilder = () => {
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [users, setUsers] = useState<InvoiceProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -42,16 +49,15 @@ export const InvoiceBuilder = () => {
 
   const loadData = async () => {
     try {
+      // invoices.user_id references auth.users, not public.profiles directly,
+      // so there's no FK path PostgREST can use to embed `profiles(...)` in
+      // the invoices select (confirmed by the generated types: invoices has
+      // an empty Relationships array). Fetch both and merge client-side,
+      // same pattern used for support tickets elsewhere in this codebase.
       const [invoicesRes, usersRes] = await Promise.all([
         supabase
           .from("invoices")
-          .select(`
-            *,
-            profiles (
-              full_name,
-              email
-            )
-          `)
+          .select("*")
           .order("created_at", { ascending: false }),
         supabase
           .from("profiles")
@@ -62,12 +68,19 @@ export const InvoiceBuilder = () => {
       if (invoicesRes.error) throw invoicesRes.error;
       if (usersRes.error) throw usersRes.error;
 
-      setInvoices(invoicesRes.data || []);
+      const profileMap = new Map(usersRes.data?.map(p => [p.id, p]));
+      const invoicesWithProfiles = (invoicesRes.data || []).map((invoice) => ({
+        ...invoice,
+        profiles: profileMap.get(invoice.user_id),
+      }));
+
+      setInvoices(invoicesWithProfiles);
       setUsers(usersRes.data || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading data",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -83,7 +96,7 @@ export const InvoiceBuilder = () => {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
+  const updateItem = (index: number, field: keyof InvoiceItem, value: string | number) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     
@@ -98,7 +111,7 @@ export const InvoiceBuilder = () => {
     return items.reduce((sum, item) => sum + item.amount, 0);
   };
 
-  const generatePDF = (invoice: any): jsPDF => {
+  const generatePDF = (invoice: Invoice): jsPDF => {
     const doc = new jsPDF();
     
     // Header
@@ -118,8 +131,10 @@ export const InvoiceBuilder = () => {
     doc.text(invoice.profiles?.full_name || "N/A", 20, 71);
     doc.text(invoice.profiles?.email || "N/A", 20, 77);
     
-    // Items table
-    const tableData = invoice.items.map((item: InvoiceItem) => [
+    // Items table (items is stored as JSONB — this is the shape this
+    // component always writes it in, but the DB type can't verify that)
+    const invoiceItems = invoice.items as unknown as InvoiceItem[];
+    const tableData = invoiceItems.map((item) => [
       item.description,
       item.quantity.toString(),
       `₹${item.rate.toFixed(2)}`,
@@ -138,7 +153,10 @@ export const InvoiceBuilder = () => {
     
     // Notes
     if (invoice.notes) {
-      const finalY = (doc as any).lastAutoTable.finalY || 90;
+      // jspdf-autotable attaches this at runtime but doesn't ship types for
+      // it in this version — narrower than a blanket any so a typo here
+      // would still be caught.
+      const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY || 90;
       doc.text("Notes:", 20, finalY + 15);
       doc.text(invoice.notes, 20, finalY + 21);
     }
@@ -168,7 +186,7 @@ export const InvoiceBuilder = () => {
           amount: total,
           due_date: dueDate || null,
           notes: notes || null,
-          items: items as any,
+          items: items as unknown as Json,
           status: "draft",
         }])
         .select()
@@ -177,7 +195,7 @@ export const InvoiceBuilder = () => {
       if (error) throw error;
 
       // Generate PDF
-      const pdf = generatePDF({ ...invoice, profiles: users.find(u => u.id === selectedUserId), items });
+      const pdf = generatePDF({ ...invoice, profiles: users.find(u => u.id === selectedUserId), items: items as unknown as Json });
       const pdfBlob = pdf.output("blob");
       
       // Upload PDF to storage
@@ -207,10 +225,11 @@ export const InvoiceBuilder = () => {
       setShowCreateDialog(false);
       resetForm();
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -218,7 +237,7 @@ export const InvoiceBuilder = () => {
     }
   };
 
-  const handleCreatePaymentLink = async (invoice: any) => {
+  const handleCreatePaymentLink = async (invoice: Invoice) => {
     setActionLoading(true);
     try {
       // Create Razorpay order
@@ -253,10 +272,11 @@ export const InvoiceBuilder = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -264,7 +284,7 @@ export const InvoiceBuilder = () => {
     }
   };
 
-  const handleSendInvoice = async (invoice: any) => {
+  const handleSendInvoice = async (invoice: Invoice) => {
     setActionLoading(true);
     try {
       const pdf = generatePDF(invoice);
@@ -291,10 +311,11 @@ export const InvoiceBuilder = () => {
       });
 
       loadData();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -302,7 +323,7 @@ export const InvoiceBuilder = () => {
     }
   };
 
-  const handleDownloadPDF = (invoice: any) => {
+  const handleDownloadPDF = (invoice: Invoice) => {
     const pdf = generatePDF(invoice);
     pdf.save(`invoice-${invoice.invoice_number}.pdf`);
   };

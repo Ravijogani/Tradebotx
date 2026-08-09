@@ -77,10 +77,11 @@ const Login = () => {
           description: "Please check your email for the OTP",
         });
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Login failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -137,10 +138,11 @@ const Login = () => {
         description: "We've sent you a password reset link",
       });
       setShowForgotPassword(false);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

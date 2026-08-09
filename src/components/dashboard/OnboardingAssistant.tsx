@@ -69,9 +69,10 @@ export const OnboardingAssistant = ({ context }: OnboardingAssistantProps) => {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('Assistant error:', error);
-      toast.error(error.message || "Failed to get response");
+      toast.error(message || "Failed to get response");
       
       const errorMessage: Message = {
         role: 'assistant',

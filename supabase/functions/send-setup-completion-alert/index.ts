@@ -3,14 +3,11 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { handleError } from "../_shared/error-handler.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const setupCompletionSchema = z.object({
   userEmail: z.string().email().max(255),
-  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-\.]+$/, 'Invalid characters in name'),
+  userName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9\s\-.]+$/, 'Invalid characters in name'),
   setupDetails: z.object({
     brokerName: z.string().max(100).optional(),
     mt5Account: z.string().min(5).max(20).regex(/^\d+$/, 'MT5 account must be numeric'),
@@ -149,7 +146,7 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

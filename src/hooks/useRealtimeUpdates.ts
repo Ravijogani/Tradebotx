@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import type { Tables } from "@/integrations/supabase/types";
+
+type BotStrategy = Tables<"user_strategies"> & {
+  strategies?: Pick<Tables<"strategies">, "name" | "description"> | null;
+};
 
 export const useRealtimeTrades = (userId: string) => {
-  const [trades, setTrades] = useState<any[]>([]);
+  const [trades, setTrades] = useState<Tables<"trades">[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -39,10 +44,11 @@ export const useRealtimeTrades = (userId: string) => {
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
-          setTrades(prev => [payload.new, ...prev]);
+          const newTrade = payload.new as Tables<"trades">;
+          setTrades(prev => [newTrade, ...prev]);
           toast({
             title: "New Trade",
-            description: `${payload.new.trade_type} ${payload.new.symbol} opened`,
+            description: `${newTrade.trade_type} ${newTrade.symbol} opened`,
           });
         }
       )
@@ -55,18 +61,20 @@ export const useRealtimeTrades = (userId: string) => {
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
+          const updatedTrade = payload.new as Tables<"trades">;
+          const oldTrade = payload.old as Partial<Tables<"trades">>;
           setTrades(prev =>
             prev.map(trade =>
-              trade.id === payload.new.id ? payload.new : trade
+              trade.id === updatedTrade.id ? updatedTrade : trade
             )
           );
 
           // Show notification for closed trades
-          if (payload.new.status === 'closed' && payload.old.status !== 'closed') {
-            const profitLoss = payload.new.profit_loss || 0;
+          if (updatedTrade.status === 'closed' && oldTrade.status !== 'closed') {
+            const profitLoss = updatedTrade.profit_loss || 0;
             toast({
               title: "Trade Closed",
-              description: `${payload.new.symbol}: ${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`,
+              description: `${updatedTrade.symbol}: ${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`,
               variant: profitLoss >= 0 ? "default" : "destructive",
             });
           }
@@ -83,7 +91,7 @@ export const useRealtimeTrades = (userId: string) => {
 };
 
 export const useRealtimeBotStatus = (userId: string) => {
-  const [strategies, setStrategies] = useState<any[]>([]);
+  const [strategies, setStrategies] = useState<BotStrategy[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -124,17 +132,19 @@ export const useRealtimeBotStatus = (userId: string) => {
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
+          const updated = payload.new as Tables<"user_strategies">;
+          const previous = payload.old as Partial<Tables<"user_strategies">>;
           setStrategies(prev =>
             prev.map(strategy =>
-              strategy.id === payload.new.id ? { ...strategy, ...payload.new } : strategy
+              strategy.id === updated.id ? { ...strategy, ...updated } : strategy
             )
           );
 
           // Show notification for status changes
-          if (payload.new.is_running !== payload.old.is_running) {
+          if (updated.is_running !== previous.is_running) {
             toast({
-              title: payload.new.is_running ? "Bot Started" : "Bot Stopped",
-              description: `Strategy ${payload.new.is_running ? 'activated' : 'deactivated'}`,
+              title: updated.is_running ? "Bot Started" : "Bot Stopped",
+              description: `Strategy ${updated.is_running ? 'activated' : 'deactivated'}`,
             });
           }
         }

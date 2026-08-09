@@ -3,10 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { encrypt } from "../_shared/crypto-utils.ts";
 import { handleError } from "../_shared/error-handler.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -73,7 +70,7 @@ serve(async (req) => {
         .single();
 
       if (profileData) {
-        const planType = (subscriptionData?.plans as any)?.plan_type || 'free';
+        const planType = (subscriptionData?.plans as { plan_type?: string } | null)?.plan_type || 'free';
         
         await supabaseClient.functions.invoke('send-setup-completion-alert', {
           body: {
@@ -104,7 +101,7 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
     return handleError(error, corsHeaders);
   }
 });

@@ -1,10 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -208,8 +205,10 @@ serve(async (req) => {
       try {
         await supabaseClient.functions.invoke('send-telegram-notification', {
           body: {
-            chatId: setup.telegram_chat_id,
-            message: `⏳ Bot starting...\n\nStrategy: ${strategyName}\nAccount: ${setup.mt5_account}\nYou'll receive another notification when bot is confirmed running.`,
+            userId: user.id,
+            type: 'strategy_status',
+            title: 'Bot starting',
+            message: `Strategy: ${strategyName}\nAccount: ${setup.mt5_account}\nYou'll receive another notification when the bot is confirmed running.`,
           }
         });
       } catch (telegramError) {
@@ -229,12 +228,13 @@ serve(async (req) => {
       }
     );
 
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Error starting trading bot:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Failed to start trading bot',
+        error: message || 'Failed to start trading bot',
       }),
       {
         status: 400,

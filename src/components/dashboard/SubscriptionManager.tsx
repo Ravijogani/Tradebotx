@@ -7,11 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Crown, Zap, TrendingUp, Check, ArrowRight } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Tables } from "@/integrations/supabase/types";
+
+type SubscriptionWithPlan = Tables<"user_subscriptions"> & {
+  plans?: Tables<"plans"> | null;
+};
 
 export const SubscriptionManager = () => {
   const [loading, setLoading] = useState(true);
-  const [currentPlan, setCurrentPlan] = useState<any>(null);
-  const [allPlans, setAllPlans] = useState<any[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<SubscriptionWithPlan | null>(null);
+  const [allPlans, setAllPlans] = useState<Tables<"plans">[]>([]);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -44,10 +49,11 @@ export const SubscriptionManager = () => {
 
       if (plansError) throw plansError;
       setAllPlans(plans || []);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

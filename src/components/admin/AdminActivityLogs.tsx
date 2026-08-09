@@ -5,18 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2, Activity, User, Shield, Settings, Trash, CheckCircle, XCircle } from "lucide-react";
 import { format } from "date-fns";
+import type { Tables } from "@/integrations/supabase/types";
 
-interface ActivityLog {
-  id: string;
-  admin_user_id: string;
-  action_type: string;
-  target_user_id: string | null;
-  description: string;
-  metadata: any;
-  created_at: string;
-  admin_email?: string;
-  target_email?: string;
-}
+type ActivityLog = Tables<"admin_activity_logs"> & {
+  admin_email?: string | null;
+  target_email?: string | null;
+};
 
 export const AdminActivityLogs = () => {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
@@ -54,7 +48,7 @@ export const AdminActivityLogs = () => {
       const adminMap = new Map(adminProfiles?.map(p => [p.id, p.email]));
       const targetMap = new Map(targetProfiles?.map(p => [p.id, p.email]));
 
-      const formattedLogs = logsData?.map((log: any) => ({
+      const formattedLogs: ActivityLog[] = logsData?.map((log) => ({
         ...log,
         admin_email: adminMap.get(log.admin_user_id),
         target_email: log.target_user_id ? targetMap.get(log.target_user_id) : null,

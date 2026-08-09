@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { BookOpen, Upload, X, Loader2, Plus } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface TradeJournalDialogProps {
   tradeId: string;
@@ -29,7 +30,7 @@ export const TradeJournalDialog = ({ tradeId, trigger }: TradeJournalDialogProps
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [screenshots, setScreenshots] = useState<File[]>([]);
-  const [existingNote, setExistingNote] = useState<any>(null);
+  const [existingNote, setExistingNote] = useState<Tables<"trade_notes"> | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -134,10 +135,11 @@ export const TradeJournalDialog = ({ tradeId, trigger }: TradeJournalDialogProps
         description: "Your trade notes have been saved successfully.",
       });
       setOpen(false);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

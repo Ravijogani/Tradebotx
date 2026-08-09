@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import type { Tables } from "@/integrations/supabase/types";
 
 interface DashboardStats {
   totalUsers: number;
@@ -39,8 +40,8 @@ export const AdminOverview = () => {
     systemHealth: 100
   });
   const [loading, setLoading] = useState(true);
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [criticalIssues, setCriticalIssues] = useState<any[]>([]);
+  const [recentActivity, setRecentActivity] = useState<Tables<"admin_activity_logs">[]>([]);
+  const [criticalIssues, setCriticalIssues] = useState<Tables<"bot_heartbeats">[]>([]);
 
   useEffect(() => {
     fetchDashboardData();

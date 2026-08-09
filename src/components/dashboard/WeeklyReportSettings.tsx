@@ -62,10 +62,11 @@ export const WeeklyReportSettings = () => {
         if (createError) throw createError;
         setSettings(newSettings);
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading settings",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -87,10 +88,11 @@ export const WeeklyReportSettings = () => {
 
       setSettings({ ...settings, ...updates });
       toast({ title: "Settings updated" });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error updating settings",
-        description: error.message,
+        description: message,
         variant: "destructive"
       });
     } finally {

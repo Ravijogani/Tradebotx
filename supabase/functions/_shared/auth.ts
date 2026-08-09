@@ -8,6 +8,27 @@ export interface AuthUser {
 }
 
 /**
+ * Constant-time string comparison to avoid timing side-channels when
+ * comparing secrets/signatures. Falls back to unequal on length mismatch
+ * (safe: length itself leaks far less than a byte-by-byte early exit).
+ */
+export function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const bufA = enc.encode(a);
+  const bufB = enc.encode(b);
+  if (bufA.length !== bufB.length) {
+    // Still walk a fixed number of comparisons so length mismatches don't
+    // short-circuit instantly relative to length matches.
+    let dummy = 0;
+    for (let i = 0; i < bufA.length; i++) dummy |= bufA[i];
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) diff |= bufA[i] ^ bufB[i];
+  return diff === 0;
+}
+
+/**
  * Validates a JWT from the Authorization header. Returns the user or null.
  */
 export async function getAuthUser(req: Request): Promise<AuthUser | null> {
@@ -25,7 +46,7 @@ export async function getAuthUser(req: Request): Promise<AuthUser | null> {
     return {
       id: data.user.id,
       email: data.user.email ?? undefined,
-      role: (data.user as any).role,
+      role: (data.user as { role?: string }).role,
     };
   } catch {
     return null;
@@ -39,7 +60,7 @@ export function isCronAuthorized(req: Request): boolean {
   const secret = Deno.env.get("CRON_SECRET");
   if (!secret) return false;
   const authHeader = req.headers.get("Authorization") || "";
-  return authHeader === `Bearer ${secret}`;
+  return timingSafeEqual(authHeader, `Bearer ${secret}`);
 }
 
 /**

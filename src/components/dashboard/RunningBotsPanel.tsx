@@ -145,11 +145,12 @@ export const RunningBotsPanel = () => {
       }
 
       setBots(botsWithHeartbeats);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Error loading bots:", error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -212,11 +213,12 @@ export const RunningBotsPanel = () => {
       }
 
       await loadBots();
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("Handle start/stop error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to process request",
+        description: message || "Failed to process request",
         variant: "destructive",
       });
       await loadBots();
@@ -245,7 +247,7 @@ export const RunningBotsPanel = () => {
       });
 
       await loadBots();
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Error",
         description: "Some bots may not have stopped correctly",

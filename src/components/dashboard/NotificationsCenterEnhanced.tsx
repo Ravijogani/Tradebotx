@@ -13,16 +13,9 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
+import type { Tables } from "@/integrations/supabase/types";
 
-interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  type: string;
-  read: boolean;
-  created_at: string;
-  metadata: any;
-}
+type Notification = Tables<"user_notifications">;
 
 export const NotificationsCenterEnhanced = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -185,7 +178,7 @@ export const NotificationsCenterEnhanced = () => {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      !notification.read && markAsRead(notification.id);
+                      if (!notification.read) markAsRead(notification.id);
                     }
                   }}
                   tabIndex={0}

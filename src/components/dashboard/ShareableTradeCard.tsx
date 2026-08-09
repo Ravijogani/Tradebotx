@@ -15,8 +15,14 @@ interface Trade {
   exit_price?: number;
   profit_loss?: number;
   quantity: number;
-  metadata?: any;
+  metadata?: unknown;
   closed_at?: string;
+}
+
+// trades.metadata is JSONB — this is the shape the bot writes for leverage,
+// same convention as StatsOverview's TradeMetadata.
+interface TradeMetadata {
+  leverage?: string;
 }
 
 interface ShareableTradeCardProps {
@@ -91,7 +97,7 @@ export const ShareableTradeCard = ({ trade }: ShareableTradeCardProps) => {
     }
   };
 
-  const metadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as any : {};
+  const metadata: TradeMetadata = typeof trade.metadata === 'object' && trade.metadata !== null ? trade.metadata as TradeMetadata : {};
   const leverage = metadata.leverage || '50x';
   const isBuy = trade.trade_type.toLowerCase() === 'buy';
   const closedDate = trade.closed_at ? new Date(trade.closed_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';

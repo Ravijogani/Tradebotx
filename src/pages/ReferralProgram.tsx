@@ -9,11 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Copy, Loader2, Users, DollarSign, TrendingUp } from "lucide-react";
 import { format } from "date-fns";
+import type { Tables } from "@/integrations/supabase/types";
 
 const ReferralProgram = () => {
   const [referralCode, setReferralCode] = useState<string>("");
-  const [referralStats, setReferralStats] = useState<any>(null);
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [referralStats, setReferralStats] = useState<Tables<"referral_codes"> | null>(null);
+  const [transactions, setTransactions] = useState<Tables<"referral_transactions">[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const navigate = useNavigate();
@@ -33,10 +34,11 @@ const ReferralProgram = () => {
       }
 
       await loadReferralData(session.user.id);
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -97,10 +99,11 @@ const ReferralProgram = () => {
         title: "Success",
         description: "Your referral code has been generated!",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

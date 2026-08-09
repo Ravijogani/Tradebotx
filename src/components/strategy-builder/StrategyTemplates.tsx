@@ -10,6 +10,7 @@ import {
   Target, ArrowRight, Star, Clock, Activity
 } from "lucide-react";
 import type { StrategyBlock, PlacedBlock } from "./StrategyBuilder";
+import type { LucideIcon } from "lucide-react";
 
 interface StrategyTemplatesProps {
   availableBlocks: StrategyBlock[];
@@ -21,12 +22,15 @@ interface StrategyTemplate {
   name: string;
   description: string;
   category: "beginner" | "intermediate" | "advanced";
-  icon: any;
+  icon: LucideIcon;
   popularity: number;
   blocks: {
     blockType: string;
     blockName: string;
-    config: any;
+    // Block-type-specific (RSI period, order type, percent thresholds, ...) —
+    // matches the same Record<string, unknown> pattern used for
+    // PlacedBlock["config"] in StrategyBuilder.tsx.
+    config: Record<string, unknown>;
     position: { x: number; y: number };
   }[];
   expectedReturn: string;

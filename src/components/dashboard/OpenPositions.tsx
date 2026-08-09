@@ -4,9 +4,19 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, TrendingDown, Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import type { Tables } from "@/integrations/supabase/types";
+
+type Trade = Tables<"trades">;
+// metadata is JSONB — this is the shape the bot writes into it for a live
+// running position, asserted here since the DB type can't verify it.
+interface TradeMetadata {
+  running_profit?: number;
+  profit?: number;
+  current_price?: number;
+}
 
 export const OpenPositions = () => {
-  const [positions, setPositions] = useState<any[]>([]);
+  const [positions, setPositions] = useState<Trade[]>([]);
   const [totalPnL, setTotalPnL] = useState(0);
   const { toast } = useToast();
 
@@ -29,8 +39,8 @@ export const OpenPositions = () => {
             filter: `user_id=eq.${user.id}`
           },
           (payload) => {
-            const newRecord = payload.new as any;
-            const oldRecord = payload.old as any;
+            const newRecord = payload.new as Trade;
+            const oldRecord = payload.old as Partial<Trade>;
 
             if (payload.eventType === 'INSERT' && newRecord?.status === 'open') {
               // New open position
@@ -95,7 +105,7 @@ export const OpenPositions = () => {
   // Recalculate total P&L whenever positions change
   useEffect(() => {
     const total = positions.reduce((sum, pos) => {
-      const metadata = typeof pos.metadata === 'object' && pos.metadata !== null ? pos.metadata as any : {};
+      const metadata: TradeMetadata = typeof pos.metadata === 'object' && pos.metadata !== null ? pos.metadata as TradeMetadata : {};
       const runningProfit = metadata.running_profit || pos.profit_loss || 0;
       return sum + runningProfit;
     }, 0);
@@ -136,8 +146,8 @@ export const OpenPositions = () => {
         ) : (
           <div className="space-y-2 sm:space-y-3">
             {positions.map((position) => {
-              const metadata = typeof position.metadata === 'object' && position.metadata !== null
-                ? position.metadata as any
+              const metadata: TradeMetadata = typeof position.metadata === 'object' && position.metadata !== null
+                ? position.metadata as TradeMetadata
                 : {};
               const currentProfit = metadata.running_profit || metadata.profit || position.profit_loss || 0;
               const currentPrice = metadata.current_price || position.entry_price;
@@ -172,9 +182,9 @@ export const OpenPositions = () => {
                         )}
                       </div>
                       <div className="text-xs sm:text-sm text-muted-foreground flex flex-wrap gap-1 sm:gap-3">
-                        <span className="whitespace-nowrap">Entry: ${parseFloat(position.entry_price).toFixed(5)}</span>
+                        <span className="whitespace-nowrap">Entry: ${position.entry_price.toFixed(5)}</span>
                         <span className="hidden sm:inline">•</span>
-                        <span className="whitespace-nowrap">Current: ${parseFloat(currentPrice).toFixed(5)}</span>
+                        <span className="whitespace-nowrap">Current: ${Number(currentPrice).toFixed(5)}</span>
                         <span className="hidden sm:inline">•</span>
                         <span className="whitespace-nowrap">Qty: {position.quantity}</span>
                       </div>

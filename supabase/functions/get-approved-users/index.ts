@@ -1,9 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { timingSafeEqual } from "../_shared/auth.ts";
+import { handleError } from "../_shared/error-handler.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-custom-auth, content-type",
-};
+import { corsHeadersWithCustomAuth as corsHeaders } from "../_shared/cors.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -14,8 +13,8 @@ Deno.serve(async (req) => {
     // Verify bot manager secret
     const authHeader = req.headers.get("x-custom-auth");
     const botManagerSecret = Deno.env.get("BOT_MANAGER_SECRET");
-    
-    if (!authHeader || authHeader !== botManagerSecret) {
+
+    if (!authHeader || !botManagerSecret || !timingSafeEqual(authHeader, botManagerSecret)) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -32,21 +31,13 @@ Deno.serve(async (req) => {
       .eq("admin_approved", true)
       .eq("is_completed", true);
 
-    if (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (error) throw error;
 
     return new Response(JSON.stringify({ users: data }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return handleError(err, corsHeaders);
   }
 });

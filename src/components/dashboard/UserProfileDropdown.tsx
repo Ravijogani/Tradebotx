@@ -1,4 +1,5 @@
 import { User, LogOut, Settings } from "lucide-react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
 
 interface UserProfileDropdownProps {
-  user: any;
+  user: SupabaseUser;
   onSettingsClick: () => void;
 }
 

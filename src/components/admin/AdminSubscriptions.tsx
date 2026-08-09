@@ -5,9 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, TrendingUp, TrendingDown, Users, DollarSign } from "lucide-react";
+import type { Tables } from "@/integrations/supabase/types";
+
+type SubscriptionWithDetails = Tables<"user_subscriptions"> & {
+  plans?: Pick<Tables<"plans">, "name" | "price"> | null;
+  profiles?: Pick<Tables<"profiles">, "id" | "email" | "full_name"> | null;
+};
 
 export const AdminSubscriptions = () => {
-  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithDetails[]>([]);
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
@@ -59,10 +65,11 @@ export const AdminSubscriptions = () => {
         trial,
         revenue,
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toast({
         title: "Error loading subscriptions",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

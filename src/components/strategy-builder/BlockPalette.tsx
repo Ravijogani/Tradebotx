@@ -9,6 +9,7 @@ import {
   GitMerge, GitBranch, RotateCcw, Shuffle, RefreshCw,
   Eye, MessageCircle, Layers, Link, Search, Percent
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { StrategyBlock } from "./StrategyBuilder";
 
 interface BlockPaletteProps {
@@ -16,7 +17,7 @@ interface BlockPaletteProps {
   onDragStart: (block: StrategyBlock) => void;
 }
 
-const iconMap: Record<string, any> = {
+const iconMap: Record<string, LucideIcon> = {
   TrendingUp, Activity, BarChart, Target, Clock, Shield,
   ShoppingCart, XCircle, Filter, Crosshair, ArrowUpDown,
   AlignVerticalJustifyCenter, CandlestickChart, GitMerge,

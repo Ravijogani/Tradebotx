@@ -7,10 +7,23 @@ import { Loader2, Sparkles, RefreshCw, TrendingUp, AlertTriangle, Users, DollarS
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import ReactMarkdown from "react-markdown";
 
+// Subset of the admin-ai-insights edge function's systemContext that this
+// dashboard actually displays.
+interface AdminMetrics {
+  totalUsers: number;
+  newUsersLast7Days: number;
+  pendingApprovals: number;
+  openTickets: number;
+  totalRevenue: number;
+  activeSubscriptions: number;
+  winRate: number;
+  totalTradePnL: number;
+}
+
 export const AIInsightsDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [insights, setInsights] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -33,11 +46,12 @@ export const AIInsightsDashboard = () => {
         title: "AI Insights Updated",
         description: "Fresh insights generated successfully",
       });
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('Error fetching insights:', error);
       toast({
         title: "Error",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

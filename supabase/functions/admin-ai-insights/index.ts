@@ -2,10 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -145,10 +142,10 @@ serve(async (req) => {
         daysWaiting: Math.floor((Date.now() - new Date(p.submitted_for_approval_at || 0).getTime()) / (1000 * 60 * 60 * 24))
       })),
       openTickets: openTickets?.length || 0,
-      openTicketsByType: openTickets?.reduce((acc: any, t) => {
+      openTicketsByType: openTickets?.reduce((acc: Record<string, number>, t) => {
         acc[t.priority] = (acc[t.priority] || 0) + 1;
         return acc;
-      }, {}),
+      }, {} as Record<string, number>),
       botErrors: botErrors?.length || 0,
       recentBotErrors: botErrors?.slice(0, 5).map(e => ({
         message: e.log_message,
