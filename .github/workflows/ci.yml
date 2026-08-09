@@ -29,7 +29,17 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m py_compile python_scripts/*.py python_scripts/backtest/*.py
-      - run: pip install pandas numpy
+      # Only the real third-party packages hybrid_trading_bot_multiuser.py
+      # actually imports at module scope, minus the ones the harness stubs
+      # out of sys.modules before import (MetaTrader5, supabase -- see
+      # bot_loader.py) and google-generativeai (bot_loader falls back to a
+      # stub for it too if unavailable). This intentionally isn't `pip
+      # install -r python_scripts/requirements.txt` -- that file also lists
+      # MetaTrader5, which is Windows-only and can't install on this
+      # runner. If a new *real* top-level import is added to the bot file
+      # that isn't one of the stubbed/faked ones, add it here too, or this
+      # job will fail the same way it did when `requests` was missing.
+      - run: pip install pandas numpy requests certifi
       # Real smoke test, not just a syntax check: imports the live bot file
       # with MT5/Supabase stubbed (see python_scripts/backtest/bot_loader.py)
       # and confirms module-level construction (AITradingConfig,
