@@ -140,14 +140,67 @@ class StrategyAdapter:
     call: Callable  # (bot, dataset, as_of, symbol) -> Optional[StrategyResult]
 
 
-def _get_trend(bot, symbol: str) -> Optional[str]:
-    """get_market_regime_and_trend must be called inside a replay_context
-    block (it internally calls the now-patched get_market_data)."""
+def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[str]:
+    """
+    Replicates the live main loop's actual `effective_trend` computation:
+    H4 macro bias (get_h4_macro_bias) leads, H1 trend (strict EMA50/EMA200
+    stacking, not a simple cross) confirms, a real H4-vs-H1 conflict skips
+    entirely, and only if both are NEUTRAL does live fall back to an
+    AI/L1 bias cache this harness has no equivalent for (see below).
+
+    BUG FIX (2026-08, found while running the first real-data backtest):
+    this function used to call bot.get_market_regime_and_trend(symbol) --
+    which turns out to have ZERO call sites anywhere in the live file
+    (confirmed by grepping, not guessed) and is separately broken on any
+    real dataset anyway (`config.ADX_PERIOD` / `config.ADX_TRENDING_
+    THRESHOLD` don't exist on AITradingConfig -- an AttributeError on
+    every call once enough TREND_TF history exists, silently swallowed by
+    this function's own try/except into `trend = None`). Every adapter
+    that gates on `trend is None` was therefore getting rejected almost
+    always on real data, regardless of what the real strategies would
+    have done -- a harness/live-parity bug of the same shape v1 made with
+    EntryEngine (assuming a function was "the" live trend source without
+    verifying it was ever called). The first real backtest run (XAUUSDm,
+    90 days) showed all four live strategies at exactly 0 trades; this
+    was the actual reason, not the strategies genuinely never firing.
+    Corrected to replicate effective_trend's real computation (see
+    hybrid_trading_bot_multiuser.py, "STEP 1: TOP-DOWN HIERARCHY", right
+    before STRATEGY A) instead.
+
+    Known, disclosed gap (not fixed, can't be from historical data alone):
+    live's NEUTRAL/NEUTRAL fallback reads state.approved_bias, an AI(L1)-
+    computed bias cache that only exists as live in-memory state -- there
+    is no historical record of what it would have said on a given past
+    bar. This function returns None in that case (same as "no trend
+    available"), which under-counts trades relative to live specifically
+    in the cases where that fallback would have supplied a direction H4/H1
+    alone don't agree on. That's a real, disclosed limitation of backtesting
+    this cascade from OHLC history alone, not a bug to silently paper over.
+    """
+    df_h4 = dataset.window("H4", as_of, 60) if "H4" in dataset.frames else None
+    h4_bias = bot.get_h4_macro_bias(df_h4) if df_h4 is not None and len(df_h4) >= 55 else "NEUTRAL"
+
+    df_h1 = dataset.window("H1", as_of, 100)
     try:
-        _, trend = bot.get_market_regime_and_trend(symbol)
-        return trend
+        ema50_h1 = df_h1['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        ema200_h1 = df_h1['close'].ewm(span=200, adjust=False).mean().iloc[-1]
+        close_h1 = df_h1['close'].iloc[-1]
+        if close_h1 > ema50_h1 > ema200_h1:
+            h1_trend = "BULLISH"
+        elif close_h1 < ema50_h1 < ema200_h1:
+            h1_trend = "BEARISH"
+        else:
+            h1_trend = "NEUTRAL"
     except Exception:
-        return None
+        h1_trend = "NEUTRAL"
+
+    if h4_bias != "NEUTRAL" and h1_trend != "NEUTRAL" and h4_bias != h1_trend:
+        return None  # live does `continue` here -- confirmed conflict, no trend this bar
+
+    effective_trend = h4_bias if h4_bias != "NEUTRAL" else h1_trend
+    if effective_trend == "NEUTRAL":
+        return None  # live falls back to state.approved_bias -- see docstring above
+    return effective_trend
 
 
 # ---------------------------------------------------------------------
@@ -202,7 +255,7 @@ def _adapt_entry_engine(bot, dataset: HistoricalDataset, as_of, symbol):
 def _adapt_ict_killzone(bot, dataset: HistoricalDataset, as_of, symbol):
     # Live call site: strategy_ict_killzone(df_m5, df_h1, h1_trend, symbol, df_m1)
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -221,7 +274,7 @@ def _adapt_ict_killzone(bot, dataset: HistoricalDataset, as_of, symbol):
 def _adapt_liquidity_grab(bot, dataset: HistoricalDataset, as_of, symbol):
     # Live call site: strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -241,7 +294,7 @@ def _adapt_liquidity_fvg_engine(bot, dataset: HistoricalDataset, as_of, symbol):
     # Live call site: strategy_liquidity_fvg_engine(symbol, df_m5, df_h1,
     #   effective_trend, edge_mode="NORMAL", df_m15=df_m15, df_h1=df_h1)
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -264,7 +317,7 @@ def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
     if "H4" not in dataset.frames:
         return None  # needs H4 -- see export_mt5_history.py / README
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_h1 = dataset.window("H1", as_of, 60)
@@ -305,7 +358,7 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
     from differs, and the engine's touch check is direction-agnostic).
     """
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend not in ("BULLISH", "BEARISH"):
             return None
         direction = "BUY" if trend == "BULLISH" else "SELL"
@@ -335,7 +388,7 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
 
 def _adapt_advanced_smc(bot, dataset, as_of, symbol):
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -353,7 +406,7 @@ def _adapt_advanced_smc(bot, dataset, as_of, symbol):
 
 def _adapt_wyckoff(bot, dataset, as_of, symbol):
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -371,7 +424,7 @@ def _adapt_wyckoff(bot, dataset, as_of, symbol):
 
 def _adapt_volume_profile(bot, dataset, as_of, symbol):
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 60)
@@ -400,7 +453,7 @@ def _adapt_support_resistance(bot, dataset, as_of, symbol):
 
 def _adapt_volume_imbalance(bot, dataset, as_of, symbol):
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend is None:
             return None
         df_m5 = dataset.window("M5", as_of, 20)
@@ -416,7 +469,7 @@ def _adapt_volume_imbalance(bot, dataset, as_of, symbol):
 
 def _adapt_trend_pullback(bot, dataset, as_of, symbol):
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend not in ("BULLISH", "BEARISH"):
             return None
         df_m5 = dataset.window("M5", as_of, 40)
@@ -455,7 +508,7 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     the engine doesn't fall back to --rr for this strategy either.
     """
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, symbol)
+        trend = _get_trend(bot, dataset, as_of, symbol)
         if trend not in ("BULLISH", "BEARISH"):
             return None
         direction = "BUY" if trend == "BULLISH" else "SELL"
