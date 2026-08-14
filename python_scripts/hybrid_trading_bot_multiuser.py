@@ -1155,6 +1155,49 @@ class SupabaseTradeDB:
             logger.error(f"[DB ERROR] Trade logging failed: {e}")
             return False
 
+    def log_lesson(self, lesson_data: Dict) -> bool:
+        """
+        VISIBILITY FIX: analyze_loss_with_ai()'s AI post-mortem on a losing
+        trade used to be written ONLY to ai_trading_lessons.json -- a file
+        on the bot's own server, never queried by anything user-facing.
+        "The bot shows its own mistakes honestly" isn't a real product
+        differentiator if the only reader of that honesty is the bot
+        itself. This pushes the same lesson to Supabase (requires the
+        trade_lessons table -- see supabase/migrations/ for the migration
+        that creates it) so the dashboard can show it, same
+        retry+local-backup pattern as log_trade() above. The local JSON
+        file write in save_ai_lesson() is UNCHANGED and still the source
+        check_trade_against_lessons() reads from -- this only adds a
+        second, user-visible destination, it doesn't replace the first.
+        """
+        try:
+            db_lesson = {
+                'user_id': USER_ID,
+                'strategy_id': STRATEGY_ID,
+                'ticket': lesson_data.get('ticket'),
+                'symbol': lesson_data.get('symbol'),
+                'direction': lesson_data.get('direction', '').upper(),
+                'lesson': lesson_data.get('lesson', ''),
+                'loss_amount': float(lesson_data.get('loss_amount', 0)),
+                'context': lesson_data.get('context', {}),
+            }
+
+            def insert_lesson():
+                supabase.table('trade_lessons').insert(db_lesson).execute()
+                logger.info(f"[DB] Lesson for ticket {db_lesson['ticket']} synced to dashboard")
+                return True
+
+            result = self._retry_operation("Lesson logging", insert_lesson)
+
+            if not result:
+                self._save_to_backup(db_lesson, 'log_lesson')
+                return False
+            return True
+
+        except Exception as e:
+            logger.error(f"[DB ERROR] Lesson logging failed: {e}")
+            return False
+
     def update_trade_closed(self, ticket: int, exit_price: float, profit_loss: float, exit_reason: str) -> bool:
         """Update trade as closed with retry logic"""
         def update_trade():
@@ -6255,7 +6298,7 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
             lesson = lesson.strip().replace('"', '').replace('*', '')
             
             # Store the lesson
-            save_ai_lesson(symbol, direction, lesson, profit, {
+            save_ai_lesson(ticket, symbol, direction, lesson, profit, {
                 'adx': adx,
                 'session': session,
                 'hour': hour,
@@ -6272,17 +6315,29 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
     except Exception as e:
         logger.error(f"[AI LEARNING] Error analyzing loss: {e}", exc_info=True)
 
-def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float, context: dict):
+def save_ai_lesson(ticket: int, symbol: str, direction: str, lesson: str, loss_amount: float, context: dict):
     """
     Save AI-learned lesson to file for future reference
     Lessons are stored in JSON format with metadata
+
+    VISIBILITY FIX: this used to be the only place a lesson ever landed --
+    a local JSON file on the bot's own server that check_trade_against_
+    lessons() reads back, but nothing user-facing ever did. "The bot shows
+    its own mistakes honestly" isn't a real product differentiator if the
+    only reader of that honesty is the bot itself. The local file write
+    below is UNCHANGED (still the source check_trade_against_lessons()
+    reads) -- this now ALSO pushes the same lesson to Supabase via
+    trade_db.log_lesson() (dashboard/API-queryable, requires the
+    trade_lessons table -- see supabase/migrations/) and sends a Telegram
+    notification, so a user actually sees "lost $X on SYMBOL DIRECTION --
+    bot's read: <lesson>" instead of it only ever existing on disk.
     """
     try:
         import json
         import os
-        
+
         lessons_file = os.path.join(DATA_DIR, 'ai_trading_lessons.json')
-        
+
         # Load existing lessons
         lessons = []
         if os.path.exists(lessons_file):
@@ -6291,7 +6346,7 @@ def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float,
                     lessons = json.load(f)
             except:
                 lessons = []
-        
+
         # Add new lesson
         lesson_entry = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -6301,18 +6356,38 @@ def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float,
             'loss_amount': loss_amount,
             'context': context
         }
-        
+
         lessons.append(lesson_entry)
-        
+
         # Keep only last 100 lessons
         lessons = lessons[-100:]
-        
+
         # Save back
         with open(lessons_file, 'w') as f:
             json.dump(lessons, f, indent=2)
-        
+
         logger.info(f" [AI LEARNING] Lesson saved to {lessons_file}")
-        
+
+        # Push to Supabase so the dashboard can actually show this -- failure
+        # here is non-fatal (log_lesson already backs up locally on its own
+        # retry exhaustion), the local file above is the durable record
+        # check_trade_against_lessons() depends on either way.
+        try:
+            trade_db.log_lesson({
+                'ticket': ticket, 'symbol': symbol, 'direction': direction,
+                'lesson': lesson, 'loss_amount': loss_amount, 'context': context,
+            })
+        except Exception as _db_err:
+            logger.warning(f"[AI LEARNING] Supabase lesson push failed: {_db_err}")
+
+        # Surface it to the user directly, not just the dashboard -- this is
+        # the actual "show its own mistakes honestly" moment.
+        send_telegram_notification(
+            f"[LESSON LEARNED] {symbol} {direction}\n\n"
+            f"Loss: ${loss_amount:.2f}\n\n"
+            f"Bot's read: {lesson}"
+        )
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error saving lesson: {e}", exc_info=True)
 
