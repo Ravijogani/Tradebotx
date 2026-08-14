@@ -728,8 +728,25 @@ class AITradingConfig:
     # Risk sizing -- calibrated for small accounts ($50-$500)
     # With $91 equity: 1% = $0.91 max risk per trade
     # Max 2 simultaneous trades = max 2% account at risk at once
-    BASE_RISK_PERCENT: float = 10.0      # 1% risk per trade
-    MAX_RISK_PERCENT: float = 10.0       # Hard cap -- never exceed 1.5% for scalping
+    #
+    # BUG FIX: these were both 10.0 -- ten times every comment on this block
+    # (and CapitalController's own docstring: "Hard cap at 1.5% for scalping")
+    # says they should be. Shaakuni SSM / EMA Scalp Cross were shielded from
+    # the real damage since they size through CapitalController.calculate(),
+    # which has its own hardcoded self.base_risk=1.0 and clamps its own
+    # output to [0.25, 1.5] independent of this config value -- MAX_RISK_PERCENT
+    # only ever appeared as min(final_risk, MAX_RISK_PERCENT), a no-op at 10.0
+    # since CapitalController never produces more than 1.5 anyway. Swappy 3C
+    # and AOX were NOT shielded -- both read BASE_RISK_PERCENT directly with
+    # no CapitalController involved at all (see execute_aox_layer() and
+    # place_swappy_pending_order(), now fixed alongside this to route through
+    # CapitalController same as the other two strategies), so this bug meant
+    # Swappy risked a flat 10% of equity on every single trade live. Real-data
+    # evidence of the cost: the 90-day XAUUSDm regression already produced a
+    # 6-trade losing streak for Swappy in just 18 total trades -- a ~47%
+    # drawdown from that one streak at 10% risk, vs ~6% at the correct 1%.
+    BASE_RISK_PERCENT: float = 1.0       # 1% risk per trade
+    MAX_RISK_PERCENT: float = 1.5        # Hard cap -- never exceed 1.5% for scalping
 
     # ?? SPREAD-SAFE SL SETTINGS (NEW) ????????????????????????????????????????
     # MT5 compares BID vs SL for longs, ASK vs SL for shorts.
@@ -6786,7 +6803,36 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
         tick = mt5.symbol_info_tick(symbol)
         if not tick: return 0
 
-        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0) * risk_fraction
+        # SIZING GAP FIX: this used to read config.BASE_RISK_PERCENT directly --
+        # a flat risk % with none of CapitalController's adaptivity (edge
+        # quality, session, drawdown throttle, volatility scaling, exposure
+        # reduction, symbol performance, pattern health), same architectural
+        # gap as the ban/unban fix (execute_aox_layer never touched
+        # CapitalController at all, unlike the shared setup pipeline Shaakuni/
+        # EMA scalp go through). Wired in here the same way the main loop
+        # wires it for those two. edge_score=75.0 (not EdgeEngine-scored --
+        # AOX is one of the two strategies treated as "self-confirming"
+        # elsewhere in this file, same reasoning as the placeholder already
+        # used for state.open_positions[...]['edge_score'] below) --
+        # CapitalController.calculate's edge_mult clamps to [0.5, 1.2] so this
+        # mainly lets session/drawdown/volatility/exposure/symbol-performance/
+        # pattern-health still meaningfully move size around a neutral edge
+        # assumption, rather than pretending AOX has no edge signal at all.
+        _cc_sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+        try:
+            _cc_pattern_health = pattern_recognizer.get_edge_health_score(symbol, direction, {})
+        except Exception:
+            _cc_pattern_health = 1.0
+        _cc_drawdown = 0.0
+        if getattr(state, 'daily_start_equity', 0) > 0:
+            _cc_drawdown = max(0.0, ((state.daily_start_equity - account_equity) / state.daily_start_equity) * 100.0)
+        _cc_open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+        _final_risk_pct = CapitalController().calculate(
+            edge_score=75.0, symbol_metrics=_cc_sym_metrics, session=get_current_session(),
+            drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
+            account_equity=account_equity, pattern_health=_cc_pattern_health,
+        )
+        risk_amount = account_equity * (_final_risk_pct / 100.0) * risk_fraction
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return 0
 
@@ -8092,7 +8138,29 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
         sym_info = mt5.symbol_info(symbol)
         if not sym_info: return False
 
-        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0)
+        # SIZING GAP FIX: same as execute_aox_layer() -- this used to read
+        # config.BASE_RISK_PERCENT directly, a flat risk % bypassing
+        # CapitalController's adaptivity entirely (edge quality, session,
+        # drawdown throttle, volatility scaling, exposure reduction, symbol
+        # performance, pattern health). edge_score=70.0: Swappy is the other
+        # strategy treated as self-confirming elsewhere in this file (not
+        # EdgeEngine-scored), matches the placeholder already used for
+        # state.open_positions[...]['edge_score'] in check_swappy_expirations.
+        _cc_sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+        try:
+            _cc_pattern_health = pattern_recognizer.get_edge_health_score(symbol, direction, {})
+        except Exception:
+            _cc_pattern_health = 1.0
+        _cc_drawdown = 0.0
+        if getattr(state, 'daily_start_equity', 0) > 0:
+            _cc_drawdown = max(0.0, ((state.daily_start_equity - account_equity) / state.daily_start_equity) * 100.0)
+        _cc_open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+        _final_risk_pct = CapitalController().calculate(
+            edge_score=70.0, symbol_metrics=_cc_sym_metrics, session=get_current_session(),
+            drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
+            account_equity=account_equity, pattern_health=_cc_pattern_health,
+        )
+        risk_amount = account_equity * (_final_risk_pct / 100.0)
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return False
 
@@ -9021,7 +9089,7 @@ def ai_trading_session():
                     account_equity       = account_info.equity,
                     pattern_health       = pattern_health,
                 )
-                final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 10%
+                final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 1.5% (was a no-op at the old 10.0 value -- see MAX_RISK_PERCENT's docstring)
                 logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
                              f"pattern_health={pattern_health:.2f} dd={current_drawdown:.1f}% -> final_risk={final_risk:.2f}%")
 
