@@ -19,9 +19,8 @@ Run just AOX, with its SMT-divergence correlated pair:
 
 See README.md for which strategies are LIVE vs NOT LIVE, and which
 timeframes each one needs. --m1 is optional -- only AOX/ICT_KILLZONE/
-LIQUIDITY_GRAB/SMC_ENTRY_ENGINE/ADVANCED_SMC/WYCKOFF_PATTERNS need it;
-SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/SMC_FVG_OB_RETEST and the rest of
-the dormant strategies don't. Without --m1, those get skipped cleanly
+LIQUIDITY_GRAB need it; SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/
+SMC_FVG_OB_RETEST don't. Without --m1, those get skipped cleanly
 (printed, not a crash) and everything else still runs. --h4 is needed
 for SHAAKUNI_SSM specifically. AOX's SMT-divergence gate additionally
 needs --corr-symbol/--corr-m15, optional on top of --m1.
@@ -44,9 +43,9 @@ AOX_NAME = "AOX"  # not a StrategyAdapter (see aox_driver.py for why) -- handled
 # timeframe request should fail loudly, not silently degrade), so with --m1
 # now optional, --all needs to skip these cleanly instead of crashing on
 # the first one reached. SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/
-# SMC_FVG_OB_RETEST and every dormant strategy except the two listed below
-# never touch M1 at all -- confirmed by reading each adapter, not guessed.
-NEEDS_M1 = frozenset({"SMC_ENTRY_ENGINE", "ICT_KILLZONE", "LIQUIDITY_GRAB", "ADVANCED_SMC", "WYCKOFF_PATTERNS"})
+# SMC_FVG_OB_RETEST never touch M1 at all -- confirmed by reading each
+# adapter, not guessed.
+NEEDS_M1 = frozenset({"ICT_KILLZONE", "LIQUIDITY_GRAB"})
 
 
 def main():

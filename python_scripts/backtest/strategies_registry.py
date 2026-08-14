@@ -16,14 +16,7 @@ LIVE vs NOT LIVE, and why some strategies aren't here at all
 --------------------------------------------------------------
 Grepping the whole bot file for call sites (not just `def`s) found that
 only some of the strategy-shaped code in this file is ever actually
-invoked from the live trading loop. This corrects something the v1
-harness got wrong: EntryEngine.evaluate_setup() -- the class whose own
-docstring calls it the "Deterministic SMC Entry Engine" -- is NEVER
-instantiated anywhere in the file. `EdgeEngine` (which v1 correctly
-identified as live, called at two real call sites) scores whichever setup
-the ACTUAL live cascade below produced, not EntryEngine's output. v1's
-backtest was validating a fully-built, carefully-documented, but
-completely dead class. It's moved to STRATEGIES_DORMANT here.
+invoked from the live trading loop.
 
   LIVE right now (has a real call site in the file):
     - strategy_liquidity_fvg_engine()   ("STRATEGY C" / SSM FVG retest)
@@ -34,8 +27,9 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
                                           ~90-line inline block in the main
                                           loop specifically so it could be
                                           wired in here; see its own
-                                          docstring for two behavior fixes
-                                          made during that extraction)
+                                          docstring for the real bugs found
+                                          during that extraction and the
+                                          first real-data backtest)
     - detect_swappy_3c()                ("STRATEGY B" -- see its adapter's
                                           docstring for what's still
                                           excluded vs the full live path)
@@ -51,26 +45,16 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
   re-enable any of them; don't read their presence as "this is what the
   bot trades today."
 
-  Fully implemented, never had a live call site, and now physically moved
-  out of hybrid_trading_bot_multiuser.py into strategies_research.py
-  (2026-08 -- see that module's docstring for the full rationale: keeping
-  unreachable strategy code mixed into the live file made it easy to
-  reintroduce exactly the kind of bug this whole engagement kept finding,
-  e.g. Swappy 3C's correct pending-order function sitting dead for the
-  same reason):
-    - EntryEngine.evaluate_setup (see correction above)
-    - strategy_advanced_smc
-    - strategy_wyckoff_patterns
-    - strategy_volume_profile
-    - strategy_support_resistance
-    - strategy_volume_imbalance
-    - strategy_trend_pullback
-    - strategy_mean_reversion_bb
-  These are wired here too (STRATEGIES_DORMANT below, now calling
-  strategies_research.* instead of bot.*) so they can still be evaluated
-  -- but their `live=False` flag means the report should label them
-  clearly as "not currently reachable by the live bot," not blend their
-  numbers in with strategies that actually trade real money today.
+  REMOVED 2026-08 (were never live, and were fully removed rather than
+  kept dormant, after real-data backtest evidence -- see
+  python_scripts/backtest/README.md's "Dormant strategies removed"
+  section for the full numbers and reasoning): EntryEngine.evaluate_setup,
+  strategy_advanced_smc, strategy_wyckoff_patterns, strategy_volume_profile,
+  strategy_support_resistance, strategy_volume_imbalance,
+  strategy_trend_pullback, strategy_mean_reversion_bb. If any of these
+  needs to be revisited, recover it from git history (search this repo's
+  log for "strategies_research.py" or "Quarantine dormant strategies") --
+  don't rewrite from scratch.
 
   NOT a StrategyAdapter here, on purpose (but IS wired -- see aox_driver.py):
     - "STRATEGY D" / AOX. run_aox_layered_entry() was split into
@@ -82,11 +66,7 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
       StrategyAdapter's single-bar, single-trade-at-a-time contract (built
       for every other strategy here) can't express that. See aox_driver.py
       for the dedicated stateful driver and run_backtest.py's --strategy
-      AOX / --all for how to run it. Fixed along the way: reset_aox_state()
-      was dead code (zero call sites), which combined with AOX's own call
-      site running before the main loop's cooldown check meant AOX
-      permanently locked up after one completed cycle per symbol -- see
-      run_aox_layered_entry's docstring in the bot file for the fix.
+      AOX / --all for how to run it.
     - The live STRATEGY B additionally applies a location filter (near
       M5 support/resistance) and a stateful "3rd-time re-entry rule"
       (can_take_swappy_entry) on top of detect_swappy_3c()'s pattern
@@ -94,26 +74,13 @@ completely dead class. It's moved to STRATEGIES_DORMANT here.
       that adapter's docstring.
 """
 
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
 
 from .data import HistoricalDataset
 from .replay_data import replay_context
-
-# strategies_research.py lives one directory up (python_scripts/, sibling
-# to this backtest/ package), holding EntryEngine + the 7 dormant
-# strategy_* functions moved out of the live bot file (see that module's
-# docstring). Ensure python_scripts/ is importable regardless of the
-# caller's cwd -- same defensive approach bot_loader.py uses to locate the
-# bot file itself.
-_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-import strategies_research
 
 
 @dataclass
@@ -126,10 +93,10 @@ class StrategyResult:
     limit_entry: Optional[float] = None
     take_profit: Optional[float] = None  # set only if the strategy computes its own (e.g. Shaakuni)
     entry_price: Optional[float] = None  # set only if the strategy computes a specific entry
-                                          # level (e.g. EntryEngine's FVG midpoint); otherwise
-                                          # the engine fills at the current bar's close, matching
-                                          # how the live fallback strategies enter at market.
-    edge_score: Optional[float] = None   # set only for the EdgeEngine-scored path (EntryEngine)
+                                          # level; otherwise the engine fills at the current
+                                          # bar's close, matching how the live fallback
+                                          # strategies enter at market.
+    edge_score: Optional[float] = None
     edge_state: Optional[str] = None
 
 
@@ -158,14 +125,11 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
     this function's own try/except into `trend = None`). Every adapter
     that gates on `trend is None` was therefore getting rejected almost
     always on real data, regardless of what the real strategies would
-    have done -- a harness/live-parity bug of the same shape v1 made with
-    EntryEngine (assuming a function was "the" live trend source without
-    verifying it was ever called). The first real backtest run (XAUUSDm,
-    90 days) showed all four live strategies at exactly 0 trades; this
-    was the actual reason, not the strategies genuinely never firing.
-    Corrected to replicate effective_trend's real computation (see
-    hybrid_trading_bot_multiuser.py, "STEP 1: TOP-DOWN HIERARCHY", right
-    before STRATEGY A) instead.
+    have done. The first real backtest run (XAUUSDm, 90 days) showed all
+    four live strategies at exactly 0 trades; this was the actual reason,
+    not the strategies genuinely never firing. Corrected to replicate
+    effective_trend's real computation (see hybrid_trading_bot_multiuser.py,
+    "STEP 1: TOP-DOWN HIERARCHY", right before STRATEGY A) instead.
 
     Known, disclosed gap (not fixed, can't be from historical data alone):
     live's NEUTRAL/NEUTRAL fallback reads state.approved_bias, an AI(L1)-
@@ -201,55 +165,6 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
     if effective_trend == "NEUTRAL":
         return None  # live falls back to state.approved_bias -- see docstring above
     return effective_trend
-
-
-# ---------------------------------------------------------------------
-# LIVE strategies
-# ---------------------------------------------------------------------
-
-def _adapt_entry_engine(bot, dataset: HistoricalDataset, as_of, symbol):
-    """
-    NOT LIVE -- see this module's docstring. EntryEngine is never
-    instantiated anywhere in the bot file; it now lives in
-    strategies_research.py (moved out of the live file entirely -- see
-    that module's docstring) because it's cleanly self-contained and its
-    score components are genuinely derived from the setup's measured
-    liquidity/momentum/structure quality (unlike the fixed per-strategy-
-    type constants the live cascade assigns for its fallback strategies),
-    which makes it worth evaluating on its own methodological merits even
-    though it doesn't trade a single live order today. TradeContext/
-    EdgeEngine below are still genuinely live (used elsewhere in the real
-    cascade), so those still come from `bot`, not strategies_research.
-    """
-    df_h1 = dataset.window("H1", as_of, 100)
-    df_m5 = dataset.window("M5", as_of, 60)
-    df_m1 = dataset.window("M1", as_of, 30)
-    if len(df_h1) < 55 or len(df_m5) < 20 or len(df_m1) < 12:
-        return None
-
-    entry_engine = strategies_research.EntryEngine()
-    with replay_context(bot, dataset, as_of):
-        setup = entry_engine.evaluate_setup(df_h1, df_m5, df_m1)
-    if setup is None:
-        return None
-
-    ctx = bot.TradeContext(
-        liquidity_distance=setup["liquidity_distance"],
-        liquidity_strength=setup["liquidity_strength"],
-        momentum_state=setup["momentum_state"],
-        structure_alignment=setup["structure_alignment"],
-        session_strength=0.7,   # see README "Known limitations" -- not yet session-aware
-        volatility_state=0.7,
-    )
-    edge = bot.EdgeEngine().calculate(ctx)
-    if not edge.allow_entry:
-        return None
-
-    return StrategyResult(
-        direction=setup["signal"], stop_loss=setup["stop_loss"],
-        reason=setup["reason"], entry_price=setup["entry_price"],
-        edge_score=edge.score, edge_state=edge.state,
-    )
 
 
 def _adapt_ict_killzone(bot, dataset: HistoricalDataset, as_of, symbol):
@@ -382,120 +297,6 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
                            order_type="LIMIT", limit_entry=stop_entry, take_profit=tp)
 
 
-# ---------------------------------------------------------------------
-# DORMANT strategies (fully implemented, not called anywhere live today)
-# ---------------------------------------------------------------------
-
-def _adapt_advanced_smc(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        df_h1 = dataset.window("H1", as_of, 100)
-        df_m1 = dataset.window("M1", as_of, 30)
-        if len(df_m5) < 15 or len(df_h1) < 20 or len(df_m1) < 5:
-            return None
-        r = strategies_research.strategy_advanced_smc(df_m5, df_h1, trend, symbol, df_m1)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "ADVANCED_SMC"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_wyckoff(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        df_h1 = dataset.window("H1", as_of, 100)
-        df_m1 = dataset.window("M1", as_of, 30)
-        if len(df_m5) < 40:
-            return None
-        r = strategies_research.strategy_wyckoff_patterns(df_m5, df_h1, trend, symbol, df_m1)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "WYCKOFF_PATTERNS"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_volume_profile(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        if len(df_m5) < 30:
-            return None
-        r = strategies_research.strategy_volume_profile(df_m5, trend, symbol)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "VOLUME_PROFILE"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_support_resistance(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        df_m5 = dataset.window("M5", as_of, 40)
-        if len(df_m5) < 20:
-            return None
-        r = strategies_research.strategy_support_resistance(df_m5, "NEUTRAL")
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "SUPPORT_RESISTANCE"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_volume_imbalance(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 20)
-        if len(df_m5) < 5:
-            return None
-        r = strategies_research.strategy_volume_imbalance(df_m5, trend, symbol)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "VOLUME_IMBALANCE"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_trend_pullback(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend not in ("BULLISH", "BEARISH"):
-            return None
-        df_m5 = dataset.window("M5", as_of, 40)
-        if len(df_m5) < 20:
-            return None
-        r = strategies_research.strategy_trend_pullback(df_m5, trend, symbol)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "TREND_PULLBACK"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_mean_reversion_bb(bot, dataset, as_of, symbol):
-    with replay_context(bot, dataset, as_of):
-        df_m5 = dataset.window("M5", as_of, 40)
-        if len(df_m5) < 20:
-            return None
-        r = strategies_research.strategy_mean_reversion_bb(df_m5, symbol)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "MEAN_REVERSION_BB"),
-                           confidence=r.get("confidence", 0.0))
-
-
 def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     """
     STRATEGY A, now backtestable since strategy_ema_scalp_cross() was
@@ -563,16 +364,5 @@ STRATEGIES_LIVE = [
     StrategyAdapter("EMA_SCALP_CROSS", True, _adapt_ema_scalp_cross),
 ]
 
-STRATEGIES_DORMANT = [
-    StrategyAdapter("SMC_ENTRY_ENGINE", False, _adapt_entry_engine),
-    StrategyAdapter("ADVANCED_SMC", False, _adapt_advanced_smc),
-    StrategyAdapter("WYCKOFF_PATTERNS", False, _adapt_wyckoff),
-    StrategyAdapter("VOLUME_PROFILE", False, _adapt_volume_profile),
-    StrategyAdapter("SUPPORT_RESISTANCE", False, _adapt_support_resistance),
-    StrategyAdapter("VOLUME_IMBALANCE", False, _adapt_volume_imbalance),
-    StrategyAdapter("TREND_PULLBACK", False, _adapt_trend_pullback),
-    StrategyAdapter("MEAN_REVERSION_BB", False, _adapt_mean_reversion_bb),
-]
-
-ALL_STRATEGIES = STRATEGIES_LIVE + STRATEGIES_DORMANT
+ALL_STRATEGIES = STRATEGIES_LIVE
 STRATEGIES_BY_NAME = {s.name: s for s in ALL_STRATEGIES}

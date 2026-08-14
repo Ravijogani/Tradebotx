@@ -119,8 +119,10 @@ for _mod_key in list(sys.modules.keys()):
 # EMBEDDED ENGINE CLASSES (consolidated from engines/ folder)
 # EdgeEngine, CapitalController, DecisionEngineV2, RunnerManagementEngine,
 # ScalpingExitEngine -- all inline, no external deps. (EntryEngine was here
-# too but moved to strategies_research.py -- never had a live call site;
-# see that module's docstring.)
+# too but was never instantiated anywhere in this file, was backtested
+# against real historical data via the harness, and was removed 2026-08 --
+# see python_scripts/backtest/README.md's "Dormant strategies removed"
+# section for the real-data evidence behind that decision.)
 # =============================================================================
 
 class TradeContext:
@@ -253,12 +255,18 @@ class EdgeEngine:
 
 
 # EntryEngine ("ICT Algorithmic Liquidity Model -- Deterministic SMC Entry
-# Engine") moved to strategies_research.py -- never instantiated anywhere
-# in this file (confirmed by grepping call sites, not just defs). See that
-# module's docstring for why dormant strategy code lives there now instead
-# of here, and for this specific class's promotion-worthiness assessment.
-# Import it (from strategies_research import EntryEngine) if/when it's
-# deliberately wired into the live cascade -- don't recreate it here.
+# Engine") REMOVED 2026-08. Never instantiated anywhere in this file
+# (confirmed by grepping call sites, not just defs). It was the strongest
+# candidate of the 8 dormant strategies by code quality (real confluence
+# requirement -- sweep + market-structure-shift + FVG all had to align,
+# not a single-indicator trigger), but was never backtested against real
+# market data before this removal -- there wasn't a decision to keep it
+# out after real evidence, just a decision to stop carrying 8 strategies'
+# worth of unreachable code in the live file. See
+# python_scripts/backtest/README.md's "Dormant strategies removed"
+# section. Recovering it means pulling it back from git history
+# (see this file's history around the strategies_research.py commits),
+# not rewriting it from scratch.
 
 
 class CapitalController:
@@ -653,8 +661,8 @@ class AITradingConfig:
     # market), a cross is noise, not momentum, and is far more likely to
     # immediately reverse into the stop. Expressed as an ATR multiple
     # rather than the spec's fixed "~15 pips" figure, since a fixed pip
-    # count doesn't translate sensibly across Gold/BTC/forex (see the
-    # identical reasoning already in strategy_advanced_smc's min_ob_size).
+    # count doesn't translate sensibly across Gold/BTC/forex (the same
+    # reasoning the now-removed strategy_advanced_smc's min_ob_size used).
     # Starting value, not empirically validated -- tune via the backtest
     # harness (python_scripts/backtest/).
     EMA_DISTANCE_RULE_ATR_MULT: float = 0.5
@@ -3133,8 +3141,11 @@ def get_news_volatility_multiplier(symbol: str) -> float:
 # =============================================================================
 # LOCAL-FIRST STRATEGY ENGINE
 # =============================================================================
-# (All 9 strategies: strategy_ict_killzone, strategy_advanced_smc, etc.)
-# (These functions are identical to V10.1 and are kept as-is)
+# 8 of the original strategies here were removed 2026-08 (never had a live
+# call site; backtested against real historical data via the harness --
+# see python_scripts/backtest/README.md's "Dormant strategies removed"
+# section for what they were and why). What's left below is only what the
+# live cascade actually calls.
 # =============================================================================
 
 def strategy_ict_killzone(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -3162,9 +3173,9 @@ def strategy_ict_killzone(df_entry: pd.DataFrame, df_structure: pd.DataFrame, tr
                     return {"direction": "SELL", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
     return None
 
-# strategy_advanced_smc moved to strategies_research.py -- no live call
-# site (confirmed by grepping call sites, not just defs). See that
-# module's docstring for the full dormant-strategy rationale.
+# strategy_advanced_smc REMOVED 2026-08 -- no live call site (confirmed
+# by grepping call sites, not just defs). See python_scripts/backtest/
+# README.md's "Dormant strategies removed" section.
 
 def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
     """
@@ -3206,12 +3217,17 @@ def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, 
 
 # strategy_wyckoff_patterns / strategy_volume_profile / strategy_support_resistance /
 # strategy_volume_imbalance / strategy_trend_pullback / strategy_mean_reversion_bb
-# moved to strategies_research.py -- none had a live call site (confirmed
-# by grepping call sites, not just defs). See that module's docstring for
-# why (and for a per-strategy note on the two that need a closer look
-# before any promotion: WYCKOFF_PATTERNS isn't real Wyckoff method despite
-# the name, and MEAN_REVERSION_BB is a counter-trend fade, philosophically
-# the odd one out against every other momentum/liquidity strategy here).
+# REMOVED 2026-08 -- none had a live call site (confirmed by grepping call
+# sites, not just defs). 5 of 6 were backtested against real historical
+# XAUUSDm data before removal: VOLUME_PROFILE/SUPPORT_RESISTANCE/
+# MEAN_REVERSION_BB all showed negative expectancy over large samples
+# (290-541 trades each), TREND_PULLBACK was statistically flat
+# (-0.006R/trade), VOLUME_IMBALANCE essentially never fired.
+# WYCKOFF_PATTERNS needs M1 data this repo didn't have yet at removal
+# time (skipped, not tested), but was already flagged as not being
+# genuine Wyckoff method despite the name -- removed on that basis, not
+# on a real-data result. See python_scripts/backtest/README.md's
+# "Dormant strategies removed" section for the full numbers.
 
 # =============================================================================
 # EMA MOMENTUM FILTER (9/15 EMA + Slope Gate)
