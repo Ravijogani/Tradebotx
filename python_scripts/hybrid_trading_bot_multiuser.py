@@ -6461,70 +6461,91 @@ def save_ai_lesson(ticket: int, symbol: str, direction: str, lesson: str, loss_a
     except Exception as e:
         logger.error(f"[AI LEARNING] Error saving lesson: {e}", exc_info=True)
 
-def check_trade_against_lessons(symbol: str, direction: str, context: dict) -> tuple[bool, str]:
+def check_trade_against_lessons(symbol: str, direction: str, context: dict) -> tuple[bool, str, int]:
     """
-    Check if a new trade conflicts with previously learned lessons
-    Returns: (is_safe, warning_message)
+    Check if a new trade conflicts with previously learned lessons.
+    Returns: (is_safe, warning_message, match_count)
+
+    GATING-POWER FIX: this used to be advisory-only no matter what it
+    found -- every call site logged the warning at debug level and traded
+    anyway, so a lesson the bot had explicitly written down ("avoid SELL
+    XAUUSDm in Asian session, ADX<25") could be violated on the very next
+    matching setup. That's the opposite of what a real trader does with a
+    lesson they've learned. Two changes make it safe to actually act on:
+
+    1. TIGHTENED THE MATCH ITSELF. The old logic set similar_conditions=True
+       if ANY ONE of adx-close / session-equal / hour-close held -- an OR,
+       not an AND. Session alone matching one of the last 20 lessons for
+       this symbol is true by pure chance most of the time (only ~4
+       possible session values), so this was firing constantly and the
+       only reason it never caused problems is that nothing ever acted on
+       it. Now requires ALL THREE (adx within 5, same session, hour within
+       2) -- a real corroborated match, not a coincidence. Also fixed:
+       the shared pipeline's call site never passed 'adx' in context at
+       all, so context.get('adx', 100) always defaulted to 100 and the
+       ADX leg could never contribute to a match regardless of the OR/AND
+       question -- callers now pass real ADX via capture_entry_market_
+       context(), the same helper the entry-context-at-loss-analysis fix
+       already introduced.
+    2. RETURNS A MATCH COUNT, not just a bool. One matching lesson could
+       still be an AI-hallucinated or unlucky one-off; a caller can afford
+       to size down on a single strong match without betting the whole
+       trade on one AI-generated sentence. Two or more independent
+       lessons corroborating the same setup is a real, repeated pattern --
+       worth actually blocking, not just warning about.
     """
     try:
         import json
         import os
-        
+
         lessons_file = os.path.join(DATA_DIR, 'ai_trading_lessons.json')
-        
+
         if not os.path.exists(lessons_file):
-            return True, ""  # No lessons yet, allow trade
-        
+            return True, "", 0  # No lessons yet, allow trade
+
         # Load lessons
         with open(lessons_file, 'r') as f:
             lessons = json.load(f)
-        
+
         # Get recent lessons for this symbol
         recent_lessons = [
             l for l in lessons[-20:]  # Check last 20 lessons
             if l['symbol'] == symbol or 'ALL' in l['lesson'].upper()
         ]
-        
+
         if not recent_lessons:
-            return True, ""  # No relevant lessons
-        
-        # Simple keyword matching for now
-        # Future: Could use AI to check if lesson applies
+            return True, "", 0  # No relevant lessons
+
         warnings = []
-        
+
         for lesson_entry in recent_lessons:
             lesson = lesson_entry['lesson'].lower()
-            lesson_direction = lesson_entry['direction']
             lesson_context = lesson_entry.get('context', {})
-            
+
             # Check if lesson mentions this direction
-            if direction.lower() in lesson:
-                # Check context similarity
-                similar_conditions = False
-                
-                if abs(context.get('adx', 100) - lesson_context.get('adx', 0)) < 5:
-                    similar_conditions = True
-                
-                if context.get('session') == lesson_context.get('session'):
-                    similar_conditions = True
-                
-                if abs(context.get('hour', 100) - lesson_context.get('hour', 0)) < 2:
-                    similar_conditions = True
-                
-                if similar_conditions:
-                    warnings.append(f" AI Lesson: {lesson_entry['lesson'][:150]}")
-        
+            if direction.lower() not in lesson:
+                continue
+
+            # Require ALL THREE conditions to corroborate -- a real matching
+            # setup, not a one-factor coincidence (see docstring point 1).
+            adx_close = abs(context.get('adx', -100) - lesson_context.get('adx', 0)) < 5
+            session_match = context.get('session') is not None and context.get('session') == lesson_context.get('session')
+            hour_close = abs(context.get('hour', -100) - lesson_context.get('hour', 0)) < 2
+
+            if adx_close and session_match and hour_close:
+                warnings.append(f" AI Lesson: {lesson_entry['lesson'][:150]}")
+
         if warnings:
-            logger.warning(f" [AI LEARNING] Found {len(warnings)} similar past losses for {symbol} {direction}")
+            logger.warning(f" [AI LEARNING] Found {len(warnings)} corroborated past losses for {symbol} {direction}")
             for warn in warnings:
                 logger.warning(warn)
-            return False, "; ".join(warnings)
-        
-        return True, ""
-        
+            return False, "; ".join(warnings), len(warnings)
+
+        return True, "", 0
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error checking lessons: {e}", exc_info=True)
-        return True, ""  # On error, allow trade
+        return True, "", 0  # On error, allow trade
 
 # === COPY AND REPLACE THIS FUNCTION ===
 
@@ -7577,9 +7598,29 @@ def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
         logger.info(f"[AOX] {symbol}: blocked by strategy ban")
         return False
 
+    # LESSON GATING GAP FIX: same shape as the ban check above -- AOX never
+    # went through check_trade_against_lessons() at all, only the shared
+    # setup pipeline did. See that function's docstring for why a match is
+    # now safe to act on (tightened from an OR to an AND match, real ADX
+    # instead of a missing default). One corroborated match -> trade the
+    # layer smaller; two or more -> a real repeated pattern, skip this
+    # layer entirely.
+    _lesson_ctx = capture_entry_market_context(symbol)
+    _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+    if _lesson_ctx['entry_adx'] is not None:
+        _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+    _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, signal['direction'], _lesson_query_ctx)
+    _risk_fraction = signal['risk_fraction']
+    if not _lesson_ok:
+        if _lesson_matches >= 2:
+            logger.warning(f"[AOX] {symbol}: blocked -- {_lesson_matches} corroborated past losses. {_lesson_warn[:150]}")
+            return False
+        logger.info(f"[AOX] {symbol}: single lesson match, halving layer size -- {_lesson_warn[:150]}")
+        _risk_fraction = _risk_fraction * 0.5
+
     ticket = execute_aox_layer(
         symbol, signal['direction'], signal['entry_price'], signal['sl'], signal['tp'],
-        signal['risk_fraction'], signal['layer_name'], account_equity,
+        _risk_fraction, signal['layer_name'], account_equity,
     )
     if not ticket:
         return False
@@ -8642,6 +8683,26 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
     if any(banned.upper() in 'SWAPPY_3C' for banned in state.banned_strategies):
         logger.info(f"[SWAPPY 3C] {symbol}: blocked by strategy ban")
         return False
+
+    # LESSON GATING GAP FIX: same shape as the ban check above -- Swappy
+    # never went through check_trade_against_lessons() at all, only the
+    # shared setup pipeline did. See that function's docstring for why a
+    # match is now safe to act on (tightened from an OR to an AND match,
+    # real ADX instead of a missing default). One corroborated match ->
+    # halve the sized risk below; two or more -> a real repeated pattern,
+    # block outright before touching MT5 at all.
+    _lesson_ctx = capture_entry_market_context(symbol)
+    _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+    if _lesson_ctx['entry_adx'] is not None:
+        _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+    _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
+    if not _lesson_ok and _lesson_matches >= 2:
+        logger.warning(f"[SWAPPY 3C] {symbol}: blocked -- {_lesson_matches} corroborated past losses. {_lesson_warn[:150]}")
+        return False
+    _lesson_halve_size = (not _lesson_ok) and _lesson_matches == 1
+    if _lesson_halve_size:
+        logger.info(f"[SWAPPY 3C] {symbol}: single lesson match, halving size -- {_lesson_warn[:150]}")
+
     try:
         sym_info = mt5.symbol_info(symbol)
         if not sym_info: return False
@@ -8668,6 +8729,8 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
             drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
             account_equity=account_equity, pattern_health=_cc_pattern_health,
         )
+        if _lesson_halve_size:
+            _final_risk_pct = _final_risk_pct * 0.5
 
         # PORTFOLIO GATE FIX: Swappy previously bypassed SymbolCorrelationTracker,
         # MAX_CONCURRENT_TRADES, and the 25% total-portfolio-risk cap entirely
@@ -9816,13 +9879,37 @@ def ai_trading_session():
                             continue
 
 
-                # Check AI lessons -- warn if this setup matches a past losing pattern
-                _lesson_ok, _lesson_warn = check_trade_against_lessons(symbol, direction, {
-                    'session': session_str, 'hour': datetime.now(timezone.utc).hour
-                })
+                # GATING-POWER FIX: this used to log a match at debug level and
+                # trade anyway no matter what it found -- a lesson the bot had
+                # explicitly written down could be violated on the very next
+                # matching setup. Graduated response now, based on how many
+                # DISTINCT lessons corroborate this exact setup (see check_
+                # trade_against_lessons' docstring for why the match itself
+                # was tightened before trusting it with real power): one
+                # match could be a single AI-hallucinated or unlucky lesson,
+                # so trade smaller instead of betting full size on it; two or
+                # more is a real, repeated pattern -- block it, the same way
+                # a trader who's been burned twice the same way actually
+                # stops taking that setup. Real ADX (not the old default-100
+                # placeholder the call site never actually supplied) via
+                # capture_entry_market_context() -- same helper the loss-
+                # analysis entry-context fix already introduced.
+                _lesson_ctx = capture_entry_market_context(symbol)
+                _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+                if _lesson_ctx['entry_adx'] is not None:
+                    _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+                _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
                 if not _lesson_ok:
-                    # Log as warning but don't block -- lessons are advisory, not mandatory
-                    logger.debug(f"[AI LESSON] {symbol} {direction}: advisory warning -- {_lesson_warn[:80]}")
+                    if _lesson_matches >= 2:
+                        logger.warning(
+                            f"[AI LESSON] {symbol} {direction}: blocked -- {_lesson_matches} "
+                            f"corroborated past losses. {_lesson_warn[:150]}"
+                        )
+                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=30)
+                        continue
+                    else:
+                        logger.info(f"[AI LESSON] {symbol} {direction}: single match, halving size -- {_lesson_warn[:150]}")
+                        final_risk = final_risk * 0.5
 
                 # PORTFOLIO RISK CHECK: total risk across all open + this trade
                 # Prevent portfolio wipeout even if individual trades are sized correctly
