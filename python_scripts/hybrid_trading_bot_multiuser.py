@@ -350,6 +350,43 @@ class CapitalController:
                 regime in ["TRENDING","TRENDING_UP","TRENDING_DOWN"] and
                 lifecycle in ["EXPANSION","SWEEP_AND_DISPLACE"])
 
+
+def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple[bool, str]:
+    """
+    Portfolio-level risk gates the shared setup pipeline already enforces for
+    Shaakuni SSM / EMA Scalp Cross -- SymbolCorrelationTracker exposure
+    limiting, the MAX_CONCURRENT_TRADES stacking limit, and the 25%
+    total-portfolio-risk cap -- extracted here so execute_aox_layer() and
+    place_swappy_pending_order() can apply the exact same checks instead of
+    bypassing all three entirely. Same architectural gap as the ban/unban fix
+    and the CapitalController-sizing fix (both already closed for these two
+    strategies) -- this closes the last piece of the "smart pipeline vs
+    self-executing strategies" split.
+
+    Deliberately conservative where the shared pipeline has an escape hatch:
+    the pipeline's MAX_CONCURRENT_TRADES check can be overridden by
+    cap_ctrl.allow_stacking(), but that needs an EdgeEngine regime/lifecycle
+    read that neither AOX nor Swappy compute today -- rather than fake a
+    regime value to unlock stacking, this blocks outright at the limit until
+    that's wired in too.
+    """
+    corr_allowed, corr_reason = correlation_tracker.should_allow_trade(symbol)
+    if not corr_allowed:
+        return False, f"correlation ({corr_reason})"
+
+    open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+    if open_count >= config.MAX_CONCURRENT_TRADES:
+        return False, f"MAX_CONCURRENT_TRADES ({open_count}/{config.MAX_CONCURRENT_TRADES})"
+
+    # Same heuristic the shared pipeline uses: assume each already-open
+    # position is roughly BASE_RISK_PERCENT (now a correct 1.0%, not the old
+    # 10.0% bug) and add this trade's own real sized risk on top.
+    total_risk_pct = open_count * config.BASE_RISK_PERCENT + this_trade_risk_pct
+    if total_risk_pct > 25.0:
+        return False, f"portfolio risk cap ({total_risk_pct:.1f}% > 25%)"
+
+    return True, ""
+
     def should_throttle_frequency(self, recent_edge_quality_low: bool) -> bool:
         return recent_edge_quality_low
 
@@ -455,6 +492,17 @@ class ScalpingExitEngine:
         """
         # 1. TP hit or near TP -- scale out to lock profit
         if ctx.liquidity_state == "HIT":
+            return "SCALE_OUT"
+
+        # 1b. DEAD-CONFIG FIX: ENABLE_PARTIAL_TP / PARTIAL_TP_RR had zero live
+        # read sites anywhere in this file despite looking like they control
+        # exactly this behavior -- the only partial-scale-out trigger was (1)
+        # above (90% progress toward TP). Wired in as an additional trigger,
+        # not a replacement: scale out at a fixed R-multiple OR at 90%
+        # progress, whichever comes first -- matches the config's own comment
+        # ("Partial at 1:2") without touching the progress-based trigger
+        # that's already tuned and working.
+        if config.ENABLE_PARTIAL_TP and ctx.r_multiple >= config.PARTIAL_TP_RR:
             return "SCALE_OUT"
 
         # 2. STRUCTURAL FAILURE: price crossed past SL level significantly
@@ -710,10 +758,22 @@ class AITradingConfig:
     ATR_PERIOD: int = 14
     
     # DYNAMIC PARAMETERS
-    
+
     # SMC PARAMETERS (No more ATR-based SL)
-    SL_BUFFER_PIPS: float = 2.0      # Buffer below sweep
-    TP_RR_RATIO: float = 3.0         # Target 1:3 RR
+    # SL_BUFFER_PIPS and TP_RR_RATIO were removed here (DEAD-CONFIG cleanup) --
+    # both had zero live read sites (only ever assigned to state.struct_sl_buffer/
+    # state.struct_tp_ratio at startup, which were themselves never read again
+    # anywhere in this file) and no sensible live insertion point: every live
+    # strategy computes its own structural SL (order-block edge, swing extreme,
+    # Fibonacci-SD extension -- see strategy_shaakuni_ssm/detect_swappy_3c/
+    # strategy_ema_scalp_cross/compute_aox_fibonacci) and its own TP target,
+    # not a generic pip-buffer or fixed RR ratio. The one place a generic
+    # fallback RR is genuinely used -- get_dynamic_trade_params()'s emergency
+    # fallback TP calc -- already reads TP_PRIMARY_RR/TP_RUNNER_RR (defined
+    # further down), a completely separate, already-live pair of config
+    # fields; it never read this TP_RR_RATIO field at all. PARTIAL_TP_RR, by
+    # contrast, WAS wired in this round -- see ScalpingExitEngine.decide()'s
+    # SCALE_OUT trigger.
     PARTIAL_TP_RR: float = 2.0       # Partial at 1:2
     
     ENABLE_BREAKEVEN: bool = True
@@ -1444,10 +1504,10 @@ class AITradingState:
         self.daily_start_equity: float = 0.0
         
         # DYNAMIC PARAMETERS
-        # [SMC] Structure-based parameters (No more ATR multipliers)
-        self.struct_sl_buffer: float = config.SL_BUFFER_PIPS
-        self.struct_tp_ratio: float = config.TP_RR_RATIO
-        
+        # struct_sl_buffer/struct_tp_ratio (from the now-removed SL_BUFFER_PIPS/
+        # TP_RR_RATIO config fields) removed here too -- see the DEAD-CONFIG
+        # cleanup comment on PARTIAL_TP_RR in AITradingConfig for why.
+
         # Trade management
         self.be_moved: set = set()
         self.trailing_active: set = set()
@@ -5400,16 +5460,20 @@ def manage_all_positions():
                             "comment": f"ExitEng_Exit",
                             "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC
                         })
-                elif exit_decision in ("PARTIAL", "SCALE_OUT"):
+                elif exit_decision in ("PARTIAL", "SCALE_OUT") and config.ENABLE_PARTIAL_TP:
+                    # DEAD-CONFIG FIX: ENABLE_PARTIAL_TP previously gated nothing --
+                    # this action fired regardless of the flag. Also now uses the
+                    # configured PARTIAL_TP_PERCENT instead of a hardcoded 0.5.
                     spec_e = get_symbol_specs(symbol)
                     lot_step_e = spec_e.get('lot_step', 0.01)
                     if params.get('initial_volume') is None:
                         params['initial_volume'] = current_volume
                         state.open_positions[ticket]['params'] = params
-    
+
                     if current_volume >= params['initial_volume'] * 0.9 and current_volume > lot_step_e:
                         logger.info(f" [EXIT ENGINE] Partial close {symbol} #{ticket} ({exit_decision})")
-                        redu_vol = round((current_volume * 0.5) / lot_step_e) * lot_step_e
+                        _partial_frac = max(0.0, min(1.0, config.PARTIAL_TP_PERCENT / 100.0))
+                        redu_vol = round((current_volume * _partial_frac) / lot_step_e) * lot_step_e
                         if redu_vol >= lot_step_e:
                             if close_partial_position(ticket, redu_vol):
                                 # Persist to Supabase IMMEDIATELY so restart knows partial was done
@@ -5441,11 +5505,19 @@ def manage_all_positions():
                 logger.info(f" [DECISION V2] Cooldown set for {symbol} (15 min)")
 
             elif decision == "REDUCE":
+                # Not gated by ENABLE_PARTIAL_TP on purpose -- this is
+                # DecisionEngineV2 cutting risk on a deteriorating trade, not
+                # taking profit; those are different controls even though
+                # they share the same "trim volume" mechanics. Reuses
+                # PARTIAL_TP_PERCENT for the trim fraction since there's no
+                # dedicated reduce-percent config and 50% is a reasonable
+                # shared default either way.
                 spec_d = get_symbol_specs(symbol)
                 lot_step_d = spec_d.get('lot_step', 0.01)
                 if current_volume > lot_step_d:
                     logger.info(f" [DECISION V2] Reduce risk on {symbol} #{ticket}")
-                    redu_vol = round((current_volume * 0.5) / lot_step_d) * lot_step_d
+                    _reduce_frac = max(0.0, min(1.0, config.PARTIAL_TP_PERCENT / 100.0))
+                    redu_vol = round((current_volume * _reduce_frac) / lot_step_d) * lot_step_d
                     if redu_vol >= lot_step_d:
                         if close_partial_position(ticket, redu_vol):
                             try:
@@ -5552,8 +5624,14 @@ def manage_all_positions():
 
             # -- AOX: SD-based TPs were set at entry; do NOT trail-stop them early.
             # The MT5 TP handles partial exits; we only protect with BE at 1R.
+            # DEAD-CONFIG FIX: ENABLE_BREAKEVEN previously gated nothing anywhere
+            # -- now a real global kill switch across all three BE branches
+            # (this one, SWAPPY's below, and generic Stage 1 further down).
+            # AOX's own 1.0R trigger is a deliberate strategy-specific choice
+            # (documented above, distinct from the generic BREAKEVEN_TRIGGER_RR)
+            # and is left untouched -- only the on/off flag is wired in here.
             if _strategy_type == 'AOX':
-                if r_multiple >= 1.0 and ticket not in state.be_moved:
+                if config.ENABLE_BREAKEVEN and r_multiple >= 1.0 and ticket not in state.be_moved:
                     _dig_aox = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                     _be_aox  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_aox)
                     _be_aox_rounded = round(_be_aox, _dig_aox)
@@ -5572,8 +5650,13 @@ def manage_all_positions():
                 continue  # AOX exits via MT5 TP levels set on entry, not trailing
 
             # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening. BE at 2R only.
+            # Same ENABLE_BREAKEVEN wiring as AOX above; SWAPPY's own 2.0R trigger
+            # is left untouched. Note: the 3R+ trail below requires
+            # `ticket in state.be_moved`, so disabling BE here also implicitly
+            # disables that trail -- BE is the prerequisite state marker for it,
+            # not a separate control, so this is the correct behavior, not a gap.
             if _strategy_type == 'SWAPPY':
-                if r_multiple >= 2.0 and ticket not in state.be_moved:
+                if config.ENABLE_BREAKEVEN and r_multiple >= 2.0 and ticket not in state.be_moved:
                     _dig_sw = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                     _be_sw  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_sw)
                     _be_sw_r = round(_be_sw, _dig_sw)
@@ -5616,9 +5699,17 @@ def manage_all_positions():
             current_profit_dist = (current_price - entry_price) if is_buy else (entry_price - current_price)
 
             # ------------------------------------------------------------------
-            # STAGE 1: BREAKEVEN (first time r_multiple hits 1.0R)
+            # STAGE 1: BREAKEVEN (first time r_multiple hits BREAKEVEN_TRIGGER_RR)
+            # DEAD-CONFIG FIX: this used to hardcode 1.0 regardless of
+            # BREAKEVEN_TRIGGER_RR (config default 1.5) and ENABLE_BREAKEVEN
+            # (neither had a live read site anywhere in this file). Both now
+            # actually control this stage -- same flag AOX/SWAPPY's dedicated
+            # BE branches above respect, but this is the only branch whose
+            # *trigger R-multiple* is the configurable one, since AOX/SWAPPY's
+            # 1.0R/2.0R are deliberate strategy-specific choices, not this
+            # generic default.
             # ------------------------------------------------------------------
-            if r_multiple >= 1.0 and ticket not in state.be_moved:
+            if config.ENABLE_BREAKEVEN and r_multiple >= config.BREAKEVEN_TRIGGER_RR and ticket not in state.be_moved:
                 be_price = (entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer)
                 _dig_be = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                 be_price_rounded = round(be_price, _dig_be)
@@ -6832,6 +6923,17 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
             drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
             account_equity=account_equity, pattern_health=_cc_pattern_health,
         )
+
+        # PORTFOLIO GATE FIX: AOX previously bypassed SymbolCorrelationTracker,
+        # MAX_CONCURRENT_TRADES, and the 25% total-portfolio-risk cap entirely
+        # -- all three only ever checked in the shared setup pipeline
+        # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
+        # sizing fixes; see portfolio_risk_gates_allow's docstring.
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        if not _gate_ok:
+            logger.info(f"[AOX {layer_name}] {symbol}: blocked by {_gate_reason}")
+            return 0
+
         risk_amount = account_equity * (_final_risk_pct / 100.0) * risk_fraction
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return 0
@@ -8160,6 +8262,17 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
             drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
             account_equity=account_equity, pattern_health=_cc_pattern_health,
         )
+
+        # PORTFOLIO GATE FIX: Swappy previously bypassed SymbolCorrelationTracker,
+        # MAX_CONCURRENT_TRADES, and the 25% total-portfolio-risk cap entirely
+        # -- all three only ever checked in the shared setup pipeline
+        # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
+        # sizing fixes; see portfolio_risk_gates_allow's docstring.
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        if not _gate_ok:
+            logger.info(f"[SWAPPY 3C] {symbol}: blocked by {_gate_reason}")
+            return False
+
         risk_amount = account_equity * (_final_risk_pct / 100.0)
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return False
