@@ -3221,6 +3221,44 @@ def is_kill_zone(current_hour: int) -> bool:
         if start <= current_hour < end: return True
     return False
 
+
+def capture_entry_market_context(symbol: str) -> dict:
+    """
+    MARKET-CONTEXT-AT-ENTRY BUG FIX: analyze_loss_with_ai() claimed to
+    analyze "market context at entry" but actually called get_market_data()
+    /get_current_session()/datetime.now() at ANALYSIS time -- i.e. whenever
+    the trade happened to close, which can be minutes to hours after entry.
+    A trade opened during the LONDON_NY overlap that gets analyzed after it
+    closes during the Asian session would tell the AI "Session: ASIAN,
+    Hour: 2" as if that were the entry condition -- actively wrong, not
+    just imprecise, and exactly the kind of thing that undermines "the bot
+    shows its own mistakes honestly" if the mistake it shows is itself
+    inaccurate.
+
+    Real fix: capture this once, right when a position is actually opened
+    (all three entry paths -- place_ai_trade, execute_aox_layer, and
+    check_swappy_expirations' fill-detection branch -- call this and store
+    the result in state.open_positions[ticket]['params']), and have
+    analyze_loss_with_ai() read that stored snapshot back at close time
+    instead of re-deriving "current" conditions and mislabeling them.
+
+    Failure is non-fatal by design (returns adx=None on any data error) --
+    a missing ADX at entry shouldn't block placing the trade itself, this
+    is analysis-quality data, not a trading gate.
+    """
+    session = get_current_session()
+    hour = datetime.now(timezone.utc).hour
+    adx = None
+    try:
+        df = get_market_data(symbol, config.ENTRY_TF, 20)
+        if df is not None and len(df) > 14:
+            adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+            if len(adx_val) > 0:
+                adx = float(adx_val.iloc[-1])
+    except Exception as e:
+        logger.debug(f"[ENTRY CONTEXT] {symbol}: ADX capture failed: {e}")
+    return {'entry_session': session, 'entry_hour': hour, 'entry_adx': adx}
+
 def get_symbol_specs(symbol: str) -> Dict:
     info = mt5.symbol_info(symbol)
     if info:
@@ -6242,23 +6280,54 @@ def analyze_loss_with_ai(ticket: int, deal, profit: float):
         take_profit = trade_data.get('take_profit', 0)
         entry_time = trade_data.get('timestamp', '')
         exit_time = datetime.now(timezone.utc).isoformat()
-        
-        # Get market context at entry
+
+        # MARKET-CONTEXT-AT-ENTRY BUG FIX: this used to unconditionally call
+        # get_market_data()/get_current_session()/datetime.now() right here --
+        # i.e. at ANALYSIS time (whenever this trade happens to close), and
+        # labeled the result "market context at entry" in the prompt below.
+        # For a trade open more than a few minutes that's not an
+        # approximation, it's just wrong -- session and hour in particular
+        # can differ completely from what they actually were at entry (a
+        # trade opened during the LONDON_NY overlap that closes hours later
+        # during the Asian session would tell the AI "Session: ASIAN" as if
+        # that were the entry condition). capture_entry_market_context() is
+        # now called at all three entry points (place_ai_trade,
+        # execute_aox_layer, check_swappy_expirations' fill-detection
+        # branch) and stored in state.open_positions[ticket]['params'] --
+        # still present here, update_closed_trades() calls this function
+        # before deleting that entry. Read the real entry-time snapshot when
+        # it's there; only fall back to current conditions -- honestly
+        # labeled as post-exit, not mislabeled as "at entry" -- for
+        # positions opened before this fix or if state was lost across a
+        # restart.
         df = get_market_data(symbol, config.ENTRY_TF, 50)
         if df is None:
             logger.warning(f"[AI LEARNING] Could not get market data for {symbol}")
             return
-        
-        # Calculate market conditions
-        try:
-            adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
-            adx = adx_val.iloc[-1] if len(adx_val) > 0 else 0
-        except:
-            adx = 0
-        
-        session = get_current_session()
-        hour = datetime.now(timezone.utc).hour
-        
+
+        _entry_ctx = state.open_positions.get(ticket, {}).get('params', {})
+        if 'entry_session' in _entry_ctx:
+            session = _entry_ctx.get('entry_session')
+            hour = _entry_ctx.get('entry_hour')
+            adx = _entry_ctx.get('entry_adx')
+            context_label = "AT ENTRY"
+            if adx is None:  # capture_entry_market_context's own ADX fetch failed at the time
+                try:
+                    adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+                    adx = float(adx_val.iloc[-1]) if len(adx_val) > 0 else 0
+                except Exception:
+                    adx = 0
+                context_label = "session/hour AT ENTRY, ADX AT EXIT (entry value unavailable)"
+        else:
+            try:
+                adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+                adx = adx_val.iloc[-1] if len(adx_val) > 0 else 0
+            except Exception:
+                adx = 0
+            session = get_current_session()
+            hour = datetime.now(timezone.utc).hour
+            context_label = "AT EXIT (no entry-time snapshot available for this trade)"
+
         # Build AI analysis prompt
         prompt = f"""You are an expert forex trading analyst. Analyze this LOSING trade and identify what went wrong.
 
@@ -6274,7 +6343,7 @@ TRADE DETAILS:
 - Exit Time: {exit_time}
 - Duration: ~{(datetime.fromisoformat(exit_time.replace('Z', '+00:00')) - datetime.fromisoformat(entry_time.replace('Z', '+00:00'))).seconds // 60} minutes
 
-MARKET CONDITIONS:
+MARKET CONDITIONS ({context_label}):
 - ADX (Trend Strength): {adx:.1f}
 - Session: {session}
 - Hour (UTC): {hour}
@@ -6292,16 +6361,17 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
 
         # Call Gemini AI for analysis via central provider
         lesson = ai_provider.call_ai(prompt, "You are an expert forex analyst.", temperature=0.3)
-        
+
         if lesson:
             # Clean up potential AI junk
             lesson = lesson.strip().replace('"', '').replace('*', '')
-            
+
             # Store the lesson
             save_ai_lesson(ticket, symbol, direction, lesson, profit, {
                 'adx': adx,
                 'session': session,
                 'hour': hour,
+                'context_timing': context_label,
                 'entry_price': entry_price,
                 'exit_price': exit_price
             })
@@ -6988,6 +7058,7 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                     'symbol':        symbol,
                     'strategy_type': _strat_t,     # CRITICAL: needed for strategy-specific management
                     'aox_fib':       _aox_fib,     # AOX SD levels: tp1_near/tp1_far/tp2_near/tp2_mid/tp2_far
+                    **capture_entry_market_context(symbol),  # entry_session/entry_hour/entry_adx -- see its docstring
                 }
             }
             return True
@@ -7275,6 +7346,7 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                     'is_runner': False,
                     'edge_score': 75.0,
                     'exit_aggressiveness': 'HOLD',  # AOX holds to SD levels
+                    **capture_entry_market_context(symbol),  # entry_session/entry_hour/entry_adx -- see its docstring
                 }
             }
             # BUG FIX: AOX never logged its trades to the DB at all -- it places
@@ -8758,6 +8830,12 @@ def check_swappy_expirations():
                         'is_runner': False,
                         'edge_score': 70.0,
                         'exit_aggressiveness': 'HOLD',
+                        # entry_session/entry_hour/entry_adx -- see capture_entry_market_context's
+                        # docstring. Captured here at FILL-detection time (this branch only runs
+                        # once the pending order is confirmed to have become a live position),
+                        # not at the earlier pending-order placement -- closer to the real entry
+                        # moment than analyzing it whenever the loss eventually gets closed out.
+                        **capture_entry_market_context(info['symbol']),
                     }
                 }
                 async_logger.log_trade_async({
