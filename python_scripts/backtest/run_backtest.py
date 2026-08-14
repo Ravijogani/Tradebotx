@@ -18,8 +18,13 @@ Run just AOX, with its SMT-divergence correlated pair:
         --strategy AOX --corr-symbol XAGUSDm --corr-m15 XAGUSDm_M15.csv --out trades.csv
 
 See README.md for which strategies are LIVE vs NOT LIVE, and which
-timeframes each one needs (SHAAKUNI_SSM needs --h4; AOX needs --m1;
-AOX's SMT-divergence gate needs --corr-symbol/--corr-m15, optional).
+timeframes each one needs. --m1 is optional -- only AOX/ICT_KILLZONE/
+LIQUIDITY_GRAB/SMC_ENTRY_ENGINE/ADVANCED_SMC/WYCKOFF_PATTERNS need it;
+SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/SMC_FVG_OB_RETEST and the rest of
+the dormant strategies don't. Without --m1, those get skipped cleanly
+(printed, not a crash) and everything else still runs. --h4 is needed
+for SHAAKUNI_SSM specifically. AOX's SMT-divergence gate additionally
+needs --corr-symbol/--corr-m15, optional on top of --m1.
 """
 
 import argparse
@@ -34,12 +39,24 @@ from .strategies_registry import ALL_STRATEGIES, STRATEGIES_BY_NAME
 
 AOX_NAME = "AOX"  # not a StrategyAdapter (see aox_driver.py for why) -- handled as a separate CLI path below
 
+# Adapters whose bodies call dataset.window("M1", ...) -- window() raises a
+# plain KeyError for a timeframe that wasn't loaded (deliberately: a typo'd
+# timeframe request should fail loudly, not silently degrade), so with --m1
+# now optional, --all needs to skip these cleanly instead of crashing on
+# the first one reached. SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/
+# SMC_FVG_OB_RETEST and every dormant strategy except the two listed below
+# never touch M1 at all -- confirmed by reading each adapter, not guessed.
+NEEDS_M1 = frozenset({"SMC_ENTRY_ENGINE", "ICT_KILLZONE", "LIQUIDITY_GRAB", "ADVANCED_SMC", "WYCKOFF_PATTERNS"})
+
 
 def main():
     p = argparse.ArgumentParser(description="TradeBotX strategy backtest harness")
     p.add_argument("--symbol", required=True, help="Symbol name as used in the live bot's SYMBOL_SPECS, e.g. XAUUSDm")
     p.add_argument("--data-dir", required=True, help="Directory containing the historical CSVs")
-    p.add_argument("--m1", required=True, help="M1 CSV filename (relative to --data-dir)")
+    p.add_argument("--m1", default=None,
+                    help="M1 CSV filename (relative to --data-dir). Only AOX actually needs M1 -- "
+                         "SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS/ICT_KILLZONE/LIQUIDITY_GRAB don't touch it. "
+                         "Omit it and AOX is skipped with a clear message; everything else still runs.")
     p.add_argument("--m5", required=True, help="M5 CSV filename (relative to --data-dir)")
     p.add_argument("--h1", required=True, help="H1 CSV filename (relative to --data-dir)")
     p.add_argument("--m15", default=None, help="M15 CSV filename (only needed for SMC_FVG_OB_RETEST's HTF confluence check)")
@@ -61,7 +78,9 @@ def main():
     bot = import_bot_module()
 
     print(f"Loading historical data for {args.symbol}...")
-    timeframes = {"M1": args.m1, "M5": args.m5, "H1": args.h1}
+    timeframes = {"M5": args.m5, "H1": args.h1}
+    if args.m1:
+        timeframes["M1"] = args.m1
     if args.m15:
         timeframes["M15"] = args.m15
     if args.h4:
@@ -88,6 +107,9 @@ def main():
     for adapter in adapters:
         if adapter.name == "SHAAKUNI_SSM" and "H4" not in dataset.frames:
             print(f"\nSkipping {adapter.name}: needs --h4 (not provided)")
+            continue
+        if adapter.name in NEEDS_M1 and "M1" not in dataset.frames:
+            print(f"\nSkipping {adapter.name}: needs --m1 (not provided)")
             continue
         print(f"\nRunning {adapter.name}...")
         engine = BacktestEngine(bot, dataset, config, adapter)
