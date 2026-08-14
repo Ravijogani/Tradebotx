@@ -502,10 +502,42 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     extracted from the main loop into a standalone function. Mirrors the
     live call site exactly: df_m5 + the H4-aligned bias direction.
 
-    TP: the live setup dict's 'ema50_tp' (the 50 EMA) is the doc-specified
-    structural target, not an R-multiple -- mapped directly to
-    StrategyResult.take_profit here, same as Shaakuni's own 'tp' field, so
-    the engine doesn't fall back to --rr for this strategy either.
+    BUG FIX (2026-08, found from the first real-data run -- XAUUSDm,
+    90 days, 223 EMA_SCALP_CROSS trades, 0.4% win rate, every "TP" exit
+    was actually a loss): this used to pass the setup dict's 'ema50_tp'
+    straight through as StrategyResult.take_profit. That field is always
+    on the WRONG side of entry by construction -- the cross-validity gate
+    in strategy_ema_scalp_cross() requires _cur_price > _e50 for a BUY
+    signal (and < for SELL), so a TP set to _e50 is always below entry
+    for BUY / above entry for SELL, i.e. a guaranteed-loss target, not a
+    take-profit. This is real in the live bot's own strategy function too
+    -- but it does NOT actually reach a real order live: get_dynamic_
+    trade_params()'s ema50_tp_hint handling (search that name) only
+    applies the 50 EMA as TP if `ema50_tp_hint > entry_price` for BUY /
+    `< entry_price` for SELL AND it clears a 1.2:1 RR minimum -- a
+    condition this value can never satisfy, so live silently and
+    permanently falls back to its own structural swing-based TP1
+    (computed earlier in that same large, tick/account-dependent
+    function) instead. The "50 EMA is the primary TP" feature this
+    strategy's docstring/doc-spec describes is therefore 100% inert in
+    live, not just in this harness -- worth knowing on its own, separate
+    from the harness bug. (Corrects an earlier, wrong claim in this
+    repo's README that this wiring was "verified already correctly
+    wired" -- it reaches the parameter, but the geometry means it can
+    never actually activate; that's a materially different, weaker claim
+    than "wired and working.")
+
+    Fix here: don't pass the broken value through at all. get_dynamic_
+    trade_params()'s real fallback (structural swing TP1, hard-minimum
+    1.2:1 RR, auto-adjusted to 1.5x SL if below that) needs a live tick
+    and account_info() to compute entry price and risk caps -- there's no
+    honest historical equivalent to replay it exactly. Falling back to
+    the engine's generic --rr multiple (same as every other fallback-style
+    adapter here that doesn't set its own take_profit, e.g. ICT_KILLZONE/
+    LIQUIDITY_GRAB) is a disclosed approximation of live's real RR-gated
+    TP, not a byte-exact replication -- but it's a real target on the
+    correct side of entry, which is what matters most: the prior behavior
+    wasn't an approximation of anything, it was unconditionally wrong.
     """
     with replay_context(bot, dataset, as_of):
         trend = _get_trend(bot, dataset, as_of, symbol)
@@ -519,8 +551,7 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     if not r:
         return None
     return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],
-                           reason=r.get("reason", "EMA_SCALP_CROSS"),
-                           take_profit=r.get("ema50_tp"))
+                           reason=r.get("reason", "EMA_SCALP_CROSS"))
 
 
 STRATEGIES_LIVE = [

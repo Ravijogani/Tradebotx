@@ -125,9 +125,25 @@ Per the 9/15/50/200 EMA framework spec:
 - **Enabled by default** (`ENABLE_STRATEGY_EMA_SCALP = True`). The existing
   implementation already matched the spec reasonably well before touching
   anything: a 9/25 EMA cross (the spec explicitly allows 25 as a
-  documented variant of 15), a hard 200 EMA macro-trend gate, and the 50
-  EMA used as the primary TP target (via `ema50_tp` -> `get_dynamic_trade_
-  params`'s `ema50_tp_hint`, verified already correctly wired, not new).
+  documented variant of 15) and a hard 200 EMA macro-trend gate.
+- **CORRECTION (2026-08, found from the first real-data backtest run):**
+  the claim right above used to also say the 50 EMA TP wiring
+  (`ema50_tp` -> `get_dynamic_trade_params`'s `ema50_tp_hint`) was
+  "verified already correctly wired." That was wrong -- verified only
+  that the value *reaches* the parameter, not that it ever actually
+  takes effect. `ema50_tp` is always on the wrong side of entry by
+  construction (the cross-validity gate in `strategy_ema_scalp_cross()`
+  requires price already be above the 50 EMA for a BUY signal, below for
+  a SELL), and `get_dynamic_trade_params`'s own guard only applies it as
+  TP when it's on the *correct* side with >=1.2:1 RR -- a condition this
+  value can structurally never meet. Live silently, permanently falls
+  back to its structural swing-based TP1 instead. The "50 EMA is the
+  primary TP target" feature this spec describes has never actually
+  fired in live. See `strategies_registry.py`'s `_adapt_ema_scalp_cross`
+  docstring for the full trace and the harness-side fix (the adapter
+  used to pass this broken value straight through, producing a
+  catastrophic-looking 0.4% win rate on real data that was actually a
+  harness bug, not the strategy's real performance).
 - **Added: the "Distance Rule"** — the spec's no-trade-zone filter for when
   the 9/25 cluster and 50 EMA are bunched/braided (ranging market, cross
   is noise not momentum). Implemented as an ATR-relative gap requirement
