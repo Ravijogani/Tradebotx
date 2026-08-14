@@ -2990,6 +2990,49 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.ewm(span=period, adjust=False).mean()
 
+
+def adaptive_sl_buffer(anchor_low: float, anchor_high: float, anchor_open: float,
+                        anchor_close: float, direction: str, base_buffer: float,
+                        wick_fraction: float = 0.5) -> float:
+    """
+    TRAP-AWARE SL BUFFER: gives a bigger SL buffer to a bigger trap.
+
+    Every live strategy's SL anchors to a structural candle -- Shaakuni's
+    extreme order block, Swappy's setup-range extreme, EMA scalp's swing
+    extreme -- and until now all three padded that anchor with an
+    identical flat 0.3xATR buffer, regardless of how violent the specific
+    candle that set the anchor actually was. A candle with a long wick
+    (price swept far beyond its own body before rejecting -- exactly what
+    a stop hunt or liquidity grab looks like) needs more room before a
+    second, shallower poke past the same level should be read as "the
+    trade is genuinely invalidated" rather than "the same trap, still
+    unfolding." A candle with almost no wick doesn't need that extra room,
+    and paying for it anyway would be pure unnecessary risk.
+
+    anchor_*: OHLC of the single candle the SL is measured from (the OB
+    candle, the swing-extreme candle, whichever one candle *is* the
+    anchor -- not the whole scanned window).
+    direction: 'BUY' -> SL sits below the anchor (wick of interest is the
+    LOW wick below the candle's real body). 'SELL' -> SL sits above (HIGH
+    wick above the body).
+    base_buffer: the pre-existing 0.3xATR (or equivalent) floor -- this
+    function only ever WIDENS it, never narrows it below that floor.
+    wick_fraction: how much of the anchor candle's own wick to add on top
+    of base_buffer. Deliberately conservative (0.5) -- this nudges risk
+    for a violent anchor candle, it doesn't double it.
+
+    Pure function of OHLC already on hand in every call site (no MT5, no
+    extra data fetch) -- identical in live and backtest by construction,
+    same guarantee _get_trend's docstring explains for trend replication.
+    """
+    body_low = min(anchor_open, anchor_close)
+    body_high = max(anchor_open, anchor_close)
+    if direction == 'BUY':
+        wick = max(0.0, body_low - anchor_low)
+    else:
+        wick = max(0.0, anchor_high - body_high)
+    return max(base_buffer, wick * wick_fraction)
+
 def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Tuple[pd.Series, pd.Series, pd.Series]:
     tr = calculate_atr(high, low, close, 1)
     move_up = high.diff()
@@ -3543,6 +3586,108 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str) -> dict:
     except Exception as e:
         return {**empty, "reason": f"Swappy error: {e}"}
 
+
+def compute_swappy_sl(df_m5: 'pd.DataFrame', direction: str, atr_m5: float) -> float:
+    """
+    Swappy's SL computation, extracted so the live main loop's STRATEGY B
+    block and the backtest's _adapt_swappy_3c adapter call the exact same
+    logic instead of two independently-maintained copies of it (the two
+    had already drifted apart once before this extraction -- not
+    correctness-breaking, but exactly the kind of duplication this
+    codebase has repeatedly found real bugs hiding in). detect_swappy_3c()
+    itself doesn't compute a SL, only the pattern match -- this is that
+    missing piece, factored out to its own function.
+
+    TRAP-AWARE SL: was a flat atr*0.3 buffer regardless of how violent the
+    anchor candle's own wick was -- see adaptive_sl_buffer's docstring.
+    """
+    scan = df_m5.iloc[-15:]
+    if direction == 'BUY':
+        anchor_idx = scan['low'].idxmin()
+        anchor = scan.loc[anchor_idx]
+        buf = adaptive_sl_buffer(
+            float(anchor['low']), float(anchor['high']),
+            float(anchor['open']), float(anchor['close']),
+            'BUY', atr_m5 * 0.3,
+        )
+        return float(scan['low'].min()) - buf
+    else:
+        anchor_idx = scan['high'].idxmax()
+        anchor = scan.loc[anchor_idx]
+        buf = adaptive_sl_buffer(
+            float(anchor['low']), float(anchor['high']),
+            float(anchor['open']), float(anchor['close']),
+            'SELL', atr_m5 * 0.3,
+        )
+        return float(scan['high'].max()) + buf
+
+
+def find_swappy_structural_tp(df: 'pd.DataFrame', direction: str, entry_price: float,
+                               sl_dist: float, min_rr: float = 1.5,
+                               pivot_n: int = 3, lookback_bars: int = 80) -> Optional[float]:
+    """
+    DYNAMIC TP FIX: Swappy was the one live strategy with a 100% fixed 3:1
+    RR target regardless of market structure -- Shaakuni's TP is the swept
+    candle's own extreme, EMA scalp's is the 50 EMA, AOX's is a Fibonacci
+    extension off the actual spike; all three read the market, Swappy just
+    multiplied. If real resistance/support sits closer than 3R, holding
+    for a target price rarely reaches gives back profit on the pullback
+    instead of banking it.
+
+    Finds the nearest REAL swing high (SELL) / swing low (BUY) beyond
+    entry_price in the trade direction -- a pivot that's higher/lower than
+    `pivot_n` candles on both sides, i.e. an actual structural level, not
+    a raw high/low that could just be noise. Same swing-pivot definition
+    get_structural_sl_tp() already uses elsewhere in this file (kept
+    separate rather than reused directly -- that function needs a live
+    MT5 tick for its own spread buffer and isn't backtest-safe; this one
+    is a pure function of the OHLC window already passed in, so it works
+    identically in live and backtest, same guarantee _get_trend's
+    docstring explains for trend replication).
+
+    Returns None if no qualifying level is found (RR >= min_rr) -- the
+    caller falls back to the fixed 3:1 target in that case, so a thin/
+    choppy structure never leaves Swappy without any TP at all.
+    """
+    if df is None or len(df) < (pivot_n * 2 + 5) or sl_dist <= 0:
+        return None
+    data = df.iloc[-lookback_bars:].reset_index(drop=True)
+    n = len(data)
+    try:
+        if direction == 'BUY':
+            candidates = []
+            for i in range(pivot_n, n - pivot_n):
+                h = float(data['high'].iloc[i])
+                if h <= entry_price:
+                    continue
+                is_swing = (all(h >= float(data['high'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(h >= float(data['high'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if is_swing:
+                    candidates.append(h)
+            if not candidates:
+                return None
+            nearest = min(candidates)  # closest qualifying level beyond entry
+            rr = (nearest - entry_price) / sl_dist
+        else:
+            candidates = []
+            for i in range(pivot_n, n - pivot_n):
+                l = float(data['low'].iloc[i])
+                if l >= entry_price:
+                    continue
+                is_swing = (all(l <= float(data['low'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(l <= float(data['low'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if is_swing:
+                    candidates.append(l)
+            if not candidates:
+                return None
+            nearest = max(candidates)  # closest qualifying level beyond entry
+            rr = (entry_price - nearest) / sl_dist
+
+        if rr < min_rr:
+            return None
+        return nearest
+    except Exception:
+        return None
 
 
 def get_h1_mother_candle_zone(df_h1: 'pd.DataFrame', direction: str) -> dict:
@@ -7349,6 +7494,17 @@ class ShaakuniSSM:
                 if not candidate_obs: return empty
                 # EXTREME OB = the LOWEST (deepest in discount) unmitigated OB
                 extreme = min(candidate_obs, key=lambda x: x['ob_low'])
+                # DELIBERATELY NOT using adaptive_sl_buffer here (unlike EMA scalp
+                # and Swappy) -- tried it, real-data A/B showed a clear regression:
+                # 140->138 trades, expectancy +0.711R->+0.624R, final equity
+                # +99.57R->+86.18R on the 90-day XAUUSDm sample. Root cause: this
+                # strategy's TP is a fixed sweep target, not tied to SL distance,
+                # so widening the buffer only ever lowers RR -- and Shaakuni's own
+                # `if rr < 1.5: return empty` gate then rejects setups a tighter
+                # buffer would have taken. A violent wick on the OB candle IS the
+                # manipulation signature this strategy is built to trade, not
+                # noise to pad around -- the existing flat atr*0.3 is correct here,
+                # left unchanged on purpose.
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
@@ -7379,6 +7535,8 @@ class ShaakuniSSM:
                 if not candidate_obs: return empty
                 # EXTREME OB = the HIGHEST (deepest in premium) unmitigated OB
                 extreme = max(candidate_obs, key=lambda x: x['ob_high'])
+                # See the BUY branch above for why adaptive_sl_buffer is
+                # deliberately NOT used here -- same real-data regression finding.
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
@@ -8187,11 +8345,27 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
             return None
 
         # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
+        # TRAP-AWARE SL: was a flat atr*0.3 regardless of how violent the
+        # anchor candle's own wick was -- see adaptive_sl_buffer's docstring.
         _lookback_ema = df_m5.iloc[-20:]
         if direction == 'BUY':
-            _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
+            _anchor_idx = _lookback_ema['low'].idxmin()
+            _anchor = _lookback_ema.loc[_anchor_idx]
+            _buf_ema = adaptive_sl_buffer(
+                float(_anchor['low']), float(_anchor['high']),
+                float(_anchor['open']), float(_anchor['close']),
+                'BUY', _atr_m5 * 0.3,
+            )
+            _sl_ema = float(_lookback_ema['low'].min()) - _buf_ema
         else:
-            _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
+            _anchor_idx = _lookback_ema['high'].idxmax()
+            _anchor = _lookback_ema.loc[_anchor_idx]
+            _buf_ema = adaptive_sl_buffer(
+                float(_anchor['low']), float(_anchor['high']),
+                float(_anchor['open']), float(_anchor['close']),
+                'SELL', _atr_m5 * 0.3,
+            )
+            _sl_ema = float(_lookback_ema['high'].max()) + _buf_ema
         setup = {
             'signal':    direction,
             'reason':    'EMA_SCALP_CROSS',
@@ -8217,13 +8391,20 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
 
 
 def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
-                               entry_price: float, sl: float, account_equity: float) -> bool:
+                               entry_price: float, sl: float, account_equity: float,
+                               df_m5: Optional['pd.DataFrame'] = None) -> bool:
     """
     Place a BUY STOP or SELL STOP pending order for the Swappy 3C setup.
     The order triggers only when price breaks above the 3-candle high (BUY)
     or below the 3-candle low (SELL). If not triggered in 5 candles (25 minutes
     on M5), the order expires. If price closes below setup_low (BUY) before
     triggering, the order is cancelled externally by check_swappy_expirations().
+
+    df_m5: optional -- when provided, TP tries find_swappy_structural_tp()
+    first (nearest real swing level in trade direction, min 1.5R) and only
+    falls back to the fixed 3:1 target if no qualifying structural level is
+    found. Optional (not required) so any other caller passing only the
+    original required arguments keeps working exactly as before.
     """
     # BAN/UNBAN GAP FIX: Swappy self-executes and `continue`s straight past
     # the main loop's shared setup-pipeline ban check (~line 8763, which only
@@ -8289,14 +8470,20 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
         lot_size = round(lot_raw / lot_step) * lot_step
         lot_size = max(sym_info.volume_min, min(lot_size, sym_info.volume_max))
 
-        # TP: 3:1 RR as per Swappy spec
-        tp_dist = sl_dist * 3.0
-        if direction == 'BUY':
-            tp = entry_price + tp_dist
-            order_type = mt5.ORDER_TYPE_BUY_STOP
-        else:
-            tp = entry_price - tp_dist
-            order_type = mt5.ORDER_TYPE_SELL_STOP
+        # DYNAMIC TP FIX: was unconditionally 3:1 RR regardless of market
+        # structure -- see find_swappy_structural_tp's docstring. Try a real
+        # structural level first, fall back to the original fixed 3:1 spec
+        # target if nothing qualifies (thin/choppy structure, or no df_m5
+        # passed in at all).
+        tp = None
+        if df_m5 is not None:
+            tp = find_swappy_structural_tp(df_m5, direction, entry_price, sl_dist)
+        tp_source = "STRUCTURAL"
+        if tp is None:
+            tp_dist = sl_dist * 3.0
+            tp = (entry_price + tp_dist) if direction == 'BUY' else (entry_price - tp_dist)
+            tp_source = "FIXED_3R"
+        order_type = mt5.ORDER_TYPE_BUY_STOP if direction == 'BUY' else mt5.ORDER_TYPE_SELL_STOP
 
         # Expiry: 5 candles on M5 = 25 minutes from now
         expiry_dt = datetime.now(timezone.utc) + timedelta(minutes=25)
@@ -8352,7 +8539,7 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
             }
             logger.info(
                 f"[SWAPPY PENDING] {symbol} {direction} STOP @ {entry_price:.4f} "
-                f"SL={sl:.4f} TP={tp:.4f} lot={lot_size} expires=25min"
+                f"SL={sl:.4f} TP={tp:.4f} ({tp_source}) lot={lot_size} expires=25min"
             )
             return True
         else:
@@ -8925,12 +9112,10 @@ def ai_trading_session():
                             else:
                                 if _sw_reason != 'first_setup':
                                     logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_sw_reason} -- entry allowed")
-                                # SL: last swing extreme in last 15 bars + buffer
-                                _sw_scan = df_m5.iloc[-15:]
-                                if _trade_direction == 'BUY':
-                                    _sl_sw = float(_sw_scan['low'].min()) - _atr_m5 * 0.3
-                                else:
-                                    _sl_sw = float(_sw_scan['high'].max()) + _atr_m5 * 0.3
+                                # SL: last swing extreme in last 15 bars + trap-aware buffer.
+                                # Extracted to compute_swappy_sl() so the backtest adapter uses
+                                # the exact same logic instead of a second, drift-prone copy.
+                                _sl_sw = compute_swappy_sl(df_m5, _trade_direction, _atr_m5)
 
                                 # BUG FIX: this used to build a generic `setup` dict with
                                 # entry_price = _sw['entry_level'] (candle 3's close) and let
@@ -8940,7 +9125,8 @@ def ai_trading_session():
                                 # the 3-candle high/low) -- i.e. an entry on breakout
                                 # confirmation, not a market fill at C3's close. There's
                                 # already a fully-built place_swappy_pending_order() (correct
-                                # stop-order placement, 3:1 RR per the Swappy spec, 25-minute
+                                # stop-order placement, structural TP with a 3:1 fixed-RR
+                                # fallback -- see find_swappy_structural_tp -- 25-minute
                                 # expiry) that was never called anywhere -- wire it in here
                                 # instead of reimplementing it, same pattern AOX uses
                                 # (self-contained placement + continue, skipping the shared
@@ -8948,7 +9134,7 @@ def ai_trading_session():
                                 _sw_placed = place_swappy_pending_order(
                                     symbol, _sw, _trade_direction,
                                     entry_price=_sw['stop_entry'], sl=_sl_sw,
-                                    account_equity=account_info.equity,
+                                    account_equity=account_info.equity, df_m5=df_m5,
                                 )
                                 if _sw_placed:
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "

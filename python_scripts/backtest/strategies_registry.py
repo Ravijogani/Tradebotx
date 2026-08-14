@@ -179,9 +179,13 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
     Matches the live entry mechanics after the fix (see hybrid_trading_bot_
     multiuser.py's STRATEGY B and place_swappy_pending_order): a stop
     entry at _sw['stop_entry'] (above/below the 3-candle high/low), not a
-    market fill at candle 3's close, and 3:1 reward:risk TP -- both taken
-    directly from place_swappy_pending_order's own logic, the function
-    this adapter is meant to mirror.
+    market fill at candle 3's close. SL and TP now call the exact same
+    compute_swappy_sl() / find_swappy_structural_tp() functions live uses
+    (extracted specifically so this adapter and the live call site can't
+    drift apart the way the old duplicated inline SL calc already had) --
+    trap-aware SL buffer, structural TP (nearest real swing level at
+    >=1.5R) falling back to the original fixed 3:1 spec target only when
+    nothing structural qualifies.
 
     Still excludes two things the live cascade additionally applies on
     top of detect_swappy_3c: the near-support/resistance location filter,
@@ -202,20 +206,21 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
         if trend not in ("BULLISH", "BEARISH"):
             return None
         direction = "BUY" if trend == "BULLISH" else "SELL"
-        df_m5 = dataset.window("M5", as_of, 30)
+        df_m5 = dataset.window("M5", as_of, 80)  # find_swappy_structural_tp scans up to 80 bars back
         if len(df_m5) < 20:
             return None
         sw = bot.detect_swappy_3c(df_m5, direction)
         if not sw.get("confirmed"):
             return None
         atr_m5 = float(bot.calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
-        scan = df_m5.iloc[-15:]
-        sl = float(scan['low'].min()) - atr_m5 * 0.3 if direction == "BUY" else float(scan['high'].max()) + atr_m5 * 0.3
+        sl = bot.compute_swappy_sl(df_m5, direction, atr_m5)
         stop_entry = sw['stop_entry']
         sl_dist = abs(stop_entry - sl)
         if sl_dist <= 0:
             return None
-        tp = stop_entry + sl_dist * 3.0 if direction == "BUY" else stop_entry - sl_dist * 3.0
+        tp = bot.find_swappy_structural_tp(df_m5, direction, stop_entry, sl_dist)
+        if tp is None:
+            tp = stop_entry + sl_dist * 3.0 if direction == "BUY" else stop_entry - sl_dist * 3.0
     return StrategyResult(direction=direction, stop_loss=sl,
                            reason=f"SWAPPY_3C_{sw['pattern']}",
                            confidence=sw.get("strength", 0.0),
