@@ -3033,6 +3033,76 @@ def adaptive_sl_buffer(anchor_low: float, anchor_high: float, anchor_open: float
         wick = max(0.0, anchor_high - body_high)
     return max(base_buffer, wick * wick_fraction)
 
+
+def detect_unswept_trap_nearby(df: 'pd.DataFrame', direction: str, atr: float,
+                                proximity_mult: float = 0.5, pivot_n: int = 2,
+                                lookback_bars: int = 20) -> bool:
+    """
+    TRAP-AVOIDANCE FILTER (EMA Scalp Cross only): True if there's a fresh,
+    unswept liquidity pool sitting close to current price against the
+    trade direction -- an obvious recent swing low (BUY) / high (SELL)
+    that no later candle has yet wicked through and closed back beyond.
+    That's exactly what a stop hunt targets: a clean, untested level with
+    retail stops resting on it, right where this entry would sit.
+
+    EMA Scalp Cross is the one live strategy with no manipulation/sweep-
+    detection layer at all -- Shaakuni waits for the HTF sweep itself,
+    Swappy requires a failed pullback (C3 rejection), AOX has
+    detect_manipulation_spike(). This gives EMA scalp an equivalent,
+    lightweight check without turning it into a heavier strategy: don't
+    cross into an obvious, still-live trap right next to entry. Wait for
+    it to either get swept (then it's spent, no longer a trap) or for
+    price to move away from it -- both cases mean this filter no longer
+    fires and a later cross can still go through normally.
+
+    "Unswept" = no candle after the pivot has a wick beyond it that also
+    closes back on the entry side -- the same sweep-then-reclaim shape
+    ShaakuniSSM.detect_htf_sweep and Swappy's C3 rejection both use,
+    applied here to a plain recent swing instead of a session-level sweep.
+
+    Pure OHLC function, no MT5 dependency -- identical in live and
+    backtest by construction (strategy_ema_scalp_cross is a single shared
+    function both call), same guarantee _get_trend's docstring explains
+    for trend replication.
+    """
+    if df is None or len(df) < lookback_bars or atr <= 0:
+        return False
+    data = df.iloc[-lookback_bars:].reset_index(drop=True)
+    n = len(data)
+    if n < pivot_n * 2 + 1:
+        return False
+    cur_price = float(data['close'].iloc[-1])
+    proximity = atr * proximity_mult
+
+    try:
+        if direction == 'BUY':
+            for i in range(pivot_n, n - pivot_n):
+                low_i = float(data['low'].iloc[i])
+                is_swing = (all(low_i <= float(data['low'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(low_i <= float(data['low'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if not is_swing or abs(cur_price - low_i) > proximity:
+                    continue
+                swept = any(float(data['low'].iloc[j]) < low_i and float(data['close'].iloc[j]) > low_i
+                            for j in range(i + 1, n))
+                if not swept:
+                    return True  # fresh, untested, close by -- an obvious trap
+            return False
+        else:
+            for i in range(pivot_n, n - pivot_n):
+                high_i = float(data['high'].iloc[i])
+                is_swing = (all(high_i >= float(data['high'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(high_i >= float(data['high'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if not is_swing or abs(cur_price - high_i) > proximity:
+                    continue
+                swept = any(float(data['high'].iloc[j]) > high_i and float(data['close'].iloc[j]) < high_i
+                            for j in range(i + 1, n))
+                if not swept:
+                    return True
+            return False
+    except Exception:
+        return False  # fail open -- a filter bug should never block a trade
+
+
 def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Tuple[pd.Series, pd.Series, pd.Series]:
     tr = calculate_atr(high, low, close, 1)
     move_up = high.diff()
@@ -8342,6 +8412,14 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
                        (_cross_bear and direction == 'SELL')
 
         if not _cross_valid:
+            return None
+
+        # TRAP-AVOIDANCE FILTER: EMA scalp is the one live strategy with no
+        # manipulation/sweep-detection layer at all -- see
+        # detect_unswept_trap_nearby's docstring. Don't cross into an
+        # obvious, still-live stop-hunt target right next to entry.
+        if detect_unswept_trap_nearby(df_m5, direction, _atr_m5):
+            logger.debug(f"[EMA TRAP FILTER] {symbol}: unswept liquidity pool near price -- skip cross")
             return None
 
         # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
