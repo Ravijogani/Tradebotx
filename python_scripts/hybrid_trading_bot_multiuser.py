@@ -6540,7 +6540,27 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             async_logger.log_trade_async({
                 'timestamp': datetime.utcnow().isoformat(), 'ticket': result.order, 'symbol': symbol,
                 'direction': direction, 'entry_price': request['price'], 'stop_loss': sl,
-                'take_profit': tp, 'lot_size': lot_size, 'strategy_name': 'EDGE_ENGINE',
+                # BUG FIX: this was hardcoded 'EDGE_ENGINE' for every trade that flows
+                # through this shared pipeline -- i.e. BOTH Shaakuni SSM and EMA Scalp
+                # Cross, the two live strategies that call place_ai_trade(). Since
+                # ai_analyze_closed_trades()'s per-strategy win-rate calc keys off this
+                # exact 'strategy_name' DB field (via convert_to_ai_format ->
+                # metadata['strategy_name']), the AI-learning ban/unban system could
+                # never actually see 'SHAAKUNI_SSM' or 'EMA_SCALP_CROSS' win rates
+                # separately -- both got silently merged into one 'EDGE_ENGINE' bucket,
+                # and the ban CHECK gate (which matches state.banned_strategies against
+                # setup['reason'], e.g. 'SHAAKUNI_SSM') could never match a ban the AI
+                # would ever actually issue. Net effect: the ban/unban system has been
+                # structurally inert for every live strategy, not just Swappy/AOX (which
+                # had no gate or DB logging at all -- see execute_aox_layer,
+                # check_swappy_expirations, run_aox_layered_entry, place_swappy_pending_order
+                # for that half of the fix). local_signal['setup_type'] already carries
+                # the correct per-strategy reason string (set at the call site as
+                # setup.get('setup_type', trigger_type), which resolves to trigger_type
+                # since no strategy sets 'setup_type' -- i.e. exactly setup['reason']) --
+                # just wasn't threaded through to the DB write until now.
+                'take_profit': tp, 'lot_size': lot_size,
+                'strategy_name': local_signal.get('setup_type', 'EDGE_ENGINE'),
                 'ai_risk_percent': final_risk_percent,
                 'metadata': {
                     'edge_score': edge_score,
@@ -6819,6 +6839,24 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                     'exit_aggressiveness': 'HOLD',  # AOX holds to SD levels
                 }
             }
+            # BUG FIX: AOX never logged its trades to the DB at all -- it places
+            # orders straight through mt5.order_send and only ever touched
+            # state.open_positions (so update_closed_trades() could still manage
+            # its cooldown/exit-reason bookkeeping on close), but no log_trade_async
+            # call meant no row was ever inserted with status='open' to later be
+            # matched and closed out. Net effect: AOX trades never appeared in
+            # trade_db.get_session_trades(), so ai_analyze_closed_trades()'s
+            # per-strategy win-rate calc could never see an 'AOX' entry -- the
+            # AI-learning ban/unban system could never ban or unban AOX no matter
+            # how it performed, since it had no data on AOX at all. Fixed by logging
+            # here, same shape place_ai_trade() already uses for Shaakuni/EMA scalp;
+            # update_closed_trades() needs no changes since it already closes out
+            # anything present in state.open_positions generically by ticket.
+            async_logger.log_trade_async({
+                'timestamp': datetime.utcnow().isoformat(), 'ticket': result.order, 'symbol': symbol,
+                'direction': direction, 'entry_price': price, 'stop_loss': sl,
+                'take_profit': tp, 'lot_size': lot_size, 'strategy_name': 'AOX',
+            })
             return result.order
         else:
             logger.warning(f"[AOX {layer_name}] {symbol}: failed retcode={result.retcode if result else 'None'}")
@@ -7014,6 +7052,19 @@ def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
     aox_st = get_aox_state(symbol)
     signal = detect_aox_phase_signal(aox_st, df_m5, df_m1, effective_trend, symbol)
     if not signal:
+        return False
+
+    # BAN/UNBAN GAP FIX: AOX self-executes and `continue`s straight past the
+    # main loop's shared setup-pipeline ban check (~line 8763, which only ever
+    # sees setup dicts built by Shaakuni SSM / EMA scalp), so the AI-learning
+    # ban system could never actually stop AOX from trading even if it had
+    # been banned for a <30% win rate. Gate here instead, right where AOX has
+    # an actual signal to act on (not every scan iteration -- avoids log spam
+    # for a symbol that's rarely in-phase anyway). Matches the same
+    # substring-match convention state.banned_strategies already uses
+    # elsewhere: an AI ban of "AOX" (or any prefix of it) blocks this.
+    if any(banned.upper() in 'AOX' for banned in state.banned_strategies):
+        logger.info(f"[AOX] {symbol}: blocked by strategy ban")
         return False
 
     ticket = execute_aox_layer(
@@ -8026,6 +8077,17 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
     on M5), the order expires. If price closes below setup_low (BUY) before
     triggering, the order is cancelled externally by check_swappy_expirations().
     """
+    # BAN/UNBAN GAP FIX: Swappy self-executes and `continue`s straight past
+    # the main loop's shared setup-pipeline ban check (~line 8763, which only
+    # ever sees setup dicts built by Shaakuni SSM / EMA scalp), so the
+    # AI-learning ban system could never actually stop Swappy from trading
+    # even if it had been banned for a <30% win rate. Gate here, at the single
+    # call site's entry point, before any MT5 order is touched. Same
+    # substring-match convention state.banned_strategies already uses
+    # elsewhere: an AI ban of "SWAPPY_3C" (or "SWAPPY") blocks this.
+    if any(banned.upper() in 'SWAPPY_3C' for banned in state.banned_strategies):
+        logger.info(f"[SWAPPY 3C] {symbol}: blocked by strategy ban")
+        return False
     try:
         sym_info = mt5.symbol_info(symbol)
         if not sym_info: return False
@@ -8096,6 +8158,16 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
                 'setup_high': sw.get('setup_high', entry_price),
                 'setup_low':  sw.get('setup_low',  sl),
                 'placed_at':  datetime.now(timezone.utc),
+                # Carried through to check_swappy_expirations() so that once
+                # this pending order is confirmed FILLED (ticket shows up in
+                # mt5.positions_get(), not just gone from orders_get() -- which
+                # also happens on a plain unfilled expiry), it can be logged to
+                # the trade DB with these actual order parameters. Previously
+                # nothing here was ever logged (see check_swappy_expirations
+                # for the full explanation), so Swappy trades never appeared in
+                # trade_db.get_session_trades() and the AI-learning ban system
+                # had zero data to ever ban/unban Swappy by.
+                'sl': sl, 'tp': tp, 'entry_price': entry_price, 'lot_size': lot_size,
             }
             logger.info(
                 f"[SWAPPY PENDING] {symbol} {direction} STOP @ {entry_price:.4f} "
@@ -8123,12 +8195,56 @@ def check_swappy_expirations():
     orders    = mt5.orders_get()
     positions = mt5.positions_get()
     order_ids = {o.ticket for o in orders}    if orders    else set()
+    # Moved up from below (was computed after this loop) so the loop itself
+    # can tell FILLED (ticket now a live position -- MT5 reuses the pending
+    # order's ticket as the resulting position ticket) apart from genuinely
+    # EXPIRED/cancelled (ticket just gone, no position ever opened). Both used
+    # to be treated identically here, which was fine for the pre-existing
+    # 3rd-time re-entry SL tracking below (unaffected, still unconditional),
+    # but wasn't fine for the DB-logging gap fix just added: logging an
+    # expired-unfilled order as a trade would create a zombie 'open' row in
+    # the DB that no MT5 deal will ever exist to close out.
+    pos_ids   = {p.ticket for p in positions} if positions else set()
     to_remove = []
 
     for ticket, info in list(state.swappy_pending.items()):
         if ticket not in order_ids:
             state.swappy_triggered[ticket] = info  # triggered -> track for SL
             to_remove.append(ticket)
+            if ticket in pos_ids:
+                # BUG FIX: Swappy trades were never logged to the trade DB at
+                # all -- place_swappy_pending_order() only ever wrote into
+                # state.swappy_pending/state.swappy_triggered, never
+                # state.open_positions and never log_trade_async(). Net
+                # effect: Swappy trades never appeared in
+                # trade_db.get_session_trades(), so ai_analyze_closed_trades()
+                # could never see a 'SWAPPY_3C' win rate to ban/unban by --
+                # same root cause as AOX (see execute_aox_layer). Fixed here,
+                # at the one point this function can tell the order actually
+                # FILLED into a live position rather than just expiring
+                # unfilled: register it in state.open_positions (same shape
+                # AOX/place_ai_trade use, so update_closed_trades() picks up
+                # its close/exit-reason bookkeeping with no changes needed
+                # there) and log it to the DB with strategy_name='SWAPPY_3C'.
+                if not hasattr(state, 'open_positions'): state.open_positions = {}
+                state.open_positions[ticket] = {
+                    'params': {
+                        'sl': info.get('sl', 0.0), 'tp': info.get('tp', 0.0),
+                        'initial_sl': info.get('sl', 0.0),
+                        'entry_price': info.get('entry_price', 0.0), 'symbol': info['symbol'],
+                        'strategy_type': 'SWAPPY',
+                        'open_time': time.time(),
+                        'is_runner': False,
+                        'edge_score': 70.0,
+                        'exit_aggressiveness': 'HOLD',
+                    }
+                }
+                async_logger.log_trade_async({
+                    'timestamp': datetime.utcnow().isoformat(), 'ticket': ticket, 'symbol': info['symbol'],
+                    'direction': info['direction'], 'entry_price': info.get('entry_price', 0.0),
+                    'stop_loss': info.get('sl', 0.0), 'take_profit': info.get('tp', 0.0),
+                    'lot_size': info.get('lot_size', 0.0), 'strategy_name': 'SWAPPY_3C',
+                })
             continue
         sym  = info['symbol']
         tick = mt5.symbol_info_tick(sym)
@@ -8143,7 +8259,8 @@ def check_swappy_expirations():
             mt5.order_delete(ticket)
             to_remove.append(ticket)
 
-    pos_ids = {p.ticket for p in positions} if positions else set()
+    # pos_ids computed once, up at the top of this function now (see the FILLED
+    # vs EXPIRED comment there) -- reused here unchanged.
     for ticket, info in list(state.swappy_triggered.items()):
         if ticket in pos_ids: continue  # still open
         try:
