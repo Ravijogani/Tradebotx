@@ -15,12 +15,13 @@ believing it to be "the deterministic SMC entry engine" (that's its own
 docstring's description); `EntryEngine` is in fact never instantiated
 anywhere in the file.
 
-**As of the decision to run the live cascade on only four setups**
-(Shaakuni SSM, Swappy 3C, AOX, and the 9/25/50/200 EMA scalp), everything
-below except those four is gated off by default via
-`config.ENABLE_STRATEGY_*` flags in `AITradingConfig` — the code paths
-still exist (flip a flag to re-enable), but they don't fire in the
-current configuration.
+**The live cascade trades exactly four setups, no more, no less**
+(Shaakuni SSM, Swappy 3C, AOX, and the 9/25/50/200 EMA scalp). This was
+first enforced via `config.ENABLE_STRATEGY_*` flags (flip one to
+re-enable a fallback), then — once those flags had sat off through the
+entire engagement and it was clear the fallbacks were never part of the
+actual vision — the flagged-off code was removed outright. See "Fallback
+and dormant strategies removed" below for what used to be here and why.
 
 | Strategy | Reachable via a call site | Enabled by default today | Notes |
 |---|---|---|---|
@@ -28,21 +29,24 @@ current configuration.
 | `SWAPPY_3C` | Yes | **Yes** | Matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below). Real-data result: 18 trades, +0.219R expectancy — too small a sample to trust yet |
 | `EMA_SCALP_CROSS` | Yes | **Yes** | Extracted from the main loop into `strategy_ema_scalp_cross()`, two behavior bugs found and fixed (see below). Real-data result: 75 trades, +0.051R expectancy — barely positive, weakest of the four |
 | `AOX` (layered execution) | Yes | **Yes** | Backtestable via a dedicated stateful driver, not a `StrategyAdapter` — see "AOX wiring" below. **Not yet tested against real data** (needs M1) |
-| `ICT_KILLZONE` | Yes | No (`ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK`) | Fallback strategy, needs M1, untested |
-| `LIQUIDITY_GRAB` | Yes | No (`ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK`) | Fallback strategy, needs M1, untested |
-| `SMC_FVG_OB_RETEST` | Yes | No (`ENABLE_STRATEGY_SMC_FVG_RETEST`) | "STRATEGY C" — 0 trades in the real-data run too |
 
-### Dormant strategies removed (2026-08)
+### Fallback and dormant strategies removed (2026-08)
 
-8 strategies (`EntryEngine`/`SMC_ENTRY_ENGINE`, `strategy_advanced_smc`,
+Two separate rounds of removal, both driven by the same principle: code
+that isn't live shouldn't sit in the live file "just in case," because
+that's exactly the shape of bug this whole engagement kept finding
+(Swappy 3C's correct pending-order function sat dead for the same
+reason — fully built, nobody calling it).
+
+**Round 1 — 8 strategies with zero live call sites, ever:**
+`EntryEngine`/`SMC_ENTRY_ENGINE`, `strategy_advanced_smc`,
 `strategy_wyckoff_patterns`, `strategy_volume_profile`,
 `strategy_support_resistance`, `strategy_volume_imbalance`,
-`strategy_trend_pullback`, `strategy_mean_reversion_bb`) never had a live
-call site. They were first quarantined into a separate
-`strategies_research.py` module (kept backtestable, out of the live file)
-so they could actually be evaluated on real data before any keep/cut
-decision — then, once that data came in, fully removed rather than kept
-around indefinitely. Real-data results (XAUUSDm, 90 days) that drove the
+`strategy_trend_pullback`, `strategy_mean_reversion_bb`. First
+quarantined into a separate `strategies_research.py` module (kept
+backtestable, out of the live file) so they could actually be evaluated
+on real data before any keep/cut decision — then, once that data came
+in, fully removed. Real-data results (XAUUSDm, 90 days) that drove the
 removal:
 
 | Strategy | Trades | Expectancy | Verdict |
@@ -52,15 +56,34 @@ removal:
 | `MEAN_REVERSION_BB` | 541 | -0.124R | Losing, large sample — also the philosophical outlier here (counter-trend fade vs. every other strategy being momentum/liquidity-based) |
 | `TREND_PULLBACK` | 289 | -0.006R | Statistically flat, not worth pursuing |
 | `VOLUME_IMBALANCE` | 0 | — | Essentially never fires |
-| `WYCKOFF_PATTERNS` | untested | — | Needs M1 (not available at removal time); also isn't genuine Wyckoff method despite the name — no range/cause-and-effect schematic, no spring/upthrust/test/SOS/LPS, just a volume-climax reversal filter |
-| `ADVANCED_SMC` | untested | — | Needs M1 (not available at removal time) |
-| `SMC_ENTRY_ENGINE` (`EntryEngine`) | untested | — | Needs M1. Was the strongest candidate by code quality (real sweep + market-structure-shift + FVG confluence, not a single-indicator trigger) but was never actually validated against real data before this removal — removed to stop carrying 8 strategies' worth of unreachable code, not because real evidence said no |
+| `WYCKOFF_PATTERNS` | untested | — | Needed M1 (not available at removal time); also isn't genuine Wyckoff method despite the name — no range/cause-and-effect schematic, no spring/upthrust/test/SOS/LPS, just a volume-climax reversal filter |
+| `ADVANCED_SMC` | untested | — | Needed M1 (not available at removal time) |
+| `SMC_ENTRY_ENGINE` (`EntryEngine`) | untested | — | Needed M1. Was the strongest candidate by code quality (real sweep + market-structure-shift + FVG confluence, not a single-indicator trigger) but was never actually validated against real data before this removal — removed to stop carrying 8 strategies' worth of unreachable code, not because real evidence said no |
+
+**Round 2 — 3 strategies that WERE real, flag-gated live call sites**
+(`strategy_ict_killzone`, `strategy_liquidity_grab`, and
+`strategy_liquidity_fvg_engine` / "STRATEGY C" / `SMC_FVG_OB_RETEST`),
+plus a genuinely dead `get_strategies_for_regime()` helper found while
+removing them (zero call sites, and it already referenced two strategies
+from Round 1 that no longer existed — a stale reference that had slipped
+through Round 1's own cleanup). All three flag-gated strategies had sat
+disabled (`config.ENABLE_STRATEGY_*_FALLBACK = False`) for the entire
+engagement and were never part of the actual four-setup vision (Shaakuni
+SSM / Swappy 3C / AOX / EMA scalp) — `SMC_FVG_OB_RETEST` also produced 0
+trades in the real-data backtest while it was still wired here.
+Removing these was more involved than Round 1: unlike the 8 dormant
+strategies, these three had real downstream references scattered through
+the live cascade's confluence/scoring logic (3C-confirmation exemptions,
+L3 AI score thresholds, counter-trend structural-confluence checks) --
+each reference was individually traced and either removed or narrowed to
+the strategies that still exist, not just deleted wholesale.
 
 If any of these needs to be revisited, they're recoverable from git
-history — search this repo's log for `strategies_research.py` or
-"Quarantine dormant strategies" / "remove the 8 dormant strategies" to
-find the commits that added, then removed, them. Recover and re-verify
-against real data; don't rewrite from scratch.
+history — search this repo's log for `strategies_research.py`,
+"Quarantine dormant strategies", "remove the 8 dormant strategies", or
+"remove all 8 base strategies" to find the commits that added, then
+removed, them. Recover and re-verify against real data; don't rewrite
+from scratch.
 
 ### The Swappy 3C entry bug (fixed)
 
@@ -170,12 +193,10 @@ bias (needs a D1 data feed the live pipeline doesn't currently fetch),
 and triple-layered position scaling (1:1.5R / 50 EMA / 25-EMA-trailed) —
 are bigger, separate subsystems, not included here either.
 
-Every report the harness prints is labeled `[LIVE]` or `[NOT LIVE — not
-reachable by the real trading loop today]` so this distinction is never
-lost in the numbers. `ICT_KILLZONE`/`LIQUIDITY_GRAB`/`SMC_FVG_OB_RETEST`
-still fall in the "NOT LIVE (today)" bucket in the sense that they're
-flag-disabled — don't read their backtest results as "how the bot is
-performing," because none of them currently place a single real order.
+Every report the harness prints is labeled `[LIVE]` since all four
+registered strategies genuinely trade real money today — no flagged-off
+or dormant strategies remain in the registry (see "Fallback and dormant
+strategies removed" above for what used to be here and why).
 
 ### AOX wiring
 
@@ -261,13 +282,22 @@ safely by:
 - Providing placeholder CLI args so the script's `argparse` call succeeds.
 
 `replay_data.py` additionally patches `get_market_data` (the function
-every live helper — most importantly `get_market_regime_and_trend`, which
-every wired strategy depends on for its `trend` input — uses to pull its
-own data) to serve historical, no-lookahead windows instead of live MT5
-calls. This means `get_market_regime_and_trend` runs completely unmodified
-during a backtest and can never drift from what it computes live.
-`time_travel.py` does the same for `datetime.now()`, so kill-zone/session
-gates evaluate against the bar being replayed instead of the real clock.
+live helpers like `get_h4_macro_bias` and `strategy_shaakuni_ssm` use to
+pull their own data) to serve historical, no-lookahead windows instead of
+live MT5 calls. `time_travel.py` does the same for `datetime.now()`, so
+kill-zone/session gates evaluate against the bar being replayed instead
+of the real clock.
+
+Trend specifically is computed by `strategies_registry.py`'s own
+`_get_trend()`, which directly replicates the live main loop's
+`effective_trend` cascade (H4 macro bias, strict H1 EMA-stack confirm,
+conflict-skip) rather than patching a live function to reuse -- see that
+function's own docstring for why: the live file's own
+`get_market_regime_and_trend()` has zero call sites anywhere in the
+actual trading loop and is separately broken on real data (references two
+`AITradingConfig` attributes that don't exist). It was a real bug that
+`_get_trend()` used to call that dead function, found from the first
+real-data backtest run.
 
 The result: every adapter in `strategies_registry.py` calls the exact same
 function/class objects the live bot runs, with zero chance of placing a
@@ -285,8 +315,10 @@ python export_mt5_history.py --symbol XAUUSDm --days 365 --out-dir ./history/XAU
 ```
 
 Produces `XAUUSDm_M1.csv`, `_M5.csv`, `_M15.csv`, `_H1.csv`, `_H4.csv`.
-M15 is only needed by `SMC_FVG_OB_RETEST`'s HTF confluence check; H4 is
-only needed by `SHAAKUNI_SSM`. Everything else only needs M1/M5/H1.
+M1 is only needed by `AOX`; H4 is only needed by `SHAAKUNI_SSM`. M15 isn't
+needed by any currently-live strategy on its own (only via `--corr-m15`
+for AOX's correlated-pair check). `SWAPPY_3C`/`EMA_SCALP_CROSS` only need
+M5/H1.
 
 ## Running a backtest
 
@@ -296,14 +328,14 @@ From inside `python_scripts/`:
 # One strategy:
 python3 -m backtest.run_backtest \
     --symbol XAUUSDm --data-dir ./history/XAUUSDm \
-    --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \
-    --strategy ICT_KILLZONE --out trades.csv
+    --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \
+    --strategy SWAPPY_3C --out trades.csv
 
 # Every registered strategy, one report each, one combined trade CSV:
 python3 -m backtest.run_backtest \
     --symbol XAUUSDm --data-dir ./history/XAUUSDm \
     --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \
-    --m15 XAUUSDm_M15.csv --h4 XAUUSDm_H4.csv \
+    --h4 XAUUSDm_H4.csv \
     --all --out trades.csv
 ```
 
@@ -316,17 +348,17 @@ summarized.
 
 - **Spread is a static per-symbol approximation**
   (`engine.py`'s `DEFAULT_SPREAD_MODEL`), not real recorded spread.
-  `SMC_FVG_OB_RETEST` calls `mt5.symbol_info_tick()` for live spread and
-  already has its own ATR-based fallback for when that's unavailable
-  (which it always is here) — the harness doesn't override that,
-  it just inherits the live file's own fallback behavior.
 - **Take-profit defaults to a fixed R-multiple off the SL distance**
-  (`--rr`, default 2.0) for every strategy except `SHAAKUNI_SSM` (which
-  computes its own TP) — not the live bot's full exit logic (runner
-  management, breakeven trailing, mid-trade `DecisionEngineV2`
-  adjustments). This measures each strategy's entry logic under a
-  standard, explicit exit framework; it doesn't yet reproduce the live
-  bot's exact exit behavior.
+  (`--rr`, default 2.0) only for `EMA_SCALP_CROSS` (see its adapter's
+  docstring for why -- the live strategy's own "50 EMA TP" feature is
+  provably inert, so there's no honest strategy-specific target to use
+  instead). `SHAAKUNI_SSM` and `SWAPPY_3C` both compute their own real
+  TP (Shaakuni: opposing liquidity target; Swappy: fixed 3:1 RR off the
+  stop-entry level per the live spec). None of this reproduces the live
+  bot's full exit logic (runner management, breakeven trailing, mid-trade
+  `DecisionEngineV2` adjustments) -- this measures each strategy's entry
+  logic under a standard, explicit exit framework, not the live bot's
+  exact exit behavior.
 - **One position at a time per strategy.** The engine doesn't evaluate
   new entries while a simulated trade from the same run is open, so it
   can't test correlated/stacked exposure across strategies running

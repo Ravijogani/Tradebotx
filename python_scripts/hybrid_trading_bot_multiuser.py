@@ -640,18 +640,17 @@ class AITradingConfig:
     ENABLE_LOCAL_NEWS_FILTER: bool = True
     ENABLE_CONFLUENCE_ENGINE: bool = True
 
-    # STRATEGY SELECTION -- per explicit decision, the live cascade only
-    # trades four documented setups: Shaakuni SSM, Swappy 3C, AOX layered
-    # execution, and the 9/25/50/200 EMA scalp. The first three are NOT
-    # gated by a flag here -- they were never conditionally skippable in
-    # the cascade and stay that way. EMA scalp has its own flag (below,
-    # now enabled) since it was previously disabled pending this decision.
-    # These three flags disable everything NOT in the four-setup list:
-    # STRATEGY C (SMC FVG retest) and the two generic fallbacks. Set any
-    # of these back to True to re-enable that strategy in the live cascade.
-    ENABLE_STRATEGY_SMC_FVG_RETEST: bool = False
-    ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK: bool = False
-    ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK: bool = False
+    # STRATEGY SELECTION -- per explicit decision, the live cascade trades
+    # exactly four documented setups: Shaakuni SSM, Swappy 3C, AOX layered
+    # execution, and the 9/25/50/200 EMA scalp. None of the four are gated
+    # by a flag -- they're the entire cascade, not something to toggle off.
+    # STRATEGY C (SMC FVG retest) and the two generic ICT fallbacks
+    # (Liquidity Grab, ICT Killzone) were flag-disabled here first, then
+    # removed entirely 2026-08 -- they were never part of the four-setup
+    # vision, and kept-but-disabled code is exactly the surface area that
+    # produced real bugs elsewhere in this file (dead functions nobody
+    # verified, flags nobody remembered were off). Recoverable from git
+    # history if ever needed; don't rebuild from scratch.
 
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
@@ -2594,19 +2593,9 @@ class RegimeDetector:
         except Exception as e:
             logger.error(f"Donchian error: {e}")
             return True # Allow on error
-    
-    @staticmethod
-    def get_strategies_for_regime(regime: str) -> list:
-        """
-        Select optimal strategies based on market regime
-        SCALPING OPTIMIZATION: Only 2-3 fast strategies per regime
-        """
-        if regime == 'TRENDING':
-            # Trend-following strategies
-            return ['VOLUME_IMBALANCE', 'LIQUIDITY_GRAB']
-        else:  # RANGING
-            # Mean-reversion strategies
-            return ['LIQUIDITY_GRAB', 'SUPPORT_RESISTANCE']
+    # get_strategies_for_regime() removed 2026-08 -- zero call sites, and it
+    # already referenced VOLUME_IMBALANCE/LIQUIDITY_GRAB/SUPPORT_RESISTANCE,
+    # none of which exist in the live cascade anymore.
 
 
 
@@ -3148,72 +3137,18 @@ def get_news_volatility_multiplier(symbol: str) -> float:
 # live cascade actually calls.
 # =============================================================================
 
-def strategy_ict_killzone(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    current_hour = datetime.now(timezone.utc).hour
-    if not is_kill_zone(current_hour): return None
-    
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-
-    for i in range(len(df_entry) - config.ICT_FVG_MITIGATION_CANDLES - 1, 2, -1):
-        if df_entry['low'].iloc[i+1] > df_entry['high'].iloc[i-1]:
-            fvg_high, fvg_low = df_entry['low'].iloc[i+1], df_entry['high'].iloc[i-1]
-            if fvg_low <= current_price <= fvg_high and trend == "BULLISH":
-                # CHECK: M1 Candle must be GREEN (Close > Open) to confirm rejection
-                if df_micro['close'].iloc[-1] > df_micro['open'].iloc[-1]: 
-                    sl = fvg_low - (atr * 1.5)   # FIX: was 0.5 -- too close to spread
-                    return {"direction": "BUY", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
-        
-        if df_entry['high'].iloc[i+1] < df_entry['low'].iloc[i-1]:
-            fvg_high, fvg_low = df_entry['low'].iloc[i-1], df_entry['high'].iloc[i+1]
-            if fvg_low <= current_price <= fvg_high and trend == "BEARISH":
-                # CHECK: M1 Candle must be RED (Close < Open) to confirm rejection
-                if df_micro['close'].iloc[-1] < df_micro['open'].iloc[-1]: 
-                    sl = fvg_high + (atr * 1.5)  # FIX: was 0.5 -- too close to spread
-                    return {"direction": "SELL", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
-    return None
-
-# strategy_advanced_smc REMOVED 2026-08 -- no live call site (confirmed
-# by grepping call sites, not just defs). See python_scripts/backtest/
-# README.md's "Dormant strategies removed" section.
-
-def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    """
-    ICT Liquidity Grab: sweep a swing point, displace strongly in opposite direction.
-    CHANGE: Requires BEARISH trend for SELL, BULLISH for BUY (NEUTRAL blocked).
-    CHANGE: Real volume confirmation added.
-    """
-    if len(df_entry) < 15: return None
-    swing_highs_idx, swing_lows_idx = identify_swing_highs_lows(df_entry, lookback=3)
-    last_candle, prev_candle = df_entry.iloc[-1], df_entry.iloc[-2]
-    atr    = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    avg_vol = df_entry['tick_volume'].iloc[-10:].mean()
-    # Volume: last or previous bar must have had above-average activity
-    has_vol = (df_entry['tick_volume'].iloc[-1] > avg_vol * 1.2 or
-               df_entry['tick_volume'].iloc[-2] > avg_vol * 1.2 or avg_vol < 1)
-
-    # SELL: only when H1 is clearly BEARISH (not NEUTRAL)
-    if swing_highs_idx and trend == "BEARISH":
-        last_high = df_entry['high'].iloc[swing_highs_idx[-1]]
-        if prev_candle['high'] > last_high and last_candle['close'] < last_candle['open']:
-            candle_range = last_candle['high'] - last_candle['low']
-            body_size = abs(last_candle['close'] - last_candle['open'])
-            if candle_range > 0 and body_size > (candle_range * 0.5) and has_vol:
-                if last_candle['close'] < (last_candle['low'] + (0.5 * candle_range)):
-                    return {"direction": "SELL", "stop_loss": prev_candle['high'] + (atr * 1.2),
-                            "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
-
-    # BUY: only when H1 is clearly BULLISH (not NEUTRAL)
-    if swing_lows_idx and trend == "BULLISH":
-        last_low = df_entry['low'].iloc[swing_lows_idx[-1]]
-        if prev_candle['low'] < last_low and last_candle['close'] > last_candle['open']:
-            candle_range = last_candle['high'] - last_candle['low']
-            body_size = abs(last_candle['close'] - last_candle['open'])
-            if candle_range > 0 and body_size > (candle_range * 0.5) and has_vol:
-                if last_candle['close'] > (last_candle['low'] + (0.5 * candle_range)):
-                    return {"direction": "BUY", "stop_loss": prev_candle['low'] - (atr * 1.2),
-                            "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
-    return None
+# strategy_ict_killzone / strategy_advanced_smc / strategy_liquidity_grab
+# REMOVED 2026-08. strategy_advanced_smc never had a live call site.
+# strategy_ict_killzone and strategy_liquidity_grab WERE real, flag-gated
+# fallback strategies (ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK/
+# ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK, both False by default) -- but
+# were never part of the four-setup vision (Shaakuni SSM, Swappy 3C, AOX,
+# EMA scalp) and were disabled the whole time this bot ran anything real.
+# Removed rather than left disabled, same reasoning as the 8 dormant
+# strategies removed earlier: unreachable-but-present code is exactly the
+# surface area that produced real bugs elsewhere in this file. See
+# python_scripts/backtest/README.md's "Dormant/fallback strategies
+# removed" section. Recoverable from git history if ever needed.
 
 # strategy_wyckoff_patterns / strategy_volume_profile / strategy_support_resistance /
 # strategy_volume_imbalance / strategy_trend_pullback / strategy_mean_reversion_bb
@@ -3622,219 +3557,12 @@ def get_h1_mother_candle_zone(df_h1: 'pd.DataFrame', direction: str) -> dict:
         return {**empty, "reason": f"Mother candle error: {e}"}
 
 
-def strategy_liquidity_fvg_engine(symbol: str, df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, edge_mode: str = "NORMAL", df_m15: 'pd.DataFrame' = None, df_h1: 'pd.DataFrame' = None) -> Optional[Dict[str, Any]]:
-    """
-    SMC CORE ENGINE v3: HTF OB -> M5 Sweep -> Displacement -> FVG RETEST -> Enter
-    
-    Top-down approach:
-      Layer 2a: Price must be at/near a valid M15 or H1 Order Block (HTF POI)
-      Layer 2b: M5 shows sweep + displacement confirming the HTF rejection
-      Layer 2c: Enter on FVG retest with tight structural SL
-
-    CHANGE 2 -- True ICT entry sequence:
-    Step 1: Sweep of recent high/low (liquidity grab)
-    Step 2: Strong displacement candle away from sweep (impulse)
-    Step 3: FVG left by displacement (gap between pre-impulse and post-impulse)
-    Step 4: Price RETRACES into the FVG -> THIS is where we enter
-
-    Why this is better than entering on the displacement close:
-    - Tighter SL (placed below/above sweep wick, not the displacement candle)
-    - Better entry price (inside the FVG, closer to structure)
-    - Higher probability (retest confirms the displacement was real)
-    - Avoids chasing (no entry if price doesn't retrace -- no setup, no trade)
-    """
-    try:
-        if len(df_entry) < 25: return None
-
-        atr      = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1]
-        avg_body = abs(df_entry['close'] - df_entry['open']).rolling(20).mean().iloc[-1]
-        if avg_body == 0: return None
-
-        current_price = df_entry['close'].iloc[-1]
-        lookback      = 15
-        recent_high   = df_entry['high'].iloc[-lookback:-3].max()
-        recent_low    = df_entry['low'].iloc[-lookback:-3].min()
-        sweep_low_idx = df_entry['low'].iloc[-lookback:-3].idxmin()
-        sweep_high_idx= df_entry['high'].iloc[-lookback:-3].idxmax()
-
-        displacement_factor = 1.2 if edge_mode == "AGGRESSIVE" else 1.5
-
-        # ----------------------------------------------------------------
-        # PRE-SCAN: Determine which directions have HTF OB confluence
-        # Without a valid HTF POI, we don't scan for M5 setups at all.
-        # This is the "Top-Down" filter: H1/M15 OB -> M5 entry only.
-        # If no HTF data provided, fall back to old behaviour (no filter).
-        # ----------------------------------------------------------------
-        _htf_buy  = None
-        _htf_sell = None
-        _htf_available = (df_m15 is not None and len(df_m15) >= 30) or                          (df_h1  is not None and len(df_h1)  >= 30)
-
-        if _htf_available:
-            _htf_buy  = get_htf_confluence(symbol, 'BUY',  df_m15, df_h1, current_price)
-            _htf_sell = get_htf_confluence(symbol, 'SELL', df_m15, df_h1, current_price)
-            # HTF is now context/confidence, not a hard gate
-            # Setups without HTF OB get lower confidence score, handled by L3
-            if not _htf_buy['at_poi'] and not _htf_sell['at_poi']:
-                logger.debug(f"[HTF FILTER] {symbol}: no HTF OB -- FVG scan continues, lower confidence")
-
-        # CHANGE 3: Real volume confirmation (not hardcoded True)
-        avg_vol      = df_entry['tick_volume'].iloc[-15:].mean()
-        vol_mult     = 1.0 if edge_mode == "AGGRESSIVE" else 1.3
-        has_volume   = df_entry['tick_volume'].iloc[-1] > avg_vol * vol_mult or                        df_entry['tick_volume'].iloc[-2] > avg_vol * vol_mult
-        # Volume gate: displacement must have above-average volume
-        # If broker reports zero tick_volume (some brokers), allow through
-        has_volume_data = avg_vol >= 1
-
-        # ----------------------------------------------------------------
-        # SCAN LAST 8 CANDLES for a Sweep + Displacement sequence
-        # We look back because the impulse may have happened 1-3 bars ago
-        # and price is NOW retesting the FVG it left
-        # ----------------------------------------------------------------
-        for disp_offset in range(1, 8):
-            if disp_offset + 2 >= len(df_entry): break
-            c_before = df_entry.iloc[-disp_offset - 2]  # candle before displacement
-            c_disp   = df_entry.iloc[-disp_offset - 1]  # displacement candle
-            # c_after is everything from c_disp+1 to now -- price retesting
-
-            body_disp  = abs(c_disp['close'] - c_disp['open'])
-            range_disp = c_disp['high'] - c_disp['low']
-            if range_disp == 0: continue
-
-            # Strong displacement: body > 60% of range AND body > displacement_factor x avg
-            is_strong = (body_disp > range_disp * 0.6) and (body_disp > avg_body * displacement_factor)
-            if not is_strong: continue
-
-            # ---- BUY SETUP: Sweep Low -> Green Displacement -> FVG Retest ----
-            if c_disp['close'] > c_disp['open']:  # Green (bullish) displacement
-                # Sweep check: the displacement candle or previous one swept recent_low
-                # STRICT SWEEP: wick breaks level AND body closes above it
-                sweep_by_disp   = c_disp['low'] < recent_low and c_disp['close'] >= recent_low
-                sweep_by_before = c_before['low'] < recent_low and c_before['close'] >= recent_low
-                swept = sweep_by_disp or sweep_by_before
-                if not swept: continue
-
-                # FVG: gap between c_before high and first candle above displacement low
-                # Standard ICT FVG: c_before.high < c_after.low (gap)
-                fvg_bottom = c_before['high']   # bottom of the bullish FVG
-                fvg_top    = c_disp['low']      # top of the bullish FVG
-                # FVG only valid if there IS a gap (c_before high < c_disp low)
-                if fvg_top <= fvg_bottom: continue
-                fvg_mid    = (fvg_bottom + fvg_top) / 2
-
-                # RETEST: current price is inside or touching the FVG
-                # Price pulled back into the FVG after the displacement
-                retest = (fvg_bottom <= current_price <= fvg_top)
-                if not retest: continue
-
-                # Volume confirmation: displacement candle should have above-average volume
-                # Only gate if we have real volume data (some brokers report 0)
-                disp_vol = c_disp.get('tick_volume', 0) if hasattr(c_disp, 'get') else c_disp['tick_volume']
-                if has_volume_data and disp_vol < avg_vol * 0.8:
-                    continue  # Displacement without volume = lower quality
-
-                # SL just below sweep wick tip + spread buffer (tight structural SL)
-                # 0.5x ATR was too wide (doubled SL size). Use 2x spread instead.
-                sweep_wick_low = min(c_disp['low'], c_before['low'])
-                tick = mt5.symbol_info_tick(symbol)
-                _spread = (tick.ask - tick.bid) if tick else atr * 0.05
-                sl = sweep_wick_low - max(_spread * 2, atr * 0.05)
-
-                logger.info(
-                    f"[SMC FVG] {symbol} BUY retest: FVG {fvg_bottom:.5f}-{fvg_top:.5f} "
-                    f"price={current_price:.5f} sl={sl:.5f} disp={disp_offset}bars ago"
-                )
-                # HTF context: at OB = higher confidence; not at OB = lower confidence score
-                # We do NOT hard-block here -- L3 Gemini scores the confluence
-                _htf_buy_conf = _htf_buy['confluence_score'] if _htf_available and _htf_buy else 0
-
-                # Use HTF OB SL if it's tighter than the M5 wick SL
-                # (HTF OB low IS the structural invalidation for this setup)
-                if _htf_buy and _htf_buy.get('htf_sl'):
-                    htf_sl_candidate = _htf_buy['htf_sl']
-                    # Use whichever SL is LOWER (more protective for BUY)
-                    sl = min(sl, htf_sl_candidate) if htf_sl_candidate < sl else sl
-
-                confluence = _htf_buy.get('confluence_score', 0) if _htf_buy else 0
-                htf_reason = _htf_buy.get('reason', 'No HTF') if _htf_buy else 'No HTF data'
-                confidence = min(0.98, 0.85 + confluence * 0.03)  # 0.85 base + 0.03 per confluence point
-
-                return {
-                    "direction":     "BUY",
-                    "stop_loss":     sl,
-                    "fvg_top":       fvg_top,
-                    "fvg_bottom":    fvg_bottom,
-                    "fvg_mid":       fvg_mid,
-                    "strategy_name": "SMC_FVG_OB_RETEST",
-                    "confidence":    confidence,
-                    "setup_type":    "HTF_OB_FVG_RETEST",
-                    "displacement_bars_ago": disp_offset,
-                    "htf_confluence": confluence,
-                    "htf_reason":    htf_reason,
-                    "ob_h1":  _htf_buy.get('ob_h1'),
-                    "ob_m15": _htf_buy.get('ob_m15'),
-                }
-
-            # ---- SELL SETUP: Sweep High -> Red Displacement -> FVG Retest ----
-            if c_disp['close'] < c_disp['open']:  # Red (bearish) displacement
-                # STRICT SWEEP: wick breaks level AND body closes below it
-                sweep_by_disp   = c_disp['high'] > recent_high and c_disp['close'] <= recent_high
-                sweep_by_before = c_before['high'] > recent_high and c_before['close'] <= recent_high
-                swept = sweep_by_disp or sweep_by_before
-                if not swept: continue
-
-                fvg_top    = c_before['low']    # top of the bearish FVG
-                fvg_bottom = c_disp['high']     # bottom of the bearish FVG
-                if fvg_bottom <= fvg_top: continue
-                fvg_mid    = (fvg_top + fvg_bottom) / 2
-
-                retest = (fvg_bottom <= current_price <= fvg_top)
-                if not retest: continue
-
-                if not has_volume: continue
-
-                sweep_wick_high = max(c_disp['high'], c_before['high'])
-                tick = mt5.symbol_info_tick(symbol)
-                _spread = (tick.ask - tick.bid) if tick else atr * 0.05
-                sl = sweep_wick_high + max(_spread * 2, atr * 0.05)
-
-                logger.info(
-                    f"[SMC FVG] {symbol} SELL retest: FVG {fvg_bottom:.5f}-{fvg_top:.5f} "
-                    f"price={current_price:.5f} sl={sl:.5f} disp={disp_offset}bars ago"
-                )
-                _htf_sell_conf = _htf_sell['confluence_score'] if (_htf_available and _htf_sell) else 0
-
-
-
-                if _htf_sell and _htf_sell.get('htf_sl'):
-                    htf_sl_candidate = _htf_sell['htf_sl']
-                    sl = max(sl, htf_sl_candidate) if htf_sl_candidate > sl else sl
-
-                confluence = _htf_sell.get('confluence_score', 0) if _htf_sell else 0
-                htf_reason = _htf_sell.get('reason', 'No HTF') if _htf_sell else 'No HTF data'
-                confidence = min(0.98, 0.85 + confluence * 0.03)
-
-                return {
-                    "direction":     "SELL",
-                    "stop_loss":     sl,
-                    "fvg_top":       fvg_top,
-                    "fvg_bottom":    fvg_bottom,
-                    "fvg_mid":       fvg_mid,
-                    "strategy_name": "SMC_FVG_OB_RETEST",
-                    "confidence":    confidence,
-                    "setup_type":    "HTF_OB_FVG_RETEST",
-                    "displacement_bars_ago": disp_offset,
-                    "htf_confluence": confluence,
-                    "htf_reason":    htf_reason,
-                    "ob_h1":  _htf_sell.get('ob_h1'),
-                    "ob_m15": _htf_sell.get('ob_m15'),
-                }
-
-        return None
-
-    except Exception as e:
-        logger.error(f"SMC FVG Engine Error: {e}")
-        return None
-
+# strategy_liquidity_fvg_engine ("STRATEGY C" / SMC_FVG_OB_RETEST) REMOVED
+# 2026-08. Was a real, flag-gated strategy (ENABLE_STRATEGY_SMC_FVG_RETEST,
+# False by default) that never fired in the real-data backtest either (0
+# trades against 90 days of real XAUUSDm). Never part of the four-setup
+# vision. See python_scripts/backtest/README.md's "Dormant/fallback
+# strategies removed" section. Recoverable from git history if ever needed.
 
 
 # =============================================================================
@@ -8933,37 +8661,6 @@ def ai_trading_session():
                                     logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
                                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
 
-                # 
-                # STRATEGY C: SSM / ICT FVG RETEST (institutional sweep)
-                # Rules: HTF OB zone  + sweep + displacement + FVG retest
-                # This is the only strategy that USES the HTF zone.
-                # Higher L3 confidence required (institutional setup).
-                #
-                if not setup and config.ENABLE_STRATEGY_SMC_FVG_RETEST:
-                    # SSM-specific HTF zone check (only for this strategy)
-                    _ssm_in_zone = _htf_zone['in_zone']
-                    _s = strategy_liquidity_fvg_engine(symbol, df_m5, df_h1, effective_trend,
-                                                        edge_mode="NORMAL", df_m15=df_m15, df_h1=df_h1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'SSM_FVG_RETEST'),
-                            'stop_loss': _s['stop_loss'],
-                            'strategy_type': 'SSM',
-                            'liquidity_distance':  0.75,
-                            'liquidity_strength':  0.85,
-                            'momentum_state':      0.8,
-                            'structure_alignment': 0.8,
-                            'entry_price':    _s.get('fvg_mid', _cur_price),
-                            'fvg_top':        _s.get('fvg_top', 0),
-                            'fvg_bottom':     _s.get('fvg_bottom', 0),
-                            'htf_confluence': _s.get('htf_confluence', 0),
-                            'htf_reason':     _s.get('htf_reason', ''),
-                            'at_htf_zone':    _ssm_in_zone,
-                            'htf_needed': True,   # SSM uses HTF zone
-                        }
-                        logger.debug(f"[SSM] {symbol}: FVG retest found, at_htf_zone={_ssm_in_zone}")
-
                 # STRATEGY D: AOX MODEL -- 25/25/50 Layered Execution
                 # Layer 1 (25%): SD zone tap
                 # Layer 2 (25%): SMT + FPFVG Turtle Soup confirmation
@@ -8996,44 +8693,6 @@ def ai_trading_session():
                         }
                         logger.info(f"[SHAAKUNI] {symbol}: SSM setup found | "
                                    f"{_ssm_result['signal']} @ {_ssm_result.get('limit_entry',0):.4f}")
-
-                # Generic Liquidity Grab and Kill Zone (fallback)
-                if not setup and config.ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK:
-                    _s = strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'LIQUIDITY_GRAB'),
-                            'stop_loss': _s['stop_loss'],
-                            'strategy_type': 'SSM',
-                            'liquidity_distance':  0.65,
-                            'liquidity_strength':  0.75,
-                            'momentum_state':      0.6,
-                            'structure_alignment': 0.65,
-                            'entry_price': _cur_price,
-                            'at_htf_zone': _htf_zone['in_zone'],
-                            'htf_needed': True,
-                        }
-
-                if not setup and config.ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK:
-                    _s = strategy_ict_killzone(df_m5, df_h1, h1_trend, symbol, df_m1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'ICT_KILLZONE'),
-                            'stop_loss': _s['stop_loss'],
-                            # ICT_KILLZONE is timing-based -- kill zone time IS the confluence
-                            # It doesn't need a separate 3C sweep confirmation
-                            # (using EMA path so it doesn't hit the SSM+3C gate)
-                            'strategy_type': 'ICT',
-                            'liquidity_distance':  0.6,
-                            'liquidity_strength':  0.7,
-                            'momentum_state':      0.6,
-                            'structure_alignment': 0.6,
-                            'entry_price': _cur_price,
-                            'at_htf_zone': _htf_zone['in_zone'],
-                            'htf_needed': True,
-                        }
 
                 if not setup:
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
@@ -9074,11 +8733,11 @@ def ai_trading_session():
                 # QUOTA MODE: when AI quota exceeded, only strongest signals go through
                 _quota_active = hasattr(state, '_quota_resume') and datetime.now() < state._quota_resume
                 if _quota_active:
-                    # Quota mode: SSM/Shaakuni sweep + ICT timing = self-confirming, no AI needed
+                    # Quota mode: SSM/Shaakuni sweep = self-confirming, no AI needed
                     _strat_t = setup.get('strategy_type', 'SSM')
                     _reason  = setup.get('reason', '')
-                    _is_self_confirming = _strat_t in ('ICT', 'AOX', 'SSM') or _reason in (
-                        'ICT_KILLZONE', 'LIQUIDITY_GRAB', 'AOX_SNIPER', 'SHAAKUNI_SSM')
+                    _is_self_confirming = _strat_t in ('AOX', 'SSM') or _reason in (
+                        'AOX_SNIPER', 'SHAAKUNI_SSM')
                     if not _is_self_confirming:
                         # For EMA/Swappy in quota mode: need STRONG EMA or 3C
                         _ema_ok = setup.get('ema_strength') == 'STRONG'
@@ -9097,9 +8756,8 @@ def ai_trading_session():
                         logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
                         state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
                         continue
-                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'ICT', 'AOX'):
-                    # EMA, Swappy, ICT: don't require 3C (they have built-in confirmation)
-                    # ICT_KILLZONE: kill zone timing = confluence, 3C not needed
+                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'AOX'):
+                    # EMA, Swappy, AOX: don't require 3C (they have built-in confirmation)
                     logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
 
                 if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
@@ -9300,7 +8958,7 @@ def ai_trading_session():
 
                         _strat_type   = setup.get('strategy_type', 'SSM')
                         _l3_cache_key = f"{symbol}_{direction}_{_strat_type}"
-                        _is_ssm_call  = _strat_type in ('SSM','ICT','AOX')
+                        _is_ssm_call  = _strat_type in ('SSM','AOX')
                         _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
                         _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
                         if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
@@ -9377,7 +9035,6 @@ def ai_trading_session():
                             setup['_range_scalp_mode'] = False
 
                         # Step 4: Quality gate based on strategy type
-                        # ICT_KILLZONE: timing is the confluence, allow EMA:WEAK (kill zone = setup)
                         # EMA/SWAPPY in TRENDING H4: require STRONG or 3C -- no weak signals in trend
                         # EMA/SWAPPY in RANGING H4: EMA:WEAK allowed (range scalp, confirmed by M5 trend)
                         if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
@@ -9393,22 +9050,23 @@ def ai_trading_session():
                         if _m5_dir == 'BUY' and _h4_bias == 'BEARISH':
                             # Counter-trend BUY in bearish HTF -- needs structural support
                             # Check if we have FVG or OB confluence, not just EMA cross
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
                             if not _has_struct:
                                 logger.debug(f"[HTF GATE] {symbol}: BUY rejected in BEARISH H4 -- no structural confluence")
                                 continue
                         elif _m5_dir == 'SELL' and _h4_bias == 'BULLISH':
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
                             if not _has_struct:
                                 logger.debug(f"[HTF GATE] {symbol}: SELL rejected in BULLISH H4 -- no structural confluence")
                                 continue
 
                         # L3 minimum score by strategy type
-                        # ICT_KILLZONE: kill zone timing = built-in confluence  allow 5/10
+                        # AOX/SSM: sweep + macro-window/OB confluence is already strong structural
+                        # evidence -- allow a lower AI bar (5/10)
                         # EMA/SWAPPY: need Gemini to have an opinion (6+)
                         # EMA:WEAK + no 3C in trending: need strong AI conviction (7)
-                        if _strat_type in ('ICT', 'AOX', 'SSM'):
-                            _l3_min_score = 5  # kill zone time = valid signal even at score 5
+                        if _strat_type in ('AOX', 'SSM'):
+                            _l3_min_score = 5
                         elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime == 'TRENDING':
                             _l3_min_score = 7
                         else:

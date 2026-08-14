@@ -12,17 +12,15 @@ else is a market order sized off SL distance). A clever generic dispatcher
 risks silently passing the wrong argument to the wrong function; explicit
 adapters make each one's contract checkable at a glance.
 
-LIVE vs NOT LIVE, and why some strategies aren't here at all
+LIVE strategies -- and why nothing else is here
 --------------------------------------------------------------
-Grepping the whole bot file for call sites (not just `def`s) found that
-only some of the strategy-shaped code in this file is ever actually
-invoked from the live trading loop.
+The live cascade trades exactly four documented setups: Shaakuni SSM,
+Swappy 3C, AOX (dedicated stateful driver, see aox_driver.py -- not a
+StrategyAdapter, its phases persist and overlap across bar-closes), and
+the 9/25/50/200 EMA scalp. Nothing else in the live file has a call site.
 
   LIVE right now (has a real call site in the file):
-    - strategy_liquidity_fvg_engine()   ("STRATEGY C" / SSM FVG retest)
     - strategy_shaakuni_ssm()           ("SHAAKUNI SSM")
-    - strategy_liquidity_grab()         (fallback)
-    - strategy_ict_killzone()           (fallback)
     - strategy_ema_scalp_cross()        ("STRATEGY A" -- extracted from a
                                           ~90-line inline block in the main
                                           loop specifically so it could be
@@ -33,45 +31,33 @@ invoked from the live trading loop.
     - detect_swappy_3c()                ("STRATEGY B" -- see its adapter's
                                           docstring for what's still
                                           excluded vs the full live path)
+    - AOX -- see aox_driver.py, not a StrategyAdapter here on purpose.
 
-  NOTE on "live" vs "enabled": per an explicit decision to run the live
-  cascade on only four setups (Shaakuni SSM, Swappy 3C, AOX, EMA scalp),
-  STRATEGY C (SMC FVG retest) and both generic fallbacks are gated off by
-  default via config.ENABLE_STRATEGY_* flags in AITradingConfig -- their
-  call sites still exist (so `live=True` here is still accurate in the
-  sense that flipping a flag re-enables them immediately), but they don't
-  fire in the current default configuration. Test SMC_FVG_OB_RETEST/
-  ICT_KILLZONE/LIQUIDITY_GRAB here if you're deciding whether to
-  re-enable any of them; don't read their presence as "this is what the
-  bot trades today."
+  REMOVED 2026-08, all confirmed to have had zero live call sites at the
+  time of removal (confirmed by grepping call sites, not just defs), or
+  in the case of the three ICT-style fallbacks, flag-gated off for the
+  entire time this bot traded anything real and never part of the actual
+  four-setup vision. See python_scripts/backtest/README.md's "Dormant/
+  fallback strategies removed" section for the full reasoning and any
+  real-data numbers behind each removal. Recoverable from git history
+  (search this repo's log for "strategies_research.py", "Quarantine
+  dormant strategies", or "remove all 8 base strategies") -- don't
+  rewrite any of these from scratch if revisited:
+    - EntryEngine.evaluate_setup, strategy_advanced_smc,
+      strategy_wyckoff_patterns, strategy_volume_profile,
+      strategy_support_resistance, strategy_volume_imbalance,
+      strategy_trend_pullback, strategy_mean_reversion_bb
+      (the original 8 dormant strategies)
+    - strategy_ict_killzone, strategy_liquidity_grab (flag-gated generic
+      ICT fallbacks), strategy_liquidity_fvg_engine ("STRATEGY C" / SMC
+      FVG retest, also flag-gated -- and 0 trades in the real-data
+      backtest even while it was still wired here)
 
-  REMOVED 2026-08 (were never live, and were fully removed rather than
-  kept dormant, after real-data backtest evidence -- see
-  python_scripts/backtest/README.md's "Dormant strategies removed"
-  section for the full numbers and reasoning): EntryEngine.evaluate_setup,
-  strategy_advanced_smc, strategy_wyckoff_patterns, strategy_volume_profile,
-  strategy_support_resistance, strategy_volume_imbalance,
-  strategy_trend_pullback, strategy_mean_reversion_bb. If any of these
-  needs to be revisited, recover it from git history (search this repo's
-  log for "strategies_research.py" or "Quarantine dormant strategies") --
-  don't rewrite from scratch.
-
-  NOT a StrategyAdapter here, on purpose (but IS wired -- see aox_driver.py):
-    - "STRATEGY D" / AOX. run_aox_layered_entry() was split into
-      detect_aox_phase_signal() (pure decision logic, no order placement)
-      + a thin execution wrapper, specifically so it could be backtested.
-      It's still not one of the adapters in this file, because AOX's phase
-      state persists across many bar-closes and its layers can overlap in
-      time (Layer 2 can fire while Layer 1's trade is still open) --
-      StrategyAdapter's single-bar, single-trade-at-a-time contract (built
-      for every other strategy here) can't express that. See aox_driver.py
-      for the dedicated stateful driver and run_backtest.py's --strategy
-      AOX / --all for how to run it.
-    - The live STRATEGY B additionally applies a location filter (near
-      M5 support/resistance) and a stateful "3rd-time re-entry rule"
-      (can_take_swappy_entry) on top of detect_swappy_3c()'s pattern
-      match. Only the pure pattern-detection part is wired here -- see
-      that adapter's docstring.
+The live STRATEGY B additionally applies a location filter (near M5
+support/resistance) and a stateful "3rd-time re-entry rule"
+(can_take_swappy_entry) on top of detect_swappy_3c()'s pattern match --
+only the pure pattern-detection part is wired in _adapt_swappy_3c below;
+see that adapter's own docstring.
 """
 
 from dataclasses import dataclass
@@ -94,8 +80,7 @@ class StrategyResult:
     take_profit: Optional[float] = None  # set only if the strategy computes its own (e.g. Shaakuni)
     entry_price: Optional[float] = None  # set only if the strategy computes a specific entry
                                           # level; otherwise the engine fills at the current
-                                          # bar's close, matching how the live fallback
-                                          # strategies enter at market.
+                                          # bar's close.
     edge_score: Optional[float] = None
     edge_state: Optional[str] = None
 
@@ -165,66 +150,6 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
     if effective_trend == "NEUTRAL":
         return None  # live falls back to state.approved_bias -- see docstring above
     return effective_trend
-
-
-def _adapt_ict_killzone(bot, dataset: HistoricalDataset, as_of, symbol):
-    # Live call site: strategy_ict_killzone(df_m5, df_h1, h1_trend, symbol, df_m1)
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        df_h1 = dataset.window("H1", as_of, 100)
-        df_m1 = dataset.window("M1", as_of, 30)
-        if len(df_m5) < 20 or len(df_h1) < 55 or len(df_m1) < 12:
-            return None
-        r = bot.strategy_ict_killzone(df_m5, df_h1, trend, symbol, df_m1)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "ICT_KILLZONE"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_liquidity_grab(bot, dataset: HistoricalDataset, as_of, symbol):
-    # Live call site: strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        df_h1 = dataset.window("H1", as_of, 100)
-        df_m1 = dataset.window("M1", as_of, 30)
-        if len(df_m5) < 15 or len(df_h1) < 20 or len(df_m1) < 5:
-            return None
-        r = bot.strategy_liquidity_grab(df_m5, df_h1, trend, symbol, df_m1)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "LIQUIDITY_GRAB"),
-                           confidence=r.get("confidence", 0.0))
-
-
-def _adapt_liquidity_fvg_engine(bot, dataset: HistoricalDataset, as_of, symbol):
-    # Live call site: strategy_liquidity_fvg_engine(symbol, df_m5, df_h1,
-    #   effective_trend, edge_mode="NORMAL", df_m15=df_m15, df_h1=df_h1)
-    with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
-        if trend is None:
-            return None
-        df_m5 = dataset.window("M5", as_of, 60)
-        df_h1 = dataset.window("H1", as_of, 100)
-        df_m15 = dataset.frames.get("M15")
-        df_m15_w = dataset.window("M15", as_of, 150) if df_m15 is not None else None
-        if len(df_m5) < 25:
-            return None
-        r = bot.strategy_liquidity_fvg_engine(symbol, df_m5, df_h1, trend,
-                                               edge_mode="NORMAL", df_m15=df_m15_w, df_h1=df_h1)
-    if not r:
-        return None
-    return StrategyResult(direction=r["direction"], stop_loss=r["stop_loss"],
-                           reason=r.get("strategy_name", "SMC_FVG_OB_RETEST"),
-                           confidence=r.get("confidence", 0.0))
 
 
 def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
@@ -333,12 +258,11 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     1.2:1 RR, auto-adjusted to 1.5x SL if below that) needs a live tick
     and account_info() to compute entry price and risk caps -- there's no
     honest historical equivalent to replay it exactly. Falling back to
-    the engine's generic --rr multiple (same as every other fallback-style
-    adapter here that doesn't set its own take_profit, e.g. ICT_KILLZONE/
-    LIQUIDITY_GRAB) is a disclosed approximation of live's real RR-gated
-    TP, not a byte-exact replication -- but it's a real target on the
-    correct side of entry, which is what matters most: the prior behavior
-    wasn't an approximation of anything, it was unconditionally wrong.
+    the engine's generic --rr multiple is a disclosed approximation of
+    live's real RR-gated TP, not a byte-exact replication -- but it's a
+    real target on the correct side of entry, which is what matters most:
+    the prior behavior wasn't an approximation of anything, it was
+    unconditionally wrong.
     """
     with replay_context(bot, dataset, as_of):
         trend = _get_trend(bot, dataset, as_of, symbol)
@@ -356,9 +280,6 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
 
 
 STRATEGIES_LIVE = [
-    StrategyAdapter("ICT_KILLZONE", True, _adapt_ict_killzone),
-    StrategyAdapter("LIQUIDITY_GRAB", True, _adapt_liquidity_grab),
-    StrategyAdapter("SMC_FVG_OB_RETEST", True, _adapt_liquidity_fvg_engine),
     StrategyAdapter("SHAAKUNI_SSM", True, _adapt_shaakuni_ssm),
     StrategyAdapter("SWAPPY_3C", True, _adapt_swappy_3c),
     StrategyAdapter("EMA_SCALP_CROSS", True, _adapt_ema_scalp_cross),
