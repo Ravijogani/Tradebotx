@@ -6328,6 +6328,9 @@ def analyze_loss_with_ai(ticket: int, deal, profit: float):
             hour = datetime.now(timezone.utc).hour
             context_label = "AT EXIT (no entry-time snapshot available for this trade)"
 
+        duration_mins = (datetime.fromisoformat(exit_time.replace('Z', '+00:00')) -
+                         datetime.fromisoformat(entry_time.replace('Z', '+00:00'))).seconds / 60.0
+
         # Build AI analysis prompt
         prompt = f"""You are an expert forex trading analyst. Analyze this LOSING trade and identify what went wrong.
 
@@ -6341,7 +6344,7 @@ TRADE DETAILS:
 - Profit/Loss: ${profit:.2f}
 - Entry Time: {entry_time}
 - Exit Time: {exit_time}
-- Duration: ~{(datetime.fromisoformat(exit_time.replace('Z', '+00:00')) - datetime.fromisoformat(entry_time.replace('Z', '+00:00'))).seconds // 60} minutes
+- Duration: ~{duration_mins:.0f} minutes
 
 MARKET CONDITIONS ({context_label}):
 - ADX (Trend Strength): {adx:.1f}
@@ -6361,29 +6364,94 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
 
         # Call Gemini AI for analysis via central provider
         lesson = ai_provider.call_ai(prompt, "You are an expert forex analyst.", temperature=0.3)
+        lesson_source = 'ai'
 
-        if lesson:
+        # NO-AI FALLBACK FIX: this used to just log "skipping AI analysis"
+        # and produce nothing at all whenever call_ai() returned None
+        # (missing API key, quota exhausted, network error -- all real,
+        # expected cases this codebase already handles elsewhere, e.g.
+        # state._quota_resume's 1h quota-backoff). A trust feature that
+        # goes completely dark whenever one external API hiccups isn't one
+        # you can build a product promise on. generate_deterministic_lesson()
+        # is a plain rule-based read of the same trade data the prompt
+        # above already assembles -- no external call, so it can't fail for
+        # the same reasons the AI path can.
+        if not lesson:
+            logger.warning(f"[AI LEARNING] AI unavailable for #{ticket} -- using deterministic fallback")
+            lesson = generate_deterministic_lesson(symbol, direction, adx, session, hour, duration_mins, profit)
+            lesson_source = 'deterministic'
+        else:
             # Clean up potential AI junk
             lesson = lesson.strip().replace('"', '').replace('*', '')
 
-            # Store the lesson
-            save_ai_lesson(ticket, symbol, direction, lesson, profit, {
-                'adx': adx,
-                'session': session,
-                'hour': hour,
-                'context_timing': context_label,
-                'entry_price': entry_price,
-                'exit_price': exit_price
-            })
-            
-            logger.info(f" [AI LEARNING] Lesson learned from #{ticket}:")
-            logger.info(f" [AI LEARNING] {lesson}")
-            
-        else:
-            logger.warning("[AI LEARNING] No AI API key configured, skipping AI analysis")
-            
+        # Store the lesson (both AI and deterministic lessons go through
+        # the same save_ai_lesson() -- same Supabase/Telegram/local-file
+        # visibility pipeline either way, tagged with 'source' so it's
+        # honest about which one actually produced it).
+        save_ai_lesson(ticket, symbol, direction, lesson, profit, {
+            'adx': adx,
+            'session': session,
+            'hour': hour,
+            'context_timing': context_label,
+            'source': lesson_source,
+            'entry_price': entry_price,
+            'exit_price': exit_price
+        })
+
+        logger.info(f" [AI LEARNING] Lesson learned from #{ticket} ({lesson_source}):")
+        logger.info(f" [AI LEARNING] {lesson}")
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error analyzing loss: {e}", exc_info=True)
+
+
+def generate_deterministic_lesson(symbol: str, direction: str, adx, session: str, hour: int,
+                                   duration_mins: float, profit: float) -> str:
+    """
+    NO-AI FALLBACK: see the call site in analyze_loss_with_ai() for why this
+    exists. Plain rule-based read of the same trade context the AI prompt
+    already assembles -- no external call, can't fail for the reasons the
+    AI path can (missing key, quota, network). Less nuanced than what
+    Gemini would write, but always available, which is the actual point of
+    a fallback.
+
+    Combines every applicable factor into one sentence rather than
+    stopping at the first match -- multiple deterministic signals firing
+    together (e.g. low ADX AND thin Asian-session liquidity) is itself a
+    stronger, more specific signal than either alone.
+    """
+    factors = []
+
+    if adx is not None and adx < 20:
+        factors.append(f"ADX was low ({adx:.1f}) at entry -- {symbol} was likely ranging, not trending")
+
+    if session == 'ASIAN':
+        factors.append(f"entered during the Asian session, typically lower liquidity/wider spread for {symbol}")
+
+    if duration_mins < 5:
+        factors.append(
+            f"stopped out within {duration_mins:.0f} minutes -- a reversal this fast can mean the entry "
+            f"was mistimed against a nearby liquidity level, or a spread/volatility spike caught the stop"
+        )
+    elif duration_mins > 180:
+        factors.append(
+            f"held for {duration_mins / 60:.1f} hours before losing -- the setup didn't develop within "
+            f"the timeframe this strategy is designed for"
+        )
+
+    if not factors:
+        _adx_str = f"{adx:.1f}" if adx is not None else "n/a"
+        return (
+            f"No single dominant factor identified from available data "
+            f"(ADX={_adx_str}, session={session}, hour={hour} UTC, "
+            f"duration={duration_mins:.0f}min). Logged for pattern tracking across future "
+            f"similar {symbol} {direction} setups."
+        )
+
+    return (
+        f"{symbol} {direction} loss (${profit:.2f}): " + "; ".join(factors) +
+        f". Consider tightening entry filters for {symbol} {direction} under these conditions."
+    )
 
 def save_ai_lesson(ticket: int, symbol: str, direction: str, lesson: str, loss_amount: float, context: dict):
     """
