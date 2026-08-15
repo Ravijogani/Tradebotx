@@ -24,7 +24,8 @@ TIMEFRAMES = {
     "M5": mt5.TIMEFRAME_M5,
     "M15": mt5.TIMEFRAME_M15,   # needed for SMC_FVG_OB_RETEST's HTF confluence check
     "H1": mt5.TIMEFRAME_H1,
-    "H4": mt5.TIMEFRAME_H4,     # needed for SHAAKUNI_SSM
+    "H4": mt5.TIMEFRAME_H4,     # needed for SHAAKUNI_SSM and STRUCTURAL_SWING
+    "D1": mt5.TIMEFRAME_D1,     # needed for STRUCTURAL_SWING's D1 structure/bias detection
 }
 
 

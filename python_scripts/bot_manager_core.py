@@ -285,6 +285,7 @@ ALLOWED_BOT_SCRIPTS = {
     'hybrid_trading_bot_multiuser.py',
     'hybrid_trading_bot.py',
     'intraday.py',
+    'structural_swing_pro.py',
 }
 
 

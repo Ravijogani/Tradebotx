@@ -29,6 +29,7 @@ and dormant strategies removed" below for what used to be here and why.
 | `SWAPPY_3C` | Yes | **Yes** | Matches the fixed live entry mechanics — stop entry + 3:1 RR, not a market fill (see below). Real-data result: 18 trades, +0.219R expectancy — too small a sample to trust yet |
 | `EMA_SCALP_CROSS` | Yes | **Yes** | Extracted from the main loop into `strategy_ema_scalp_cross()`, two behavior bugs found and fixed (see below). Real-data result: 75 trades, +0.051R expectancy — barely positive, weakest of the four |
 | `AOX` (layered execution) | Yes | **Yes** | Backtestable via a dedicated stateful driver, not a `StrategyAdapter` — see "AOX wiring" below. **Not yet tested against real data** (needs M1) |
+| `STRUCTURAL_SWING` | Yes | **Yes** | Lives in a **separate script** (`structural_swing_pro.py`), not this file — see "STRUCTURAL_SWING wiring" below for why. Real-data result (XAUUSDm, ~90d resampled D1): 3 trades, +1.65R expectancy, 66.7% win rate — a genuinely small sample (this strategy fires rarely by design), re-run once you have a longer native D1 export before trusting the numbers over the mechanics |
 
 ### Fallback and dormant strategies removed (2026-08)
 
@@ -268,6 +269,47 @@ often (163 times in one run) and only the subsequent sniper-zone touch
 never lands. Re-run against real exported history before trusting any AOX
 trade count from this harness.
 
+### STRUCTURAL_SWING wiring (separate script)
+
+Unlike every other strategy here, `STRUCTURAL_SWING` doesn't live inside
+`hybrid_trading_bot_multiuser.py` at all — it's `structural_swing_pro.py`,
+a standalone script. That's deliberate: `hybrid_trading_bot_multiuser.py`
+and `intraday.py` don't dispatch on `strategy_id` — every strategy defined
+in a given bot file runs for every user who launches that file, regardless
+of which strategy they picked in the UI. Folding a new strategy into either
+shared file would have silently bundled it into a tier that didn't select
+it. A dedicated script per tier (matching how `intraday.py` already relates
+to `hybrid_trading_bot_multiuser.py`) keeps that separation real. Full
+reasoning in `structural_swing_pro.py`'s own module docstring.
+
+Because it's a separate module, it needed its own loader
+(`swing_loader.py`, mirrors `bot_loader.py`) and its own driver
+(`swing_driver.py`, mirrors `aox_driver.py`'s "not a `StrategyAdapter`"
+pattern — `BacktestEngine` is built around one shared bot module per run,
+which doesn't fit a genuinely different file). One thing that made this
+simpler than AOX: `detect_structural_swing_signal(df_d1, df_h4, symbol)` is
+a pure function that takes its OHLC windows as plain arguments instead of
+calling `get_market_data()` internally, so `swing_driver.py` doesn't need
+`replay_data.py`'s monkeypatching machinery at all — `HistoricalDataset.
+window()`'s results are handed straight to the decision function, exactly
+like calling it live would.
+
+**A real design issue found via the real-data backtest, not a coding
+bug:** the first version placed the stop-loss beyond the *entire D1 leg's
+origin* (the point that invalidates the higher-high/higher-low bias read).
+On real XAUUSDm data every single candidate that cleared the zone-touch +
+rejection-candle bar (9 of them, over the ~90-day window) still failed the
+MIN_RR filter — often by a wide margin — because a leg's full range routinely
+swamped the reward to the next real opposing level. Fixed by moving the
+stop to the *local pullback's own extreme* (the H4 high/low since the D1
+leg's own end, which is often the trigger candle's own wick) — the point
+that actually invalidates this specific pullback continuing, not the much
+larger move that invalidates the whole D1 bias read. Re-ran after the fix:
+5 raw signals fired (down to 3 non-overlapping trades once one is "open"),
+all with correct SL/TP sides and sane R-multiples matching their computed
+RR. Run it with `--strategy STRUCTURAL_SWING` or `--all`; needs `--d1` in
+addition to `--h4` (see "Getting historical data" below).
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses
@@ -314,11 +356,21 @@ tool, not part of the harness):
 python export_mt5_history.py --symbol XAUUSDm --days 365 --out-dir ./history/XAUUSDm
 ```
 
-Produces `XAUUSDm_M1.csv`, `_M5.csv`, `_M15.csv`, `_H1.csv`, `_H4.csv`.
-M1 is only needed by `AOX`; H4 is only needed by `SHAAKUNI_SSM`. M15 isn't
+Produces `XAUUSDm_M1.csv`, `_M5.csv`, `_M15.csv`, `_H1.csv`, `_H4.csv`,
+`_D1.csv`. M1 is only needed by `AOX`; H4 is needed by `SHAAKUNI_SSM` and
+`STRUCTURAL_SWING`; D1 is needed only by `STRUCTURAL_SWING`. M15 isn't
 needed by any currently-live strategy on its own (only via `--corr-m15`
 for AOX's correlated-pair check). `SWAPPY_3C`/`EMA_SCALP_CROSS` only need
 M5/H1.
+
+No native D1 export yet? `pandas.read_csv(...).resample('1D', on='time')`
+over an H4 export (aggregate `open`→first, `high`→max, `low`→min,
+`close`→last) is a reasonable stand-in for backtesting — what the real
+`STRUCTURAL_SWING` verification run above used, since M1-era exports
+predate D1 being added here. It's not byte-identical to MT5's own D1 bars
+(server-day boundaries can differ slightly from a UTC calendar-day
+resample), so re-run against a native D1 export once you have one before
+fully trusting a result over the mechanics.
 
 ## Running a backtest
 
