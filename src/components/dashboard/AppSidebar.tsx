@@ -1,4 +1,4 @@
-import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen, Wand2, Building2, Shield, Mail } from "lucide-react";
+import { LayoutDashboard, Layers, Calculator, Settings, Activity, FileText, Gift, BarChart3, MessageSquare, CreditCard, Brain, BookOpen, Wand2, Building2, Shield, Mail, GraduationCap } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Sidebar,
