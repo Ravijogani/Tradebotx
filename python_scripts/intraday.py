@@ -2774,38 +2774,111 @@ def update_global_ai_context():
 # TRADE EXECUTION (Simplified for local testing)
 # =============================================================================
 
+def _project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
+                           risk_percent: float, account_equity: float) -> Dict[str, float]:
+    """
+    RISK-FIX: single source of truth for "what lot size will this trade
+    actually get, and what dollar/percent risk does that lot size really
+    carry". Both validate_trade_risk() (decides whether the trade is
+    allowed) and place_intraday_trade() (sizes and sends it) call this same
+    function so they can never compute two different answers for the same
+    trade.
+
+    This exists because validate_trade_risk() previously derived its
+    "actual_risk_percent" algebraically from risk_percent alone --
+    (risk_percent/100 * equity) / equity * 100 is just risk_percent again,
+    regardless of this trade's SL distance or resulting lot size -- so
+    Check 1 below could never actually fail on a specific trade's real
+    risk. In particular it never caught the case place_intraday_trade
+    already knew about and logged: when the broker's minimum tradable lot
+    prices out to more risk than the intended risk_percent (small
+    accounts, wide stops, or high-tick-value symbols like BTC/XAU), the
+    position must be floored up to min_lot, and the REAL dollar risk that
+    results can exceed every configured cap. This function computes that
+    real, post-floor number so the caller can actually reject it instead
+    of just logging it and proceeding.
+    """
+    spec = get_symbol_specs(symbol)
+    pip_risk = abs(entry_price - stop_loss) / spec['pip_size']
+
+    tick_val = spec.get('trade_tick_value', 0)
+    tick_size = spec.get('trade_tick_size', spec.get('pip_size', 0.0001))
+    lot_step = spec.get('lot_step', 0.01)
+
+    intended_risk_amount = account_equity * (risk_percent / 100.0)
+
+    if tick_val and tick_val > 0 and tick_size > 0:
+        # Standard formula: risk_$ / (SL_pips * pip_value_per_lot) -- works
+        # for all symbols including Gold/BTC/Oil.
+        pip_value_per_lot = (tick_val / tick_size) * spec.get('pip_size', tick_size)
+    else:
+        # Forex fallback: pip_risk * 10 (only valid for standard forex pairs)
+        pip_value_per_lot = 10.0
+
+    lot_raw = intended_risk_amount / max(pip_risk * pip_value_per_lot, 0.001)
+    lot_size = round(lot_raw / lot_step) * lot_step
+    lot_size = max(spec['min_lot'], min(lot_size, spec['max_lot']))
+
+    # Real dollar/percent risk this lot size actually carries -- not the
+    # intended risk_percent, the number that would really hit the account
+    # if this exact lot size's SL is touched (reflects the min/max_lot
+    # floor/cap above, which the intended figure does not).
+    actual_risk_amount = lot_size * pip_risk * pip_value_per_lot
+    actual_risk_percent = (actual_risk_amount / account_equity) * 100 if account_equity > 0 else 0.0
+
+    return {
+        'spec': spec, 'pip_risk': pip_risk, 'lot_raw': lot_raw, 'lot_size': lot_size,
+        'pip_value_per_lot': pip_value_per_lot,
+        'intended_risk_amount': intended_risk_amount, 'intended_risk_percent': risk_percent,
+        'actual_risk_amount': actual_risk_amount, 'actual_risk_percent': actual_risk_percent,
+    }
+
+
 def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]:
     """
     Validate that proposed trade risk is within acceptable limits
-    
+
     Args:
         signal: Trade signal dictionary
         account_equity: Current account equity
-    
+
     Returns:
         (is_valid, reason): Tuple with validation result and reason
     """
     try:
         symbol = signal['symbol']
         stop_loss = signal['stop_loss']
-        
+
         tick = mt5.symbol_info_tick(symbol)
         if not tick:
             return False, "Cannot get tick data"
-        
+
         entry_price = tick.ask if signal['direction'] == "BUY" else tick.bid
-        
-        # Calculate trade risk in dollars and percentage
-        spec = get_symbol_specs(symbol)
-        pip_risk = abs(entry_price - stop_loss) / spec['pip_size']
-        
-        # Use current risk percent from state
-        risk_percent = state.current_risk_percent
-        risk_amount = account_equity * (risk_percent / 100.0)
-        
-        # Calculate what the actual risk will be for this trade
-        actual_risk_percent = (risk_amount / account_equity) * 100
-        
+
+        # RISK-FIX: risk_multiplier must match what place_intraday_trade
+        # actually sizes the position with (Edge Mode Engine multiplier,
+        # applied there via signal.get('risk_multiplier', 1.0)) -- this was
+        # previously omitted here, so a signal with risk_multiplier != 1.0
+        # could be validated against one risk_percent and then sized
+        # against a different (larger) one moments later.
+        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0)
+
+        # RISK-FIX: actual_risk_percent/risk_amount now come from the same
+        # real lot-size projection place_intraday_trade will use to size
+        # the order -- see _project_lot_and_risk's docstring for why the
+        # old computation here could never actually reject an oversized
+        # trade.
+        projection = _project_lot_and_risk(symbol, entry_price, stop_loss, risk_percent, account_equity)
+        pip_risk = projection['pip_risk']
+        risk_amount = projection['actual_risk_amount']
+        actual_risk_percent = projection['actual_risk_percent']
+        if projection['lot_raw'] < projection['spec']['min_lot']:
+            logger.info(
+                f"[RISK] {symbol}: ideal lot {projection['lot_raw']:.5f} < broker min "
+                f"{projection['spec']['min_lot']} -- real risk at min_lot is "
+                f"{actual_risk_percent:.2f}% vs intended {risk_percent:.2f}%"
+            )
+
         # Check 1: Single trade risk cap
         if actual_risk_percent > config.MAX_RISK_PER_TRADE_PERCENT:
             return False, f"Trade risk {actual_risk_percent:.2f}% exceeds per-trade limit {config.MAX_RISK_PER_TRADE_PERCENT}%"
@@ -2839,7 +2912,6 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         # Check 3: Would this trade exceed max drawdown if it hits SL?
         account_info = mt5.account_info()
         if account_info and state.daily_start_equity > 0:
-            current_drawdown_pct = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
             potential_equity_after_loss = account_info.equity - risk_amount
             potential_total_drawdown_pct = ((state.daily_start_equity - potential_equity_after_loss) / state.daily_start_equity) * 100
             
@@ -3002,31 +3074,25 @@ def place_intraday_trade(signal: Dict, account_equity: float):
         
         # Apply Edge Mode Engine Risk Multiplier
         risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0)
-        risk_amount = account_equity * (risk_percent / 100.0)
-        spec = get_symbol_specs(symbol)
-        pip_risk = abs(entry_price - stop_loss) / spec['pip_size']
-        # Correct lot sizing using tick_value (works for ALL symbols including Gold/BTC/Oil)
-        tick_val  = spec.get('trade_tick_value', 0)
-        tick_size = spec.get('trade_tick_size', spec.get('pip_size', 0.0001))
-        lot_step  = spec.get('lot_step', 0.01)
-        if tick_val and tick_val > 0 and tick_size > 0:
-            # Standard formula: risk_$ / (SL_pips  pip_value_per_lot)
-            pip_value_per_lot = (tick_val / tick_size) * spec.get('pip_size', tick_size)
-            lot_raw = risk_amount / max(pip_risk * pip_value_per_lot, 0.001)
-        else:
-            # Forex fallback: pip_risk * 10 (only valid for standard forex pairs)
-            lot_raw = risk_amount / max(pip_risk * 10, 0.001)
-        lot_size = round(lot_raw / lot_step) * lot_step
-        lot_size = max(spec['min_lot'], min(lot_size, spec['max_lot']))
-        if lot_raw < spec['min_lot']:
-            actual_risk_pct = (spec['min_lot'] * pip_risk * (
-                (tick_val / tick_size) * spec.get('pip_size', tick_size)
-                if tick_val and tick_val > 0 else 10.0
-            ) / account_equity) * 100
+        # RISK-FIX: same projection validate_trade_risk() already used a
+        # few lines up (line ~2944) to decide whether this trade was even
+        # allowed through -- computed via the same shared helper so sizing
+        # here can never diverge from what was actually validated, and so
+        # a min-lot floor that pushes real risk over the configured caps
+        # gets rejected there instead of just logged-and-proceeded here.
+        projection = _project_lot_and_risk(symbol, entry_price, stop_loss, risk_percent, account_equity)
+        spec = projection['spec']
+        pip_risk = projection['pip_risk']
+        lot_size = projection['lot_size']
+        risk_amount = projection['actual_risk_amount']
+        if projection['lot_raw'] < spec['min_lot']:
+            # validate_trade_risk() already confirmed this min-lot-floored
+            # risk is within every configured cap before we got here --
+            # this is informational, not a decision point.
             logger.info(
-                f"[LOT] {symbol}: lot_raw={lot_raw:.5f} < min_lot={spec['min_lot']} "
-                f"-- using min_lot. Actual risk: ${spec['min_lot'] * pip_risk:.2f} "
-                f"({actual_risk_pct:.1f}%) vs intended {risk_percent:.1f}%. Proceeding."
+                f"[LOT] {symbol}: lot_raw={projection['lot_raw']:.5f} < min_lot={spec['min_lot']} "
+                f"-- using min_lot. Real risk: ${risk_amount:.2f} "
+                f"({projection['actual_risk_percent']:.1f}%) vs intended {risk_percent:.1f}%."
             )
         else:
             logger.info(f"[LOT] {symbol}: risk=${risk_amount:.2f} pip_risk={pip_risk:.4f} lot={lot_size}")
@@ -3703,35 +3769,57 @@ def check_emergency_conditions(account_info) -> bool:
     """
     if not account_info:
         return False
-    
+
+    # RISK-FIX: state.daily_start_equity can start (or get stuck) at 0.0 --
+    # intraday_trading_session() sets it to 0.0 if mt5.account_info() fails
+    # transiently at session startup (plausible on a fresh VPS boot: MT5
+    # terminal still connecting). Every check below divides by it, so that
+    # produced a ZeroDivisionError here -- caught by the main loop's
+    # blanket except, which logs a generic "[CRASH]" line and retries the
+    # WHOLE iteration (including position management and signal scanning,
+    # not just this check) every 10s, forever, since nothing ever fixed
+    # daily_start_equity. Worse, the heartbeat fires earlier in the same
+    # iteration, so the dashboard kept reporting the bot as healthy while
+    # it was actually doing nothing at all. Self-heal instead: a genuine
+    # account_info is already in hand here, so adopt it as the baseline
+    # and let real emergency checks run from the next call on.
+    if state.daily_start_equity <= 0:
+        state.daily_start_equity = account_info.equity
+        logger.warning(
+            f"[RISK] daily_start_equity was not set (likely a startup MT5 "
+            f"hiccup) -- resetting baseline to current equity ${account_info.equity:.2f}"
+        )
+        return False
+
+    daily_loss_percent = 0.0
+
     # Check 1: Daily loss limit
-    if state.daily_start_equity > 0:
-        # Track actual equity drop -- catches pre-existing position losses
-        _eq_drop = state.daily_start_equity - account_info.equity
-        daily_loss_amount = -_eq_drop if _eq_drop > 0 else (state.daily_pnl if state.daily_pnl < 0 else 0)
-        daily_loss_percent = abs(daily_loss_amount / state.daily_start_equity) * 100
-        
-        # Dynamic adjustment based on number of open positions
-        open_positions = mt5.positions_get()
-        effective_limit = config.MAX_DAILY_LOSS_PERCENT
-        
-        if config.ENABLE_DYNAMIC_EMERGENCY_STOPS and open_positions:
-            # If we have open positions, add buffer for their potential loss
-            potential_additional_loss = 0
-            for pos in open_positions:
-                # Calculate potential loss if stop is hit
-                pip_distance = abs(pos.price_open - pos.sl)
-                potential_loss_pct = (pip_distance / pos.price_open) * 100
-                potential_additional_loss += potential_loss_pct
-            
-            # Adjust effective limit to account for open position risk
-            effective_limit = config.MAX_DAILY_LOSS_PERCENT + (potential_additional_loss * 0.5)
-        
-        if daily_loss_percent >= effective_limit:
-            logger.critical(f"[EMERGENCY] Daily loss limit hit: {daily_loss_percent:.2f}% (Limit: {effective_limit:.2f}%)")
-            logger.critical(f"[EMERGENCY] Loss Amount: ${abs(daily_loss_amount):.2f} / Starting Equity: ${state.daily_start_equity:.2f}")
-            return True
-    
+    # Track actual equity drop -- catches pre-existing position losses
+    _eq_drop = state.daily_start_equity - account_info.equity
+    daily_loss_amount = -_eq_drop if _eq_drop > 0 else (state.daily_pnl if state.daily_pnl < 0 else 0)
+    daily_loss_percent = abs(daily_loss_amount / state.daily_start_equity) * 100
+
+    # Dynamic adjustment based on number of open positions
+    open_positions = mt5.positions_get()
+    effective_limit = config.MAX_DAILY_LOSS_PERCENT
+
+    if config.ENABLE_DYNAMIC_EMERGENCY_STOPS and open_positions:
+        # If we have open positions, add buffer for their potential loss
+        potential_additional_loss = 0
+        for pos in open_positions:
+            # Calculate potential loss if stop is hit
+            pip_distance = abs(pos.price_open - pos.sl)
+            potential_loss_pct = (pip_distance / pos.price_open) * 100
+            potential_additional_loss += potential_loss_pct
+
+        # Adjust effective limit to account for open position risk
+        effective_limit = config.MAX_DAILY_LOSS_PERCENT + (potential_additional_loss * 0.5)
+
+    if daily_loss_percent >= effective_limit:
+        logger.critical(f"[EMERGENCY] Daily loss limit hit: {daily_loss_percent:.2f}% (Limit: {effective_limit:.2f}%)")
+        logger.critical(f"[EMERGENCY] Loss Amount: ${abs(daily_loss_amount):.2f} / Starting Equity: ${state.daily_start_equity:.2f}")
+        return True
+
     # Check 2: Maximum drawdown from daily start
     current_drawdown_pct = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
     
