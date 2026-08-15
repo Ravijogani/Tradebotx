@@ -47,7 +47,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from .data import HistoricalDataset
+from .data import HistoricalDataset, infer_point_size
 from .engine import DEFAULT_SPREAD_MODEL, SimulatedTrade, simulate_exit
 from .replay_data import replay_context
 from .strategies_registry import _get_trend
@@ -79,7 +79,13 @@ def run_aox_backtest(bot_module, dataset: HistoricalDataset, config: AoxDriverCo
         raise ValueError("AOX needs M1 data (Layer 2's FPFVG/CISD detection reads df_m1)")
 
     ltf_series = dataset.frames["M5"]
-    spread = config.spread if config.spread is not None else DEFAULT_SPREAD_MODEL.get(config.symbol, 0.0)
+    # REAL-SPREAD FIX: was one static spread number for the entire run
+    # (engine.py's BacktestEngine had the same bug -- see its own
+    # _real_spread_at docstring for the full reasoning). AOX always fills
+    # MARKET, so the fill bar is simply `i` -- computed per-trade below,
+    # same fallback chain as the shared engine (real per-bar spread via
+    # infer_point_size -> DEFAULT_SPREAD_MODEL -> 0.0).
+    point_size = infer_point_size(ltf_series)
 
     aox_state = _fresh_aox_state()
     cooldown_until: Optional[pd.Timestamp] = None
@@ -128,6 +134,14 @@ def run_aox_backtest(bot_module, dataset: HistoricalDataset, config: AoxDriverCo
             i += 1
             continue
 
+        spread = config.spread
+        if spread is None and point_size is not None and "spread" in ltf_series.columns:
+            raw_spread = ltf_series["spread"].iloc[i]
+            if raw_spread and raw_spread > 0:
+                spread = float(raw_spread) * point_size
+        if spread is None:
+            spread = DEFAULT_SPREAD_MODEL.get(config.symbol, 0.0)
+
         filled_entry = entry_price + spread if direction == "BUY" else entry_price - spread
         exit_time, exit_price, exit_reason = simulate_exit(
             direction, stop_loss, take_profit, ltf_series, i, config.max_bars_in_trade)
@@ -139,7 +153,7 @@ def run_aox_backtest(bot_module, dataset: HistoricalDataset, config: AoxDriverCo
             stop_loss=stop_loss, take_profit=take_profit, confidence=signal.get("risk_fraction", 0.0),
             order_type="MARKET", signal_time=as_of,
             exit_time=exit_time, exit_price=exit_price, exit_reason=exit_reason,
-            r_multiple=realized / sl_dist,
+            r_multiple=realized / sl_dist, spread_charged=spread,
         ))
 
         # Apply the same state transition run_aox_layered_entry applies

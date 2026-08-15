@@ -26,9 +26,19 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from .data import HistoricalDataset
+from .data import HistoricalDataset, infer_point_size
 from .strategies_registry import StrategyAdapter, StrategyResult
 
+# REAL-SPREAD FIX: DEFAULT_SPREAD_MODEL is now only a fallback -- a single
+# static number for the whole run was always a simplification (spread
+# genuinely widens in low-liquidity sessions and news), and MT5 exports
+# already carry real per-bar spread (export_mt5_history.py -> the
+# `spread` column) that BacktestEngine now reads and converts to price
+# units via infer_point_size() instead of ignoring. See BacktestEngine.
+# _real_spread_at's docstring for the fallback chain (real per-bar spread
+# -> this static model -> 0.0), unchanged for any dataset that doesn't
+# carry real spread data (synthetic test data, or a CSV exported without
+# the optional spread column).
 DEFAULT_SPREAD_MODEL: Dict[str, float] = {
     "XAUUSDm": 0.30,
     "XAGUSDm": 0.03,
@@ -94,6 +104,11 @@ class SimulatedTrade:
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None  # "SL" | "TP" | "TIMEOUT"
     r_multiple: Optional[float] = None
+    # REAL-SPREAD FIX: the actual spread (price units) charged on entry --
+    # surfaced per-trade specifically so this is verifiable rather than
+    # trusted: real per-bar spread should visibly vary trade to trade,
+    # unlike the old single static DEFAULT_SPREAD_MODEL number.
+    spread_charged: Optional[float] = None
 
 
 @dataclass
@@ -113,6 +128,30 @@ class BacktestEngine:
         self.dataset = dataset
         self.config = config
         self.adapter = adapter
+        # REAL-SPREAD FIX: computed once per run, not per trade -- the
+        # point size doesn't change bar to bar, only the spread itself does.
+        self._point_size = infer_point_size(dataset.frames.get(config.ltf_timeframe))
+
+    def _real_spread_at(self, ltf_series: pd.DataFrame, idx: int) -> Optional[float]:
+        """
+        REAL-SPREAD FIX: real per-bar spread (MT5's raw points, converted
+        to price units via this dataset's inferred point size) at the bar
+        a trade actually fills on, instead of one static number charged to
+        every trade in the entire run regardless of what the spread
+        genuinely was at that moment (news spikes, thin Asian-session
+        liquidity, etc. all widen real spread -- a flat number can't
+        reflect that). Returns None whenever real data isn't usable (no
+        `spread` column, this dataset's point size couldn't be inferred,
+        or the bar's own spread value is missing/zero) -- the caller falls
+        back to DEFAULT_SPREAD_MODEL in that case, exactly the behavior
+        every backtest before this fix already had.
+        """
+        if self._point_size is None or "spread" not in ltf_series.columns:
+            return None
+        raw = ltf_series["spread"].iloc[idx]
+        if not raw or raw <= 0:
+            return None
+        return float(raw) * self._point_size
 
     def run(self) -> List[SimulatedTrade]:
         cfg = self.config
@@ -150,7 +189,6 @@ class BacktestEngine:
     def _simulate_trade(self, result: StrategyResult, signal_time, ltf_series, signal_idx) -> Optional[SimulatedTrade]:
         cfg = self.config
         direction = result.direction
-        spread = cfg.spread if cfg.spread is not None else DEFAULT_SPREAD_MODEL.get(cfg.symbol, 0.0)
 
         if result.order_type == "LIMIT":
             fill = self._wait_for_limit_fill(result, ltf_series, signal_idx)
@@ -175,6 +213,16 @@ class BacktestEngine:
             take_profit = (raw_entry + sl_dist * cfg.rr_multiple if direction == "BUY"
                             else raw_entry - sl_dist * cfg.rr_multiple)
 
+        # REAL-SPREAD FIX: prefer real per-bar spread at the actual fill bar
+        # over the static DEFAULT_SPREAD_MODEL number -- see _real_spread_at's
+        # docstring. cfg.spread (an explicit --spread override) still wins
+        # over both, unchanged from before this fix.
+        spread = cfg.spread
+        if spread is None:
+            spread = self._real_spread_at(ltf_series, start_idx)
+        if spread is None:
+            spread = DEFAULT_SPREAD_MODEL.get(cfg.symbol, 0.0)
+
         # Charge the spread as a worse entry fill: BUY fills at ask
         # (raw_entry + spread), SELL fills at bid (raw_entry - spread).
         filled_entry = raw_entry + spread if direction == "BUY" else raw_entry - spread
@@ -185,6 +233,7 @@ class BacktestEngine:
             stop_loss=stop_loss, take_profit=take_profit, confidence=result.confidence,
             edge_score=result.edge_score, edge_state=result.edge_state,
             order_type=result.order_type, signal_time=signal_time,
+            spread_charged=spread,
         )
 
         trade.exit_time, trade.exit_price, trade.exit_reason = simulate_exit(

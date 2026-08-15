@@ -20,12 +20,54 @@ terminal) to produce these CSVs directly from your broker's history.
 """
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import pandas as pd
 
 REQUIRED_COLUMNS = ["time", "open", "high", "low", "close"]
 OPTIONAL_COLUMNS = {"tick_volume": 0, "spread": 0, "real_volume": 0}
+
+
+def infer_point_size(df: Optional[pd.DataFrame]) -> Optional[float]:
+    """
+    REAL-SPREAD FIX: derives this symbol's point size (smallest price
+    increment) from the decimal precision actually used in its own price
+    data, instead of guessing from a hardcoded per-symbol table. Brokers
+    genuinely vary here -- e.g. gold quoted at 2 vs 3 decimal digits is a
+    real, common difference between brokers, not a typo -- and the export
+    already tells you which one, in the prices themselves.
+
+    This exists to convert `copy_rates_range`'s per-bar `spread` column
+    (MT5 reports it as an integer count of points, not price units) into
+    the same price-unit scale DEFAULT_SPREAD_MODEL and --spread already
+    use. engine.py's BacktestEngine and aox_driver.py's run_aox_backtest
+    both call this once per run and use it to convert real per-bar spread
+    instead of charging every trade the same static number regardless of
+    what the spread actually was when it filled.
+
+    Mode across a sample of real closes, not the max or the first value --
+    a handful of bars that happen to round to a whole number (e.g. a close
+    of exactly 4538.000) shouldn't undercount the symbol's true precision.
+    Returns None (caller falls back to the static model) if the sample is
+    empty or every value rounds to a whole number.
+    """
+    if df is None or len(df) == 0 or "close" not in df.columns:
+        return None
+    sample = df["close"].head(500)
+    decimals = []
+    for v in sample:
+        try:
+            s = f"{float(v):.10f}".rstrip("0")
+        except (TypeError, ValueError):
+            continue
+        dot = s.find(".")
+        decimals.append(0 if dot == -1 else len(s) - dot - 1)
+    if not decimals:
+        return None
+    mode_decimals = pd.Series(decimals).mode()
+    if mode_decimals.empty or mode_decimals.iloc[0] == 0:
+        return None
+    return 10 ** (-int(mode_decimals.iloc[0]))
 
 
 def load_bars_csv(path: str) -> pd.DataFrame:
