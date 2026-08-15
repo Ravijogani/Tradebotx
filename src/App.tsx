@@ -26,6 +26,7 @@ const Disclaimer = lazy(() => import("./pages/Disclaimer"));
 const Status = lazy(() => import("./pages/Status"));
 const Docs = lazy(() => import("./pages/Docs"));
 const TradeJournal = lazy(() => import("./pages/TradeJournal"));
+const TradingLessons = lazy(() => import("./pages/TradingLessons"));
 const StrategyBuilderPage = lazy(() => import("./pages/StrategyBuilderPage"));
 const ProtectedRoute = lazy(() => import("@/components/ProtectedRoute"));
 
