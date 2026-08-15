@@ -64,6 +64,7 @@ export function AppSidebar({ activeTab, onTabChange }: AppSidebarProps) {
 
   const quickAccessItems = [
     { id: "journal", label: "Trade Journal", icon: BookOpen, path: "/trade-journal" },
+    { id: "lessons", label: "Trading Lessons", icon: GraduationCap, path: "/trading-lessons" },
     { id: "payments", label: "Payments", icon: FileText, path: "/payment-history" },
     { id: "referrals", label: "Referrals", icon: Gift, path: "/referral-program" },
     { id: "reports", label: "Reports", icon: BarChart3, path: "/pl-reports" },
