@@ -930,12 +930,10 @@ export type Database = {
       support_tickets: {
         Row: {
           category: string
-          closed_at: string | null
           created_at: string
           description: string
           id: string
           priority: string
-          resolved_at: string | null
           status: string
           subject: string
           updated_at: string
@@ -943,12 +941,10 @@ export type Database = {
         }
         Insert: {
           category?: string
-          closed_at?: string | null
           created_at?: string
           description: string
           id?: string
           priority?: string
-          resolved_at?: string | null
           status?: string
           subject: string
           updated_at?: string
@@ -956,12 +952,10 @@ export type Database = {
         }
         Update: {
           category?: string
-          closed_at?: string | null
           created_at?: string
           description?: string
           id?: string
           priority?: string
-          resolved_at?: string | null
           status?: string
           subject?: string
           updated_at?: string
@@ -1048,6 +1042,53 @@ export type Database = {
             columns: ["ticket_id"]
             isOneToOne: false
             referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trade_lessons: {
+        Row: {
+          context: Json | null
+          created_at: string
+          direction: string
+          id: string
+          lesson: string
+          loss_amount: number
+          strategy_id: string | null
+          symbol: string
+          ticket: number | null
+          user_id: string
+        }
+        Insert: {
+          context?: Json | null
+          created_at?: string
+          direction: string
+          id?: string
+          lesson: string
+          loss_amount: number
+          strategy_id?: string | null
+          symbol: string
+          ticket?: number | null
+          user_id: string
+        }
+        Update: {
+          context?: Json | null
+          created_at?: string
+          direction?: string
+          id?: string
+          lesson?: string
+          loss_amount?: number
+          strategy_id?: string | null
+          symbol?: string
+          ticket?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trade_lessons_strategy_id_fkey"
+            columns: ["strategy_id"]
+            isOneToOne: false
+            referencedRelation: "strategies"
             referencedColumns: ["id"]
           },
         ]

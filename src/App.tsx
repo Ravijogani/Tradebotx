@@ -26,6 +26,7 @@ const Disclaimer = lazy(() => import("./pages/Disclaimer"));
 const Status = lazy(() => import("./pages/Status"));
 const Docs = lazy(() => import("./pages/Docs"));
 const TradeJournal = lazy(() => import("./pages/TradeJournal"));
+const TradingLessons = lazy(() => import("./pages/TradingLessons"));
 const StrategyBuilderPage = lazy(() => import("./pages/StrategyBuilderPage"));
 const ProtectedRoute = lazy(() => import("@/components/ProtectedRoute"));
 
@@ -69,6 +70,7 @@ const App = () => (
               <Route path="/status" element={<Status />} />
               <Route path="/docs" element={<Docs />} />
               <Route path="/trade-journal" element={<ProtectedRoute><TradeJournal /></ProtectedRoute>} />
+              <Route path="/trading-lessons" element={<ProtectedRoute><TradingLessons /></ProtectedRoute>} />
               <Route path="/strategy-builder" element={<ProtectedRoute><StrategyBuilderPage /></ProtectedRoute>} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

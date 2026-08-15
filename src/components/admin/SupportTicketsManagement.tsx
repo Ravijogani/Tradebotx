@@ -140,12 +140,13 @@ export const SupportTicketsManagement = () => {
     if (!selectedTicket) return;
 
     try {
-      const updates: Partial<Tables<"support_tickets">> = { status };
-      if (status === "resolved") {
-        updates.resolved_at = new Date().toISOString();
-      } else if (status === "closed") {
-        updates.closed_at = new Date().toISOString();
-      }
+      // support_tickets has no resolved_at/closed_at columns — status +
+      // updated_at is the source of truth for resolution time.
+      const updates: Partial<Tables<"support_tickets">> = {
+        status,
+        updated_at: new Date().toISOString(),
+      };
+
 
       const { error } = await supabase
         .from("support_tickets")
