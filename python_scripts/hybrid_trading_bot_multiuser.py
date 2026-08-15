@@ -119,8 +119,10 @@ for _mod_key in list(sys.modules.keys()):
 # EMBEDDED ENGINE CLASSES (consolidated from engines/ folder)
 # EdgeEngine, CapitalController, DecisionEngineV2, RunnerManagementEngine,
 # ScalpingExitEngine -- all inline, no external deps. (EntryEngine was here
-# too but moved to strategies_research.py -- never had a live call site;
-# see that module's docstring.)
+# too but was never instantiated anywhere in this file, was backtested
+# against real historical data via the harness, and was removed 2026-08 --
+# see python_scripts/backtest/README.md's "Dormant strategies removed"
+# section for the real-data evidence behind that decision.)
 # =============================================================================
 
 class TradeContext:
@@ -253,12 +255,18 @@ class EdgeEngine:
 
 
 # EntryEngine ("ICT Algorithmic Liquidity Model -- Deterministic SMC Entry
-# Engine") moved to strategies_research.py -- never instantiated anywhere
-# in this file (confirmed by grepping call sites, not just defs). See that
-# module's docstring for why dormant strategy code lives there now instead
-# of here, and for this specific class's promotion-worthiness assessment.
-# Import it (from strategies_research import EntryEngine) if/when it's
-# deliberately wired into the live cascade -- don't recreate it here.
+# Engine") REMOVED 2026-08. Never instantiated anywhere in this file
+# (confirmed by grepping call sites, not just defs). It was the strongest
+# candidate of the 8 dormant strategies by code quality (real confluence
+# requirement -- sweep + market-structure-shift + FVG all had to align,
+# not a single-indicator trigger), but was never backtested against real
+# market data before this removal -- there wasn't a decision to keep it
+# out after real evidence, just a decision to stop carrying 8 strategies'
+# worth of unreachable code in the live file. See
+# python_scripts/backtest/README.md's "Dormant strategies removed"
+# section. Recovering it means pulling it back from git history
+# (see this file's history around the strategies_research.py commits),
+# not rewriting it from scratch.
 
 
 class CapitalController:
@@ -341,6 +349,43 @@ class CapitalController:
         return (edge_score > 70 and
                 regime in ["TRENDING","TRENDING_UP","TRENDING_DOWN"] and
                 lifecycle in ["EXPANSION","SWEEP_AND_DISPLACE"])
+
+
+def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple[bool, str]:
+    """
+    Portfolio-level risk gates the shared setup pipeline already enforces for
+    Shaakuni SSM / EMA Scalp Cross -- SymbolCorrelationTracker exposure
+    limiting, the MAX_CONCURRENT_TRADES stacking limit, and the 25%
+    total-portfolio-risk cap -- extracted here so execute_aox_layer() and
+    place_swappy_pending_order() can apply the exact same checks instead of
+    bypassing all three entirely. Same architectural gap as the ban/unban fix
+    and the CapitalController-sizing fix (both already closed for these two
+    strategies) -- this closes the last piece of the "smart pipeline vs
+    self-executing strategies" split.
+
+    Deliberately conservative where the shared pipeline has an escape hatch:
+    the pipeline's MAX_CONCURRENT_TRADES check can be overridden by
+    cap_ctrl.allow_stacking(), but that needs an EdgeEngine regime/lifecycle
+    read that neither AOX nor Swappy compute today -- rather than fake a
+    regime value to unlock stacking, this blocks outright at the limit until
+    that's wired in too.
+    """
+    corr_allowed, corr_reason = correlation_tracker.should_allow_trade(symbol)
+    if not corr_allowed:
+        return False, f"correlation ({corr_reason})"
+
+    open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+    if open_count >= config.MAX_CONCURRENT_TRADES:
+        return False, f"MAX_CONCURRENT_TRADES ({open_count}/{config.MAX_CONCURRENT_TRADES})"
+
+    # Same heuristic the shared pipeline uses: assume each already-open
+    # position is roughly BASE_RISK_PERCENT (now a correct 1.0%, not the old
+    # 10.0% bug) and add this trade's own real sized risk on top.
+    total_risk_pct = open_count * config.BASE_RISK_PERCENT + this_trade_risk_pct
+    if total_risk_pct > 25.0:
+        return False, f"portfolio risk cap ({total_risk_pct:.1f}% > 25%)"
+
+    return True, ""
 
     def should_throttle_frequency(self, recent_edge_quality_low: bool) -> bool:
         return recent_edge_quality_low
@@ -447,6 +492,17 @@ class ScalpingExitEngine:
         """
         # 1. TP hit or near TP -- scale out to lock profit
         if ctx.liquidity_state == "HIT":
+            return "SCALE_OUT"
+
+        # 1b. DEAD-CONFIG FIX: ENABLE_PARTIAL_TP / PARTIAL_TP_RR had zero live
+        # read sites anywhere in this file despite looking like they control
+        # exactly this behavior -- the only partial-scale-out trigger was (1)
+        # above (90% progress toward TP). Wired in as an additional trigger,
+        # not a replacement: scale out at a fixed R-multiple OR at 90%
+        # progress, whichever comes first -- matches the config's own comment
+        # ("Partial at 1:2") without touching the progress-based trigger
+        # that's already tuned and working.
+        if config.ENABLE_PARTIAL_TP and ctx.r_multiple >= config.PARTIAL_TP_RR:
             return "SCALE_OUT"
 
         # 2. STRUCTURAL FAILURE: price crossed past SL level significantly
@@ -632,18 +688,17 @@ class AITradingConfig:
     ENABLE_LOCAL_NEWS_FILTER: bool = True
     ENABLE_CONFLUENCE_ENGINE: bool = True
 
-    # STRATEGY SELECTION -- per explicit decision, the live cascade only
-    # trades four documented setups: Shaakuni SSM, Swappy 3C, AOX layered
-    # execution, and the 9/25/50/200 EMA scalp. The first three are NOT
-    # gated by a flag here -- they were never conditionally skippable in
-    # the cascade and stay that way. EMA scalp has its own flag (below,
-    # now enabled) since it was previously disabled pending this decision.
-    # These three flags disable everything NOT in the four-setup list:
-    # STRATEGY C (SMC FVG retest) and the two generic fallbacks. Set any
-    # of these back to True to re-enable that strategy in the live cascade.
-    ENABLE_STRATEGY_SMC_FVG_RETEST: bool = False
-    ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK: bool = False
-    ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK: bool = False
+    # STRATEGY SELECTION -- per explicit decision, the live cascade trades
+    # exactly four documented setups: Shaakuni SSM, Swappy 3C, AOX layered
+    # execution, and the 9/25/50/200 EMA scalp. None of the four are gated
+    # by a flag -- they're the entire cascade, not something to toggle off.
+    # STRATEGY C (SMC FVG retest) and the two generic ICT fallbacks
+    # (Liquidity Grab, ICT Killzone) were flag-disabled here first, then
+    # removed entirely 2026-08 -- they were never part of the four-setup
+    # vision, and kept-but-disabled code is exactly the surface area that
+    # produced real bugs elsewhere in this file (dead functions nobody
+    # verified, flags nobody remembered were off). Recoverable from git
+    # history if ever needed; don't rebuild from scratch.
 
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
@@ -653,8 +708,8 @@ class AITradingConfig:
     # market), a cross is noise, not momentum, and is far more likely to
     # immediately reverse into the stop. Expressed as an ATR multiple
     # rather than the spec's fixed "~15 pips" figure, since a fixed pip
-    # count doesn't translate sensibly across Gold/BTC/forex (see the
-    # identical reasoning already in strategy_advanced_smc's min_ob_size).
+    # count doesn't translate sensibly across Gold/BTC/forex (the same
+    # reasoning the now-removed strategy_advanced_smc's min_ob_size used).
     # Starting value, not empirically validated -- tune via the backtest
     # harness (python_scripts/backtest/).
     EMA_DISTANCE_RULE_ATR_MULT: float = 0.5
@@ -703,10 +758,22 @@ class AITradingConfig:
     ATR_PERIOD: int = 14
     
     # DYNAMIC PARAMETERS
-    
+
     # SMC PARAMETERS (No more ATR-based SL)
-    SL_BUFFER_PIPS: float = 2.0      # Buffer below sweep
-    TP_RR_RATIO: float = 3.0         # Target 1:3 RR
+    # SL_BUFFER_PIPS and TP_RR_RATIO were removed here (DEAD-CONFIG cleanup) --
+    # both had zero live read sites (only ever assigned to state.struct_sl_buffer/
+    # state.struct_tp_ratio at startup, which were themselves never read again
+    # anywhere in this file) and no sensible live insertion point: every live
+    # strategy computes its own structural SL (order-block edge, swing extreme,
+    # Fibonacci-SD extension -- see strategy_shaakuni_ssm/detect_swappy_3c/
+    # strategy_ema_scalp_cross/compute_aox_fibonacci) and its own TP target,
+    # not a generic pip-buffer or fixed RR ratio. The one place a generic
+    # fallback RR is genuinely used -- get_dynamic_trade_params()'s emergency
+    # fallback TP calc -- already reads TP_PRIMARY_RR/TP_RUNNER_RR (defined
+    # further down), a completely separate, already-live pair of config
+    # fields; it never read this TP_RR_RATIO field at all. PARTIAL_TP_RR, by
+    # contrast, WAS wired in this round -- see ScalpingExitEngine.decide()'s
+    # SCALE_OUT trigger.
     PARTIAL_TP_RR: float = 2.0       # Partial at 1:2
     
     ENABLE_BREAKEVEN: bool = True
@@ -721,8 +788,25 @@ class AITradingConfig:
     # Risk sizing -- calibrated for small accounts ($50-$500)
     # With $91 equity: 1% = $0.91 max risk per trade
     # Max 2 simultaneous trades = max 2% account at risk at once
-    BASE_RISK_PERCENT: float = 10.0      # 1% risk per trade
-    MAX_RISK_PERCENT: float = 10.0       # Hard cap -- never exceed 1.5% for scalping
+    #
+    # BUG FIX: these were both 10.0 -- ten times every comment on this block
+    # (and CapitalController's own docstring: "Hard cap at 1.5% for scalping")
+    # says they should be. Shaakuni SSM / EMA Scalp Cross were shielded from
+    # the real damage since they size through CapitalController.calculate(),
+    # which has its own hardcoded self.base_risk=1.0 and clamps its own
+    # output to [0.25, 1.5] independent of this config value -- MAX_RISK_PERCENT
+    # only ever appeared as min(final_risk, MAX_RISK_PERCENT), a no-op at 10.0
+    # since CapitalController never produces more than 1.5 anyway. Swappy 3C
+    # and AOX were NOT shielded -- both read BASE_RISK_PERCENT directly with
+    # no CapitalController involved at all (see execute_aox_layer() and
+    # place_swappy_pending_order(), now fixed alongside this to route through
+    # CapitalController same as the other two strategies), so this bug meant
+    # Swappy risked a flat 10% of equity on every single trade live. Real-data
+    # evidence of the cost: the 90-day XAUUSDm regression already produced a
+    # 6-trade losing streak for Swappy in just 18 total trades -- a ~47%
+    # drawdown from that one streak at 10% risk, vs ~6% at the correct 1%.
+    BASE_RISK_PERCENT: float = 1.0       # 1% risk per trade
+    MAX_RISK_PERCENT: float = 1.5        # Hard cap -- never exceed 1.5% for scalping
 
     # ?? SPREAD-SAFE SL SETTINGS (NEW) ????????????????????????????????????????
     # MT5 compares BID vs SL for longs, ASK vs SL for shorts.
@@ -1069,6 +1153,49 @@ class SupabaseTradeDB:
             
         except Exception as e:
             logger.error(f"[DB ERROR] Trade logging failed: {e}")
+            return False
+
+    def log_lesson(self, lesson_data: Dict) -> bool:
+        """
+        VISIBILITY FIX: analyze_loss_with_ai()'s AI post-mortem on a losing
+        trade used to be written ONLY to ai_trading_lessons.json -- a file
+        on the bot's own server, never queried by anything user-facing.
+        "The bot shows its own mistakes honestly" isn't a real product
+        differentiator if the only reader of that honesty is the bot
+        itself. This pushes the same lesson to Supabase (requires the
+        trade_lessons table -- see supabase/migrations/ for the migration
+        that creates it) so the dashboard can show it, same
+        retry+local-backup pattern as log_trade() above. The local JSON
+        file write in save_ai_lesson() is UNCHANGED and still the source
+        check_trade_against_lessons() reads from -- this only adds a
+        second, user-visible destination, it doesn't replace the first.
+        """
+        try:
+            db_lesson = {
+                'user_id': USER_ID,
+                'strategy_id': STRATEGY_ID,
+                'ticket': lesson_data.get('ticket'),
+                'symbol': lesson_data.get('symbol'),
+                'direction': lesson_data.get('direction', '').upper(),
+                'lesson': lesson_data.get('lesson', ''),
+                'loss_amount': float(lesson_data.get('loss_amount', 0)),
+                'context': lesson_data.get('context', {}),
+            }
+
+            def insert_lesson():
+                supabase.table('trade_lessons').insert(db_lesson).execute()
+                logger.info(f"[DB] Lesson for ticket {db_lesson['ticket']} synced to dashboard")
+                return True
+
+            result = self._retry_operation("Lesson logging", insert_lesson)
+
+            if not result:
+                self._save_to_backup(db_lesson, 'log_lesson')
+                return False
+            return True
+
+        except Exception as e:
+            logger.error(f"[DB ERROR] Lesson logging failed: {e}")
             return False
 
     def update_trade_closed(self, ticket: int, exit_price: float, profit_loss: float, exit_reason: str) -> bool:
@@ -1420,10 +1547,10 @@ class AITradingState:
         self.daily_start_equity: float = 0.0
         
         # DYNAMIC PARAMETERS
-        # [SMC] Structure-based parameters (No more ATR multipliers)
-        self.struct_sl_buffer: float = config.SL_BUFFER_PIPS
-        self.struct_tp_ratio: float = config.TP_RR_RATIO
-        
+        # struct_sl_buffer/struct_tp_ratio (from the now-removed SL_BUFFER_PIPS/
+        # TP_RR_RATIO config fields) removed here too -- see the DEAD-CONFIG
+        # cleanup comment on PARTIAL_TP_RR in AITradingConfig for why.
+
         # Trade management
         self.be_moved: set = set()
         self.trailing_active: set = set()
@@ -2586,19 +2713,9 @@ class RegimeDetector:
         except Exception as e:
             logger.error(f"Donchian error: {e}")
             return True # Allow on error
-    
-    @staticmethod
-    def get_strategies_for_regime(regime: str) -> list:
-        """
-        Select optimal strategies based on market regime
-        SCALPING OPTIMIZATION: Only 2-3 fast strategies per regime
-        """
-        if regime == 'TRENDING':
-            # Trend-following strategies
-            return ['VOLUME_IMBALANCE', 'LIQUIDITY_GRAB']
-        else:  # RANGING
-            # Mean-reversion strategies
-            return ['LIQUIDITY_GRAB', 'SUPPORT_RESISTANCE']
+    # get_strategies_for_regime() removed 2026-08 -- zero call sites, and it
+    # already referenced VOLUME_IMBALANCE/LIQUIDITY_GRAB/SUPPORT_RESISTANCE,
+    # none of which exist in the live cascade anymore.
 
 
 
@@ -2916,6 +3033,119 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.ewm(span=period, adjust=False).mean()
 
+
+def adaptive_sl_buffer(anchor_low: float, anchor_high: float, anchor_open: float,
+                        anchor_close: float, direction: str, base_buffer: float,
+                        wick_fraction: float = 0.5) -> float:
+    """
+    TRAP-AWARE SL BUFFER: gives a bigger SL buffer to a bigger trap.
+
+    Every live strategy's SL anchors to a structural candle -- Shaakuni's
+    extreme order block, Swappy's setup-range extreme, EMA scalp's swing
+    extreme -- and until now all three padded that anchor with an
+    identical flat 0.3xATR buffer, regardless of how violent the specific
+    candle that set the anchor actually was. A candle with a long wick
+    (price swept far beyond its own body before rejecting -- exactly what
+    a stop hunt or liquidity grab looks like) needs more room before a
+    second, shallower poke past the same level should be read as "the
+    trade is genuinely invalidated" rather than "the same trap, still
+    unfolding." A candle with almost no wick doesn't need that extra room,
+    and paying for it anyway would be pure unnecessary risk.
+
+    anchor_*: OHLC of the single candle the SL is measured from (the OB
+    candle, the swing-extreme candle, whichever one candle *is* the
+    anchor -- not the whole scanned window).
+    direction: 'BUY' -> SL sits below the anchor (wick of interest is the
+    LOW wick below the candle's real body). 'SELL' -> SL sits above (HIGH
+    wick above the body).
+    base_buffer: the pre-existing 0.3xATR (or equivalent) floor -- this
+    function only ever WIDENS it, never narrows it below that floor.
+    wick_fraction: how much of the anchor candle's own wick to add on top
+    of base_buffer. Deliberately conservative (0.5) -- this nudges risk
+    for a violent anchor candle, it doesn't double it.
+
+    Pure function of OHLC already on hand in every call site (no MT5, no
+    extra data fetch) -- identical in live and backtest by construction,
+    same guarantee _get_trend's docstring explains for trend replication.
+    """
+    body_low = min(anchor_open, anchor_close)
+    body_high = max(anchor_open, anchor_close)
+    if direction == 'BUY':
+        wick = max(0.0, body_low - anchor_low)
+    else:
+        wick = max(0.0, anchor_high - body_high)
+    return max(base_buffer, wick * wick_fraction)
+
+
+def detect_unswept_trap_nearby(df: 'pd.DataFrame', direction: str, atr: float,
+                                proximity_mult: float = 0.5, pivot_n: int = 2,
+                                lookback_bars: int = 20) -> bool:
+    """
+    TRAP-AVOIDANCE FILTER (EMA Scalp Cross only): True if there's a fresh,
+    unswept liquidity pool sitting close to current price against the
+    trade direction -- an obvious recent swing low (BUY) / high (SELL)
+    that no later candle has yet wicked through and closed back beyond.
+    That's exactly what a stop hunt targets: a clean, untested level with
+    retail stops resting on it, right where this entry would sit.
+
+    EMA Scalp Cross is the one live strategy with no manipulation/sweep-
+    detection layer at all -- Shaakuni waits for the HTF sweep itself,
+    Swappy requires a failed pullback (C3 rejection), AOX has
+    detect_manipulation_spike(). This gives EMA scalp an equivalent,
+    lightweight check without turning it into a heavier strategy: don't
+    cross into an obvious, still-live trap right next to entry. Wait for
+    it to either get swept (then it's spent, no longer a trap) or for
+    price to move away from it -- both cases mean this filter no longer
+    fires and a later cross can still go through normally.
+
+    "Unswept" = no candle after the pivot has a wick beyond it that also
+    closes back on the entry side -- the same sweep-then-reclaim shape
+    ShaakuniSSM.detect_htf_sweep and Swappy's C3 rejection both use,
+    applied here to a plain recent swing instead of a session-level sweep.
+
+    Pure OHLC function, no MT5 dependency -- identical in live and
+    backtest by construction (strategy_ema_scalp_cross is a single shared
+    function both call), same guarantee _get_trend's docstring explains
+    for trend replication.
+    """
+    if df is None or len(df) < lookback_bars or atr <= 0:
+        return False
+    data = df.iloc[-lookback_bars:].reset_index(drop=True)
+    n = len(data)
+    if n < pivot_n * 2 + 1:
+        return False
+    cur_price = float(data['close'].iloc[-1])
+    proximity = atr * proximity_mult
+
+    try:
+        if direction == 'BUY':
+            for i in range(pivot_n, n - pivot_n):
+                low_i = float(data['low'].iloc[i])
+                is_swing = (all(low_i <= float(data['low'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(low_i <= float(data['low'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if not is_swing or abs(cur_price - low_i) > proximity:
+                    continue
+                swept = any(float(data['low'].iloc[j]) < low_i and float(data['close'].iloc[j]) > low_i
+                            for j in range(i + 1, n))
+                if not swept:
+                    return True  # fresh, untested, close by -- an obvious trap
+            return False
+        else:
+            for i in range(pivot_n, n - pivot_n):
+                high_i = float(data['high'].iloc[i])
+                is_swing = (all(high_i >= float(data['high'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(high_i >= float(data['high'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if not is_swing or abs(cur_price - high_i) > proximity:
+                    continue
+                swept = any(float(data['high'].iloc[j]) > high_i and float(data['close'].iloc[j]) < high_i
+                            for j in range(i + 1, n))
+                if not swept:
+                    return True
+            return False
+    except Exception:
+        return False  # fail open -- a filter bug should never block a trade
+
+
 def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Tuple[pd.Series, pd.Series, pd.Series]:
     tr = calculate_atr(high, low, close, 1)
     move_up = high.diff()
@@ -2990,6 +3220,44 @@ def is_kill_zone(current_hour: int) -> bool:
     for zone, (start, end) in config.ICT_KILLZONES.items():
         if start <= current_hour < end: return True
     return False
+
+
+def capture_entry_market_context(symbol: str) -> dict:
+    """
+    MARKET-CONTEXT-AT-ENTRY BUG FIX: analyze_loss_with_ai() claimed to
+    analyze "market context at entry" but actually called get_market_data()
+    /get_current_session()/datetime.now() at ANALYSIS time -- i.e. whenever
+    the trade happened to close, which can be minutes to hours after entry.
+    A trade opened during the LONDON_NY overlap that gets analyzed after it
+    closes during the Asian session would tell the AI "Session: ASIAN,
+    Hour: 2" as if that were the entry condition -- actively wrong, not
+    just imprecise, and exactly the kind of thing that undermines "the bot
+    shows its own mistakes honestly" if the mistake it shows is itself
+    inaccurate.
+
+    Real fix: capture this once, right when a position is actually opened
+    (all three entry paths -- place_ai_trade, execute_aox_layer, and
+    check_swappy_expirations' fill-detection branch -- call this and store
+    the result in state.open_positions[ticket]['params']), and have
+    analyze_loss_with_ai() read that stored snapshot back at close time
+    instead of re-deriving "current" conditions and mislabeling them.
+
+    Failure is non-fatal by design (returns adx=None on any data error) --
+    a missing ADX at entry shouldn't block placing the trade itself, this
+    is analysis-quality data, not a trading gate.
+    """
+    session = get_current_session()
+    hour = datetime.now(timezone.utc).hour
+    adx = None
+    try:
+        df = get_market_data(symbol, config.ENTRY_TF, 20)
+        if df is not None and len(df) > 14:
+            adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+            if len(adx_val) > 0:
+                adx = float(adx_val.iloc[-1])
+    except Exception as e:
+        logger.debug(f"[ENTRY CONTEXT] {symbol}: ADX capture failed: {e}")
+    return {'entry_session': session, 'entry_hour': hour, 'entry_adx': adx}
 
 def get_symbol_specs(symbol: str) -> Dict:
     info = mt5.symbol_info(symbol)
@@ -3133,85 +3401,39 @@ def get_news_volatility_multiplier(symbol: str) -> float:
 # =============================================================================
 # LOCAL-FIRST STRATEGY ENGINE
 # =============================================================================
-# (All 9 strategies: strategy_ict_killzone, strategy_advanced_smc, etc.)
-# (These functions are identical to V10.1 and are kept as-is)
+# 8 of the original strategies here were removed 2026-08 (never had a live
+# call site; backtested against real historical data via the harness --
+# see python_scripts/backtest/README.md's "Dormant strategies removed"
+# section for what they were and why). What's left below is only what the
+# live cascade actually calls.
 # =============================================================================
 
-def strategy_ict_killzone(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    current_hour = datetime.now(timezone.utc).hour
-    if not is_kill_zone(current_hour): return None
-    
-    current_price = df_entry['close'].iloc[-1]
-    atr = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-
-    for i in range(len(df_entry) - config.ICT_FVG_MITIGATION_CANDLES - 1, 2, -1):
-        if df_entry['low'].iloc[i+1] > df_entry['high'].iloc[i-1]:
-            fvg_high, fvg_low = df_entry['low'].iloc[i+1], df_entry['high'].iloc[i-1]
-            if fvg_low <= current_price <= fvg_high and trend == "BULLISH":
-                # CHECK: M1 Candle must be GREEN (Close > Open) to confirm rejection
-                if df_micro['close'].iloc[-1] > df_micro['open'].iloc[-1]: 
-                    sl = fvg_low - (atr * 1.5)   # FIX: was 0.5 -- too close to spread
-                    return {"direction": "BUY", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
-        
-        if df_entry['high'].iloc[i+1] < df_entry['low'].iloc[i-1]:
-            fvg_high, fvg_low = df_entry['low'].iloc[i-1], df_entry['high'].iloc[i+1]
-            if fvg_low <= current_price <= fvg_high and trend == "BEARISH":
-                # CHECK: M1 Candle must be RED (Close < Open) to confirm rejection
-                if df_micro['close'].iloc[-1] < df_micro['open'].iloc[-1]: 
-                    sl = fvg_high + (atr * 1.5)  # FIX: was 0.5 -- too close to spread
-                    return {"direction": "SELL", "stop_loss": sl, "strategy_name": "ICT_KILLZONE", "confidence": 0.85}
-    return None
-
-# strategy_advanced_smc moved to strategies_research.py -- no live call
-# site (confirmed by grepping call sites, not just defs). See that
-# module's docstring for the full dormant-strategy rationale.
-
-def strategy_liquidity_grab(df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, symbol: str, df_micro: pd.DataFrame) -> Optional[Dict[str, Any]]:
-    """
-    ICT Liquidity Grab: sweep a swing point, displace strongly in opposite direction.
-    CHANGE: Requires BEARISH trend for SELL, BULLISH for BUY (NEUTRAL blocked).
-    CHANGE: Real volume confirmation added.
-    """
-    if len(df_entry) < 15: return None
-    swing_highs_idx, swing_lows_idx = identify_swing_highs_lows(df_entry, lookback=3)
-    last_candle, prev_candle = df_entry.iloc[-1], df_entry.iloc[-2]
-    atr    = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], config.ATR_PERIOD).iloc[-1]
-    avg_vol = df_entry['tick_volume'].iloc[-10:].mean()
-    # Volume: last or previous bar must have had above-average activity
-    has_vol = (df_entry['tick_volume'].iloc[-1] > avg_vol * 1.2 or
-               df_entry['tick_volume'].iloc[-2] > avg_vol * 1.2 or avg_vol < 1)
-
-    # SELL: only when H1 is clearly BEARISH (not NEUTRAL)
-    if swing_highs_idx and trend == "BEARISH":
-        last_high = df_entry['high'].iloc[swing_highs_idx[-1]]
-        if prev_candle['high'] > last_high and last_candle['close'] < last_candle['open']:
-            candle_range = last_candle['high'] - last_candle['low']
-            body_size = abs(last_candle['close'] - last_candle['open'])
-            if candle_range > 0 and body_size > (candle_range * 0.5) and has_vol:
-                if last_candle['close'] < (last_candle['low'] + (0.5 * candle_range)):
-                    return {"direction": "SELL", "stop_loss": prev_candle['high'] + (atr * 1.2),
-                            "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
-
-    # BUY: only when H1 is clearly BULLISH (not NEUTRAL)
-    if swing_lows_idx and trend == "BULLISH":
-        last_low = df_entry['low'].iloc[swing_lows_idx[-1]]
-        if prev_candle['low'] < last_low and last_candle['close'] > last_candle['open']:
-            candle_range = last_candle['high'] - last_candle['low']
-            body_size = abs(last_candle['close'] - last_candle['open'])
-            if candle_range > 0 and body_size > (candle_range * 0.5) and has_vol:
-                if last_candle['close'] > (last_candle['low'] + (0.5 * candle_range)):
-                    return {"direction": "BUY", "stop_loss": prev_candle['low'] - (atr * 1.2),
-                            "strategy_name": "LIQUIDITY_GRAB", "confidence": 0.85}
-    return None
+# strategy_ict_killzone / strategy_advanced_smc / strategy_liquidity_grab
+# REMOVED 2026-08. strategy_advanced_smc never had a live call site.
+# strategy_ict_killzone and strategy_liquidity_grab WERE real, flag-gated
+# fallback strategies (ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK/
+# ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK, both False by default) -- but
+# were never part of the four-setup vision (Shaakuni SSM, Swappy 3C, AOX,
+# EMA scalp) and were disabled the whole time this bot ran anything real.
+# Removed rather than left disabled, same reasoning as the 8 dormant
+# strategies removed earlier: unreachable-but-present code is exactly the
+# surface area that produced real bugs elsewhere in this file. See
+# python_scripts/backtest/README.md's "Dormant/fallback strategies
+# removed" section. Recoverable from git history if ever needed.
 
 # strategy_wyckoff_patterns / strategy_volume_profile / strategy_support_resistance /
 # strategy_volume_imbalance / strategy_trend_pullback / strategy_mean_reversion_bb
-# moved to strategies_research.py -- none had a live call site (confirmed
-# by grepping call sites, not just defs). See that module's docstring for
-# why (and for a per-strategy note on the two that need a closer look
-# before any promotion: WYCKOFF_PATTERNS isn't real Wyckoff method despite
-# the name, and MEAN_REVERSION_BB is a counter-trend fade, philosophically
-# the odd one out against every other momentum/liquidity strategy here).
+# REMOVED 2026-08 -- none had a live call site (confirmed by grepping call
+# sites, not just defs). 5 of 6 were backtested against real historical
+# XAUUSDm data before removal: VOLUME_PROFILE/SUPPORT_RESISTANCE/
+# MEAN_REVERSION_BB all showed negative expectancy over large samples
+# (290-541 trades each), TREND_PULLBACK was statistically flat
+# (-0.006R/trade), VOLUME_IMBALANCE essentially never fired.
+# WYCKOFF_PATTERNS needs M1 data this repo didn't have yet at removal
+# time (skipped, not tested), but was already flagged as not being
+# genuine Wyckoff method despite the name -- removed on that basis, not
+# on a real-data result. See python_scripts/backtest/README.md's
+# "Dormant strategies removed" section for the full numbers.
 
 # =============================================================================
 # EMA MOMENTUM FILTER (9/15 EMA + Slope Gate)
@@ -3516,6 +3738,108 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str) -> dict:
         return {**empty, "reason": f"Swappy error: {e}"}
 
 
+def compute_swappy_sl(df_m5: 'pd.DataFrame', direction: str, atr_m5: float) -> float:
+    """
+    Swappy's SL computation, extracted so the live main loop's STRATEGY B
+    block and the backtest's _adapt_swappy_3c adapter call the exact same
+    logic instead of two independently-maintained copies of it (the two
+    had already drifted apart once before this extraction -- not
+    correctness-breaking, but exactly the kind of duplication this
+    codebase has repeatedly found real bugs hiding in). detect_swappy_3c()
+    itself doesn't compute a SL, only the pattern match -- this is that
+    missing piece, factored out to its own function.
+
+    TRAP-AWARE SL: was a flat atr*0.3 buffer regardless of how violent the
+    anchor candle's own wick was -- see adaptive_sl_buffer's docstring.
+    """
+    scan = df_m5.iloc[-15:]
+    if direction == 'BUY':
+        anchor_idx = scan['low'].idxmin()
+        anchor = scan.loc[anchor_idx]
+        buf = adaptive_sl_buffer(
+            float(anchor['low']), float(anchor['high']),
+            float(anchor['open']), float(anchor['close']),
+            'BUY', atr_m5 * 0.3,
+        )
+        return float(scan['low'].min()) - buf
+    else:
+        anchor_idx = scan['high'].idxmax()
+        anchor = scan.loc[anchor_idx]
+        buf = adaptive_sl_buffer(
+            float(anchor['low']), float(anchor['high']),
+            float(anchor['open']), float(anchor['close']),
+            'SELL', atr_m5 * 0.3,
+        )
+        return float(scan['high'].max()) + buf
+
+
+def find_swappy_structural_tp(df: 'pd.DataFrame', direction: str, entry_price: float,
+                               sl_dist: float, min_rr: float = 1.5,
+                               pivot_n: int = 3, lookback_bars: int = 80) -> Optional[float]:
+    """
+    DYNAMIC TP FIX: Swappy was the one live strategy with a 100% fixed 3:1
+    RR target regardless of market structure -- Shaakuni's TP is the swept
+    candle's own extreme, EMA scalp's is the 50 EMA, AOX's is a Fibonacci
+    extension off the actual spike; all three read the market, Swappy just
+    multiplied. If real resistance/support sits closer than 3R, holding
+    for a target price rarely reaches gives back profit on the pullback
+    instead of banking it.
+
+    Finds the nearest REAL swing high (SELL) / swing low (BUY) beyond
+    entry_price in the trade direction -- a pivot that's higher/lower than
+    `pivot_n` candles on both sides, i.e. an actual structural level, not
+    a raw high/low that could just be noise. Same swing-pivot definition
+    get_structural_sl_tp() already uses elsewhere in this file (kept
+    separate rather than reused directly -- that function needs a live
+    MT5 tick for its own spread buffer and isn't backtest-safe; this one
+    is a pure function of the OHLC window already passed in, so it works
+    identically in live and backtest, same guarantee _get_trend's
+    docstring explains for trend replication).
+
+    Returns None if no qualifying level is found (RR >= min_rr) -- the
+    caller falls back to the fixed 3:1 target in that case, so a thin/
+    choppy structure never leaves Swappy without any TP at all.
+    """
+    if df is None or len(df) < (pivot_n * 2 + 5) or sl_dist <= 0:
+        return None
+    data = df.iloc[-lookback_bars:].reset_index(drop=True)
+    n = len(data)
+    try:
+        if direction == 'BUY':
+            candidates = []
+            for i in range(pivot_n, n - pivot_n):
+                h = float(data['high'].iloc[i])
+                if h <= entry_price:
+                    continue
+                is_swing = (all(h >= float(data['high'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(h >= float(data['high'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if is_swing:
+                    candidates.append(h)
+            if not candidates:
+                return None
+            nearest = min(candidates)  # closest qualifying level beyond entry
+            rr = (nearest - entry_price) / sl_dist
+        else:
+            candidates = []
+            for i in range(pivot_n, n - pivot_n):
+                l = float(data['low'].iloc[i])
+                if l >= entry_price:
+                    continue
+                is_swing = (all(l <= float(data['low'].iloc[i - j]) for j in range(1, pivot_n + 1)) and
+                            all(l <= float(data['low'].iloc[i + j]) for j in range(1, pivot_n + 1)))
+                if is_swing:
+                    candidates.append(l)
+            if not candidates:
+                return None
+            nearest = max(candidates)  # closest qualifying level beyond entry
+            rr = (entry_price - nearest) / sl_dist
+
+        if rr < min_rr:
+            return None
+        return nearest
+    except Exception:
+        return None
+
 
 def get_h1_mother_candle_zone(df_h1: 'pd.DataFrame', direction: str) -> dict:
     """
@@ -3606,219 +3930,12 @@ def get_h1_mother_candle_zone(df_h1: 'pd.DataFrame', direction: str) -> dict:
         return {**empty, "reason": f"Mother candle error: {e}"}
 
 
-def strategy_liquidity_fvg_engine(symbol: str, df_entry: pd.DataFrame, df_structure: pd.DataFrame, trend: str, edge_mode: str = "NORMAL", df_m15: 'pd.DataFrame' = None, df_h1: 'pd.DataFrame' = None) -> Optional[Dict[str, Any]]:
-    """
-    SMC CORE ENGINE v3: HTF OB -> M5 Sweep -> Displacement -> FVG RETEST -> Enter
-    
-    Top-down approach:
-      Layer 2a: Price must be at/near a valid M15 or H1 Order Block (HTF POI)
-      Layer 2b: M5 shows sweep + displacement confirming the HTF rejection
-      Layer 2c: Enter on FVG retest with tight structural SL
-
-    CHANGE 2 -- True ICT entry sequence:
-    Step 1: Sweep of recent high/low (liquidity grab)
-    Step 2: Strong displacement candle away from sweep (impulse)
-    Step 3: FVG left by displacement (gap between pre-impulse and post-impulse)
-    Step 4: Price RETRACES into the FVG -> THIS is where we enter
-
-    Why this is better than entering on the displacement close:
-    - Tighter SL (placed below/above sweep wick, not the displacement candle)
-    - Better entry price (inside the FVG, closer to structure)
-    - Higher probability (retest confirms the displacement was real)
-    - Avoids chasing (no entry if price doesn't retrace -- no setup, no trade)
-    """
-    try:
-        if len(df_entry) < 25: return None
-
-        atr      = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1]
-        avg_body = abs(df_entry['close'] - df_entry['open']).rolling(20).mean().iloc[-1]
-        if avg_body == 0: return None
-
-        current_price = df_entry['close'].iloc[-1]
-        lookback      = 15
-        recent_high   = df_entry['high'].iloc[-lookback:-3].max()
-        recent_low    = df_entry['low'].iloc[-lookback:-3].min()
-        sweep_low_idx = df_entry['low'].iloc[-lookback:-3].idxmin()
-        sweep_high_idx= df_entry['high'].iloc[-lookback:-3].idxmax()
-
-        displacement_factor = 1.2 if edge_mode == "AGGRESSIVE" else 1.5
-
-        # ----------------------------------------------------------------
-        # PRE-SCAN: Determine which directions have HTF OB confluence
-        # Without a valid HTF POI, we don't scan for M5 setups at all.
-        # This is the "Top-Down" filter: H1/M15 OB -> M5 entry only.
-        # If no HTF data provided, fall back to old behaviour (no filter).
-        # ----------------------------------------------------------------
-        _htf_buy  = None
-        _htf_sell = None
-        _htf_available = (df_m15 is not None and len(df_m15) >= 30) or                          (df_h1  is not None and len(df_h1)  >= 30)
-
-        if _htf_available:
-            _htf_buy  = get_htf_confluence(symbol, 'BUY',  df_m15, df_h1, current_price)
-            _htf_sell = get_htf_confluence(symbol, 'SELL', df_m15, df_h1, current_price)
-            # HTF is now context/confidence, not a hard gate
-            # Setups without HTF OB get lower confidence score, handled by L3
-            if not _htf_buy['at_poi'] and not _htf_sell['at_poi']:
-                logger.debug(f"[HTF FILTER] {symbol}: no HTF OB -- FVG scan continues, lower confidence")
-
-        # CHANGE 3: Real volume confirmation (not hardcoded True)
-        avg_vol      = df_entry['tick_volume'].iloc[-15:].mean()
-        vol_mult     = 1.0 if edge_mode == "AGGRESSIVE" else 1.3
-        has_volume   = df_entry['tick_volume'].iloc[-1] > avg_vol * vol_mult or                        df_entry['tick_volume'].iloc[-2] > avg_vol * vol_mult
-        # Volume gate: displacement must have above-average volume
-        # If broker reports zero tick_volume (some brokers), allow through
-        has_volume_data = avg_vol >= 1
-
-        # ----------------------------------------------------------------
-        # SCAN LAST 8 CANDLES for a Sweep + Displacement sequence
-        # We look back because the impulse may have happened 1-3 bars ago
-        # and price is NOW retesting the FVG it left
-        # ----------------------------------------------------------------
-        for disp_offset in range(1, 8):
-            if disp_offset + 2 >= len(df_entry): break
-            c_before = df_entry.iloc[-disp_offset - 2]  # candle before displacement
-            c_disp   = df_entry.iloc[-disp_offset - 1]  # displacement candle
-            # c_after is everything from c_disp+1 to now -- price retesting
-
-            body_disp  = abs(c_disp['close'] - c_disp['open'])
-            range_disp = c_disp['high'] - c_disp['low']
-            if range_disp == 0: continue
-
-            # Strong displacement: body > 60% of range AND body > displacement_factor x avg
-            is_strong = (body_disp > range_disp * 0.6) and (body_disp > avg_body * displacement_factor)
-            if not is_strong: continue
-
-            # ---- BUY SETUP: Sweep Low -> Green Displacement -> FVG Retest ----
-            if c_disp['close'] > c_disp['open']:  # Green (bullish) displacement
-                # Sweep check: the displacement candle or previous one swept recent_low
-                # STRICT SWEEP: wick breaks level AND body closes above it
-                sweep_by_disp   = c_disp['low'] < recent_low and c_disp['close'] >= recent_low
-                sweep_by_before = c_before['low'] < recent_low and c_before['close'] >= recent_low
-                swept = sweep_by_disp or sweep_by_before
-                if not swept: continue
-
-                # FVG: gap between c_before high and first candle above displacement low
-                # Standard ICT FVG: c_before.high < c_after.low (gap)
-                fvg_bottom = c_before['high']   # bottom of the bullish FVG
-                fvg_top    = c_disp['low']      # top of the bullish FVG
-                # FVG only valid if there IS a gap (c_before high < c_disp low)
-                if fvg_top <= fvg_bottom: continue
-                fvg_mid    = (fvg_bottom + fvg_top) / 2
-
-                # RETEST: current price is inside or touching the FVG
-                # Price pulled back into the FVG after the displacement
-                retest = (fvg_bottom <= current_price <= fvg_top)
-                if not retest: continue
-
-                # Volume confirmation: displacement candle should have above-average volume
-                # Only gate if we have real volume data (some brokers report 0)
-                disp_vol = c_disp.get('tick_volume', 0) if hasattr(c_disp, 'get') else c_disp['tick_volume']
-                if has_volume_data and disp_vol < avg_vol * 0.8:
-                    continue  # Displacement without volume = lower quality
-
-                # SL just below sweep wick tip + spread buffer (tight structural SL)
-                # 0.5x ATR was too wide (doubled SL size). Use 2x spread instead.
-                sweep_wick_low = min(c_disp['low'], c_before['low'])
-                tick = mt5.symbol_info_tick(symbol)
-                _spread = (tick.ask - tick.bid) if tick else atr * 0.05
-                sl = sweep_wick_low - max(_spread * 2, atr * 0.05)
-
-                logger.info(
-                    f"[SMC FVG] {symbol} BUY retest: FVG {fvg_bottom:.5f}-{fvg_top:.5f} "
-                    f"price={current_price:.5f} sl={sl:.5f} disp={disp_offset}bars ago"
-                )
-                # HTF context: at OB = higher confidence; not at OB = lower confidence score
-                # We do NOT hard-block here -- L3 Gemini scores the confluence
-                _htf_buy_conf = _htf_buy['confluence_score'] if _htf_available and _htf_buy else 0
-
-                # Use HTF OB SL if it's tighter than the M5 wick SL
-                # (HTF OB low IS the structural invalidation for this setup)
-                if _htf_buy and _htf_buy.get('htf_sl'):
-                    htf_sl_candidate = _htf_buy['htf_sl']
-                    # Use whichever SL is LOWER (more protective for BUY)
-                    sl = min(sl, htf_sl_candidate) if htf_sl_candidate < sl else sl
-
-                confluence = _htf_buy.get('confluence_score', 0) if _htf_buy else 0
-                htf_reason = _htf_buy.get('reason', 'No HTF') if _htf_buy else 'No HTF data'
-                confidence = min(0.98, 0.85 + confluence * 0.03)  # 0.85 base + 0.03 per confluence point
-
-                return {
-                    "direction":     "BUY",
-                    "stop_loss":     sl,
-                    "fvg_top":       fvg_top,
-                    "fvg_bottom":    fvg_bottom,
-                    "fvg_mid":       fvg_mid,
-                    "strategy_name": "SMC_FVG_OB_RETEST",
-                    "confidence":    confidence,
-                    "setup_type":    "HTF_OB_FVG_RETEST",
-                    "displacement_bars_ago": disp_offset,
-                    "htf_confluence": confluence,
-                    "htf_reason":    htf_reason,
-                    "ob_h1":  _htf_buy.get('ob_h1'),
-                    "ob_m15": _htf_buy.get('ob_m15'),
-                }
-
-            # ---- SELL SETUP: Sweep High -> Red Displacement -> FVG Retest ----
-            if c_disp['close'] < c_disp['open']:  # Red (bearish) displacement
-                # STRICT SWEEP: wick breaks level AND body closes below it
-                sweep_by_disp   = c_disp['high'] > recent_high and c_disp['close'] <= recent_high
-                sweep_by_before = c_before['high'] > recent_high and c_before['close'] <= recent_high
-                swept = sweep_by_disp or sweep_by_before
-                if not swept: continue
-
-                fvg_top    = c_before['low']    # top of the bearish FVG
-                fvg_bottom = c_disp['high']     # bottom of the bearish FVG
-                if fvg_bottom <= fvg_top: continue
-                fvg_mid    = (fvg_top + fvg_bottom) / 2
-
-                retest = (fvg_bottom <= current_price <= fvg_top)
-                if not retest: continue
-
-                if not has_volume: continue
-
-                sweep_wick_high = max(c_disp['high'], c_before['high'])
-                tick = mt5.symbol_info_tick(symbol)
-                _spread = (tick.ask - tick.bid) if tick else atr * 0.05
-                sl = sweep_wick_high + max(_spread * 2, atr * 0.05)
-
-                logger.info(
-                    f"[SMC FVG] {symbol} SELL retest: FVG {fvg_bottom:.5f}-{fvg_top:.5f} "
-                    f"price={current_price:.5f} sl={sl:.5f} disp={disp_offset}bars ago"
-                )
-                _htf_sell_conf = _htf_sell['confluence_score'] if (_htf_available and _htf_sell) else 0
-
-
-
-                if _htf_sell and _htf_sell.get('htf_sl'):
-                    htf_sl_candidate = _htf_sell['htf_sl']
-                    sl = max(sl, htf_sl_candidate) if htf_sl_candidate > sl else sl
-
-                confluence = _htf_sell.get('confluence_score', 0) if _htf_sell else 0
-                htf_reason = _htf_sell.get('reason', 'No HTF') if _htf_sell else 'No HTF data'
-                confidence = min(0.98, 0.85 + confluence * 0.03)
-
-                return {
-                    "direction":     "SELL",
-                    "stop_loss":     sl,
-                    "fvg_top":       fvg_top,
-                    "fvg_bottom":    fvg_bottom,
-                    "fvg_mid":       fvg_mid,
-                    "strategy_name": "SMC_FVG_OB_RETEST",
-                    "confidence":    confidence,
-                    "setup_type":    "HTF_OB_FVG_RETEST",
-                    "displacement_bars_ago": disp_offset,
-                    "htf_confluence": confluence,
-                    "htf_reason":    htf_reason,
-                    "ob_h1":  _htf_sell.get('ob_h1'),
-                    "ob_m15": _htf_sell.get('ob_m15'),
-                }
-
-        return None
-
-    except Exception as e:
-        logger.error(f"SMC FVG Engine Error: {e}")
-        return None
-
+# strategy_liquidity_fvg_engine ("STRATEGY C" / SMC_FVG_OB_RETEST) REMOVED
+# 2026-08. Was a real, flag-gated strategy (ENABLE_STRATEGY_SMC_FVG_RETEST,
+# False by default) that never fired in the real-data backtest either (0
+# trades against 90 days of real XAUUSDm). Never part of the four-setup
+# vision. See python_scripts/backtest/README.md's "Dormant/fallback
+# strategies removed" section. Recoverable from git history if ever needed.
 
 
 # =============================================================================
@@ -5639,16 +5756,20 @@ def manage_all_positions():
                             "comment": f"ExitEng_Exit",
                             "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC
                         })
-                elif exit_decision in ("PARTIAL", "SCALE_OUT"):
+                elif exit_decision in ("PARTIAL", "SCALE_OUT") and config.ENABLE_PARTIAL_TP:
+                    # DEAD-CONFIG FIX: ENABLE_PARTIAL_TP previously gated nothing --
+                    # this action fired regardless of the flag. Also now uses the
+                    # configured PARTIAL_TP_PERCENT instead of a hardcoded 0.5.
                     spec_e = get_symbol_specs(symbol)
                     lot_step_e = spec_e.get('lot_step', 0.01)
                     if params.get('initial_volume') is None:
                         params['initial_volume'] = current_volume
                         state.open_positions[ticket]['params'] = params
-    
+
                     if current_volume >= params['initial_volume'] * 0.9 and current_volume > lot_step_e:
                         logger.info(f" [EXIT ENGINE] Partial close {symbol} #{ticket} ({exit_decision})")
-                        redu_vol = round((current_volume * 0.5) / lot_step_e) * lot_step_e
+                        _partial_frac = max(0.0, min(1.0, config.PARTIAL_TP_PERCENT / 100.0))
+                        redu_vol = round((current_volume * _partial_frac) / lot_step_e) * lot_step_e
                         if redu_vol >= lot_step_e:
                             if close_partial_position(ticket, redu_vol):
                                 # Persist to Supabase IMMEDIATELY so restart knows partial was done
@@ -5680,11 +5801,19 @@ def manage_all_positions():
                 logger.info(f" [DECISION V2] Cooldown set for {symbol} (15 min)")
 
             elif decision == "REDUCE":
+                # Not gated by ENABLE_PARTIAL_TP on purpose -- this is
+                # DecisionEngineV2 cutting risk on a deteriorating trade, not
+                # taking profit; those are different controls even though
+                # they share the same "trim volume" mechanics. Reuses
+                # PARTIAL_TP_PERCENT for the trim fraction since there's no
+                # dedicated reduce-percent config and 50% is a reasonable
+                # shared default either way.
                 spec_d = get_symbol_specs(symbol)
                 lot_step_d = spec_d.get('lot_step', 0.01)
                 if current_volume > lot_step_d:
                     logger.info(f" [DECISION V2] Reduce risk on {symbol} #{ticket}")
-                    redu_vol = round((current_volume * 0.5) / lot_step_d) * lot_step_d
+                    _reduce_frac = max(0.0, min(1.0, config.PARTIAL_TP_PERCENT / 100.0))
+                    redu_vol = round((current_volume * _reduce_frac) / lot_step_d) * lot_step_d
                     if redu_vol >= lot_step_d:
                         if close_partial_position(ticket, redu_vol):
                             try:
@@ -5791,8 +5920,14 @@ def manage_all_positions():
 
             # -- AOX: SD-based TPs were set at entry; do NOT trail-stop them early.
             # The MT5 TP handles partial exits; we only protect with BE at 1R.
+            # DEAD-CONFIG FIX: ENABLE_BREAKEVEN previously gated nothing anywhere
+            # -- now a real global kill switch across all three BE branches
+            # (this one, SWAPPY's below, and generic Stage 1 further down).
+            # AOX's own 1.0R trigger is a deliberate strategy-specific choice
+            # (documented above, distinct from the generic BREAKEVEN_TRIGGER_RR)
+            # and is left untouched -- only the on/off flag is wired in here.
             if _strategy_type == 'AOX':
-                if r_multiple >= 1.0 and ticket not in state.be_moved:
+                if config.ENABLE_BREAKEVEN and r_multiple >= 1.0 and ticket not in state.be_moved:
                     _dig_aox = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                     _be_aox  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_aox)
                     _be_aox_rounded = round(_be_aox, _dig_aox)
@@ -5811,8 +5946,13 @@ def manage_all_positions():
                 continue  # AOX exits via MT5 TP levels set on entry, not trailing
 
             # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening. BE at 2R only.
+            # Same ENABLE_BREAKEVEN wiring as AOX above; SWAPPY's own 2.0R trigger
+            # is left untouched. Note: the 3R+ trail below requires
+            # `ticket in state.be_moved`, so disabling BE here also implicitly
+            # disables that trail -- BE is the prerequisite state marker for it,
+            # not a separate control, so this is the correct behavior, not a gap.
             if _strategy_type == 'SWAPPY':
-                if r_multiple >= 2.0 and ticket not in state.be_moved:
+                if config.ENABLE_BREAKEVEN and r_multiple >= 2.0 and ticket not in state.be_moved:
                     _dig_sw = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                     _be_sw  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_sw)
                     _be_sw_r = round(_be_sw, _dig_sw)
@@ -5855,9 +5995,17 @@ def manage_all_positions():
             current_profit_dist = (current_price - entry_price) if is_buy else (entry_price - current_price)
 
             # ------------------------------------------------------------------
-            # STAGE 1: BREAKEVEN (first time r_multiple hits 1.0R)
+            # STAGE 1: BREAKEVEN (first time r_multiple hits BREAKEVEN_TRIGGER_RR)
+            # DEAD-CONFIG FIX: this used to hardcode 1.0 regardless of
+            # BREAKEVEN_TRIGGER_RR (config default 1.5) and ENABLE_BREAKEVEN
+            # (neither had a live read site anywhere in this file). Both now
+            # actually control this stage -- same flag AOX/SWAPPY's dedicated
+            # BE branches above respect, but this is the only branch whose
+            # *trigger R-multiple* is the configurable one, since AOX/SWAPPY's
+            # 1.0R/2.0R are deliberate strategy-specific choices, not this
+            # generic default.
             # ------------------------------------------------------------------
-            if r_multiple >= 1.0 and ticket not in state.be_moved:
+            if config.ENABLE_BREAKEVEN and r_multiple >= config.BREAKEVEN_TRIGGER_RR and ticket not in state.be_moved:
                 be_price = (entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer)
                 _dig_be = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                 be_price_rounded = round(be_price, _dig_be)
@@ -6132,23 +6280,57 @@ def analyze_loss_with_ai(ticket: int, deal, profit: float):
         take_profit = trade_data.get('take_profit', 0)
         entry_time = trade_data.get('timestamp', '')
         exit_time = datetime.now(timezone.utc).isoformat()
-        
-        # Get market context at entry
+
+        # MARKET-CONTEXT-AT-ENTRY BUG FIX: this used to unconditionally call
+        # get_market_data()/get_current_session()/datetime.now() right here --
+        # i.e. at ANALYSIS time (whenever this trade happens to close), and
+        # labeled the result "market context at entry" in the prompt below.
+        # For a trade open more than a few minutes that's not an
+        # approximation, it's just wrong -- session and hour in particular
+        # can differ completely from what they actually were at entry (a
+        # trade opened during the LONDON_NY overlap that closes hours later
+        # during the Asian session would tell the AI "Session: ASIAN" as if
+        # that were the entry condition). capture_entry_market_context() is
+        # now called at all three entry points (place_ai_trade,
+        # execute_aox_layer, check_swappy_expirations' fill-detection
+        # branch) and stored in state.open_positions[ticket]['params'] --
+        # still present here, update_closed_trades() calls this function
+        # before deleting that entry. Read the real entry-time snapshot when
+        # it's there; only fall back to current conditions -- honestly
+        # labeled as post-exit, not mislabeled as "at entry" -- for
+        # positions opened before this fix or if state was lost across a
+        # restart.
         df = get_market_data(symbol, config.ENTRY_TF, 50)
         if df is None:
             logger.warning(f"[AI LEARNING] Could not get market data for {symbol}")
             return
-        
-        # Calculate market conditions
-        try:
-            adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
-            adx = adx_val.iloc[-1] if len(adx_val) > 0 else 0
-        except:
-            adx = 0
-        
-        session = get_current_session()
-        hour = datetime.now(timezone.utc).hour
-        
+
+        _entry_ctx = state.open_positions.get(ticket, {}).get('params', {})
+        if 'entry_session' in _entry_ctx:
+            session = _entry_ctx.get('entry_session')
+            hour = _entry_ctx.get('entry_hour')
+            adx = _entry_ctx.get('entry_adx')
+            context_label = "AT ENTRY"
+            if adx is None:  # capture_entry_market_context's own ADX fetch failed at the time
+                try:
+                    adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+                    adx = float(adx_val.iloc[-1]) if len(adx_val) > 0 else 0
+                except Exception:
+                    adx = 0
+                context_label = "session/hour AT ENTRY, ADX AT EXIT (entry value unavailable)"
+        else:
+            try:
+                adx_val, _, _ = calculate_adx(df['high'], df['low'], df['close'], 14)
+                adx = adx_val.iloc[-1] if len(adx_val) > 0 else 0
+            except Exception:
+                adx = 0
+            session = get_current_session()
+            hour = datetime.now(timezone.utc).hour
+            context_label = "AT EXIT (no entry-time snapshot available for this trade)"
+
+        duration_mins = (datetime.fromisoformat(exit_time.replace('Z', '+00:00')) -
+                         datetime.fromisoformat(entry_time.replace('Z', '+00:00'))).seconds / 60.0
+
         # Build AI analysis prompt
         prompt = f"""You are an expert forex trading analyst. Analyze this LOSING trade and identify what went wrong.
 
@@ -6162,9 +6344,9 @@ TRADE DETAILS:
 - Profit/Loss: ${profit:.2f}
 - Entry Time: {entry_time}
 - Exit Time: {exit_time}
-- Duration: ~{(datetime.fromisoformat(exit_time.replace('Z', '+00:00')) - datetime.fromisoformat(entry_time.replace('Z', '+00:00'))).seconds // 60} minutes
+- Duration: ~{duration_mins:.0f} minutes
 
-MARKET CONDITIONS:
+MARKET CONDITIONS ({context_label}):
 - ADX (Trend Strength): {adx:.1f}
 - Session: {session}
 - Hour (UTC): {hour}
@@ -6182,40 +6364,118 @@ Example format: "Avoid SELL trades in {symbol} during Asian session (0-6 UTC) wh
 
         # Call Gemini AI for analysis via central provider
         lesson = ai_provider.call_ai(prompt, "You are an expert forex analyst.", temperature=0.3)
-        
-        if lesson:
+        lesson_source = 'ai'
+
+        # NO-AI FALLBACK FIX: this used to just log "skipping AI analysis"
+        # and produce nothing at all whenever call_ai() returned None
+        # (missing API key, quota exhausted, network error -- all real,
+        # expected cases this codebase already handles elsewhere, e.g.
+        # state._quota_resume's 1h quota-backoff). A trust feature that
+        # goes completely dark whenever one external API hiccups isn't one
+        # you can build a product promise on. generate_deterministic_lesson()
+        # is a plain rule-based read of the same trade data the prompt
+        # above already assembles -- no external call, so it can't fail for
+        # the same reasons the AI path can.
+        if not lesson:
+            logger.warning(f"[AI LEARNING] AI unavailable for #{ticket} -- using deterministic fallback")
+            lesson = generate_deterministic_lesson(symbol, direction, adx, session, hour, duration_mins, profit)
+            lesson_source = 'deterministic'
+        else:
             # Clean up potential AI junk
             lesson = lesson.strip().replace('"', '').replace('*', '')
-            
-            # Store the lesson
-            save_ai_lesson(symbol, direction, lesson, profit, {
-                'adx': adx,
-                'session': session,
-                'hour': hour,
-                'entry_price': entry_price,
-                'exit_price': exit_price
-            })
-            
-            logger.info(f" [AI LEARNING] Lesson learned from #{ticket}:")
-            logger.info(f" [AI LEARNING] {lesson}")
-            
-        else:
-            logger.warning("[AI LEARNING] No AI API key configured, skipping AI analysis")
-            
+
+        # Store the lesson (both AI and deterministic lessons go through
+        # the same save_ai_lesson() -- same Supabase/Telegram/local-file
+        # visibility pipeline either way, tagged with 'source' so it's
+        # honest about which one actually produced it).
+        save_ai_lesson(ticket, symbol, direction, lesson, profit, {
+            'adx': adx,
+            'session': session,
+            'hour': hour,
+            'context_timing': context_label,
+            'source': lesson_source,
+            'entry_price': entry_price,
+            'exit_price': exit_price
+        })
+
+        logger.info(f" [AI LEARNING] Lesson learned from #{ticket} ({lesson_source}):")
+        logger.info(f" [AI LEARNING] {lesson}")
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error analyzing loss: {e}", exc_info=True)
 
-def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float, context: dict):
+
+def generate_deterministic_lesson(symbol: str, direction: str, adx, session: str, hour: int,
+                                   duration_mins: float, profit: float) -> str:
+    """
+    NO-AI FALLBACK: see the call site in analyze_loss_with_ai() for why this
+    exists. Plain rule-based read of the same trade context the AI prompt
+    already assembles -- no external call, can't fail for the reasons the
+    AI path can (missing key, quota, network). Less nuanced than what
+    Gemini would write, but always available, which is the actual point of
+    a fallback.
+
+    Combines every applicable factor into one sentence rather than
+    stopping at the first match -- multiple deterministic signals firing
+    together (e.g. low ADX AND thin Asian-session liquidity) is itself a
+    stronger, more specific signal than either alone.
+    """
+    factors = []
+
+    if adx is not None and adx < 20:
+        factors.append(f"ADX was low ({adx:.1f}) at entry -- {symbol} was likely ranging, not trending")
+
+    if session == 'ASIAN':
+        factors.append(f"entered during the Asian session, typically lower liquidity/wider spread for {symbol}")
+
+    if duration_mins < 5:
+        factors.append(
+            f"stopped out within {duration_mins:.0f} minutes -- a reversal this fast can mean the entry "
+            f"was mistimed against a nearby liquidity level, or a spread/volatility spike caught the stop"
+        )
+    elif duration_mins > 180:
+        factors.append(
+            f"held for {duration_mins / 60:.1f} hours before losing -- the setup didn't develop within "
+            f"the timeframe this strategy is designed for"
+        )
+
+    if not factors:
+        _adx_str = f"{adx:.1f}" if adx is not None else "n/a"
+        return (
+            f"No single dominant factor identified from available data "
+            f"(ADX={_adx_str}, session={session}, hour={hour} UTC, "
+            f"duration={duration_mins:.0f}min). Logged for pattern tracking across future "
+            f"similar {symbol} {direction} setups."
+        )
+
+    return (
+        f"{symbol} {direction} loss (${profit:.2f}): " + "; ".join(factors) +
+        f". Consider tightening entry filters for {symbol} {direction} under these conditions."
+    )
+
+def save_ai_lesson(ticket: int, symbol: str, direction: str, lesson: str, loss_amount: float, context: dict):
     """
     Save AI-learned lesson to file for future reference
     Lessons are stored in JSON format with metadata
+
+    VISIBILITY FIX: this used to be the only place a lesson ever landed --
+    a local JSON file on the bot's own server that check_trade_against_
+    lessons() reads back, but nothing user-facing ever did. "The bot shows
+    its own mistakes honestly" isn't a real product differentiator if the
+    only reader of that honesty is the bot itself. The local file write
+    below is UNCHANGED (still the source check_trade_against_lessons()
+    reads) -- this now ALSO pushes the same lesson to Supabase via
+    trade_db.log_lesson() (dashboard/API-queryable, requires the
+    trade_lessons table -- see supabase/migrations/) and sends a Telegram
+    notification, so a user actually sees "lost $X on SYMBOL DIRECTION --
+    bot's read: <lesson>" instead of it only ever existing on disk.
     """
     try:
         import json
         import os
-        
+
         lessons_file = os.path.join(DATA_DIR, 'ai_trading_lessons.json')
-        
+
         # Load existing lessons
         lessons = []
         if os.path.exists(lessons_file):
@@ -6224,7 +6484,7 @@ def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float,
                     lessons = json.load(f)
             except:
                 lessons = []
-        
+
         # Add new lesson
         lesson_entry = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -6234,85 +6494,126 @@ def save_ai_lesson(symbol: str, direction: str, lesson: str, loss_amount: float,
             'loss_amount': loss_amount,
             'context': context
         }
-        
+
         lessons.append(lesson_entry)
-        
+
         # Keep only last 100 lessons
         lessons = lessons[-100:]
-        
+
         # Save back
         with open(lessons_file, 'w') as f:
             json.dump(lessons, f, indent=2)
-        
+
         logger.info(f" [AI LEARNING] Lesson saved to {lessons_file}")
-        
+
+        # Push to Supabase so the dashboard can actually show this -- failure
+        # here is non-fatal (log_lesson already backs up locally on its own
+        # retry exhaustion), the local file above is the durable record
+        # check_trade_against_lessons() depends on either way.
+        try:
+            trade_db.log_lesson({
+                'ticket': ticket, 'symbol': symbol, 'direction': direction,
+                'lesson': lesson, 'loss_amount': loss_amount, 'context': context,
+            })
+        except Exception as _db_err:
+            logger.warning(f"[AI LEARNING] Supabase lesson push failed: {_db_err}")
+
+        # Surface it to the user directly, not just the dashboard -- this is
+        # the actual "show its own mistakes honestly" moment.
+        send_telegram_notification(
+            f"[LESSON LEARNED] {symbol} {direction}\n\n"
+            f"Loss: ${loss_amount:.2f}\n\n"
+            f"Bot's read: {lesson}"
+        )
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error saving lesson: {e}", exc_info=True)
 
-def check_trade_against_lessons(symbol: str, direction: str, context: dict) -> tuple[bool, str]:
+def check_trade_against_lessons(symbol: str, direction: str, context: dict) -> tuple[bool, str, int]:
     """
-    Check if a new trade conflicts with previously learned lessons
-    Returns: (is_safe, warning_message)
+    Check if a new trade conflicts with previously learned lessons.
+    Returns: (is_safe, warning_message, match_count)
+
+    GATING-POWER FIX: this used to be advisory-only no matter what it
+    found -- every call site logged the warning at debug level and traded
+    anyway, so a lesson the bot had explicitly written down ("avoid SELL
+    XAUUSDm in Asian session, ADX<25") could be violated on the very next
+    matching setup. That's the opposite of what a real trader does with a
+    lesson they've learned. Two changes make it safe to actually act on:
+
+    1. TIGHTENED THE MATCH ITSELF. The old logic set similar_conditions=True
+       if ANY ONE of adx-close / session-equal / hour-close held -- an OR,
+       not an AND. Session alone matching one of the last 20 lessons for
+       this symbol is true by pure chance most of the time (only ~4
+       possible session values), so this was firing constantly and the
+       only reason it never caused problems is that nothing ever acted on
+       it. Now requires ALL THREE (adx within 5, same session, hour within
+       2) -- a real corroborated match, not a coincidence. Also fixed:
+       the shared pipeline's call site never passed 'adx' in context at
+       all, so context.get('adx', 100) always defaulted to 100 and the
+       ADX leg could never contribute to a match regardless of the OR/AND
+       question -- callers now pass real ADX via capture_entry_market_
+       context(), the same helper the entry-context-at-loss-analysis fix
+       already introduced.
+    2. RETURNS A MATCH COUNT, not just a bool. One matching lesson could
+       still be an AI-hallucinated or unlucky one-off; a caller can afford
+       to size down on a single strong match without betting the whole
+       trade on one AI-generated sentence. Two or more independent
+       lessons corroborating the same setup is a real, repeated pattern --
+       worth actually blocking, not just warning about.
     """
     try:
         import json
         import os
-        
+
         lessons_file = os.path.join(DATA_DIR, 'ai_trading_lessons.json')
-        
+
         if not os.path.exists(lessons_file):
-            return True, ""  # No lessons yet, allow trade
-        
+            return True, "", 0  # No lessons yet, allow trade
+
         # Load lessons
         with open(lessons_file, 'r') as f:
             lessons = json.load(f)
-        
+
         # Get recent lessons for this symbol
         recent_lessons = [
             l for l in lessons[-20:]  # Check last 20 lessons
             if l['symbol'] == symbol or 'ALL' in l['lesson'].upper()
         ]
-        
+
         if not recent_lessons:
-            return True, ""  # No relevant lessons
-        
-        # Simple keyword matching for now
-        # Future: Could use AI to check if lesson applies
+            return True, "", 0  # No relevant lessons
+
         warnings = []
-        
+
         for lesson_entry in recent_lessons:
             lesson = lesson_entry['lesson'].lower()
-            lesson_direction = lesson_entry['direction']
             lesson_context = lesson_entry.get('context', {})
-            
+
             # Check if lesson mentions this direction
-            if direction.lower() in lesson:
-                # Check context similarity
-                similar_conditions = False
-                
-                if abs(context.get('adx', 100) - lesson_context.get('adx', 0)) < 5:
-                    similar_conditions = True
-                
-                if context.get('session') == lesson_context.get('session'):
-                    similar_conditions = True
-                
-                if abs(context.get('hour', 100) - lesson_context.get('hour', 0)) < 2:
-                    similar_conditions = True
-                
-                if similar_conditions:
-                    warnings.append(f" AI Lesson: {lesson_entry['lesson'][:150]}")
-        
+            if direction.lower() not in lesson:
+                continue
+
+            # Require ALL THREE conditions to corroborate -- a real matching
+            # setup, not a one-factor coincidence (see docstring point 1).
+            adx_close = abs(context.get('adx', -100) - lesson_context.get('adx', 0)) < 5
+            session_match = context.get('session') is not None and context.get('session') == lesson_context.get('session')
+            hour_close = abs(context.get('hour', -100) - lesson_context.get('hour', 0)) < 2
+
+            if adx_close and session_match and hour_close:
+                warnings.append(f" AI Lesson: {lesson_entry['lesson'][:150]}")
+
         if warnings:
-            logger.warning(f" [AI LEARNING] Found {len(warnings)} similar past losses for {symbol} {direction}")
+            logger.warning(f" [AI LEARNING] Found {len(warnings)} corroborated past losses for {symbol} {direction}")
             for warn in warnings:
                 logger.warning(warn)
-            return False, "; ".join(warnings)
-        
-        return True, ""
-        
+            return False, "; ".join(warnings), len(warnings)
+
+        return True, "", 0
+
     except Exception as e:
         logger.error(f"[AI LEARNING] Error checking lessons: {e}", exc_info=True)
-        return True, ""  # On error, allow trade
+        return True, "", 0  # On error, allow trade
 
 # === COPY AND REPLACE THIS FUNCTION ===
 
@@ -6796,7 +7097,27 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             async_logger.log_trade_async({
                 'timestamp': datetime.utcnow().isoformat(), 'ticket': result.order, 'symbol': symbol,
                 'direction': direction, 'entry_price': request['price'], 'stop_loss': sl,
-                'take_profit': tp, 'lot_size': lot_size, 'strategy_name': 'EDGE_ENGINE',
+                # BUG FIX: this was hardcoded 'EDGE_ENGINE' for every trade that flows
+                # through this shared pipeline -- i.e. BOTH Shaakuni SSM and EMA Scalp
+                # Cross, the two live strategies that call place_ai_trade(). Since
+                # ai_analyze_closed_trades()'s per-strategy win-rate calc keys off this
+                # exact 'strategy_name' DB field (via convert_to_ai_format ->
+                # metadata['strategy_name']), the AI-learning ban/unban system could
+                # never actually see 'SHAAKUNI_SSM' or 'EMA_SCALP_CROSS' win rates
+                # separately -- both got silently merged into one 'EDGE_ENGINE' bucket,
+                # and the ban CHECK gate (which matches state.banned_strategies against
+                # setup['reason'], e.g. 'SHAAKUNI_SSM') could never match a ban the AI
+                # would ever actually issue. Net effect: the ban/unban system has been
+                # structurally inert for every live strategy, not just Swappy/AOX (which
+                # had no gate or DB logging at all -- see execute_aox_layer,
+                # check_swappy_expirations, run_aox_layered_entry, place_swappy_pending_order
+                # for that half of the fix). local_signal['setup_type'] already carries
+                # the correct per-strategy reason string (set at the call site as
+                # setup.get('setup_type', trigger_type), which resolves to trigger_type
+                # since no strategy sets 'setup_type' -- i.e. exactly setup['reason']) --
+                # just wasn't threaded through to the DB write until now.
+                'take_profit': tp, 'lot_size': lot_size,
+                'strategy_name': local_signal.get('setup_type', 'EDGE_ENGINE'),
                 'ai_risk_percent': final_risk_percent,
                 'metadata': {
                     'edge_score': edge_score,
@@ -6826,6 +7147,7 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                     'symbol':        symbol,
                     'strategy_type': _strat_t,     # CRITICAL: needed for strategy-specific management
                     'aox_fib':       _aox_fib,     # AOX SD levels: tp1_near/tp1_far/tp2_near/tp2_mid/tp2_far
+                    **capture_entry_market_context(symbol),  # entry_session/entry_hour/entry_adx -- see its docstring
                 }
             }
             return True
@@ -7022,7 +7344,47 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
         tick = mt5.symbol_info_tick(symbol)
         if not tick: return 0
 
-        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0) * risk_fraction
+        # SIZING GAP FIX: this used to read config.BASE_RISK_PERCENT directly --
+        # a flat risk % with none of CapitalController's adaptivity (edge
+        # quality, session, drawdown throttle, volatility scaling, exposure
+        # reduction, symbol performance, pattern health), same architectural
+        # gap as the ban/unban fix (execute_aox_layer never touched
+        # CapitalController at all, unlike the shared setup pipeline Shaakuni/
+        # EMA scalp go through). Wired in here the same way the main loop
+        # wires it for those two. edge_score=75.0 (not EdgeEngine-scored --
+        # AOX is one of the two strategies treated as "self-confirming"
+        # elsewhere in this file, same reasoning as the placeholder already
+        # used for state.open_positions[...]['edge_score'] below) --
+        # CapitalController.calculate's edge_mult clamps to [0.5, 1.2] so this
+        # mainly lets session/drawdown/volatility/exposure/symbol-performance/
+        # pattern-health still meaningfully move size around a neutral edge
+        # assumption, rather than pretending AOX has no edge signal at all.
+        _cc_sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+        try:
+            _cc_pattern_health = pattern_recognizer.get_edge_health_score(symbol, direction, {})
+        except Exception:
+            _cc_pattern_health = 1.0
+        _cc_drawdown = 0.0
+        if getattr(state, 'daily_start_equity', 0) > 0:
+            _cc_drawdown = max(0.0, ((state.daily_start_equity - account_equity) / state.daily_start_equity) * 100.0)
+        _cc_open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+        _final_risk_pct = CapitalController().calculate(
+            edge_score=75.0, symbol_metrics=_cc_sym_metrics, session=get_current_session(),
+            drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
+            account_equity=account_equity, pattern_health=_cc_pattern_health,
+        )
+
+        # PORTFOLIO GATE FIX: AOX previously bypassed SymbolCorrelationTracker,
+        # MAX_CONCURRENT_TRADES, and the 25% total-portfolio-risk cap entirely
+        # -- all three only ever checked in the shared setup pipeline
+        # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
+        # sizing fixes; see portfolio_risk_gates_allow's docstring.
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        if not _gate_ok:
+            logger.info(f"[AOX {layer_name}] {symbol}: blocked by {_gate_reason}")
+            return 0
+
+        risk_amount = account_equity * (_final_risk_pct / 100.0) * risk_fraction
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return 0
 
@@ -7073,8 +7435,27 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                     'is_runner': False,
                     'edge_score': 75.0,
                     'exit_aggressiveness': 'HOLD',  # AOX holds to SD levels
+                    **capture_entry_market_context(symbol),  # entry_session/entry_hour/entry_adx -- see its docstring
                 }
             }
+            # BUG FIX: AOX never logged its trades to the DB at all -- it places
+            # orders straight through mt5.order_send and only ever touched
+            # state.open_positions (so update_closed_trades() could still manage
+            # its cooldown/exit-reason bookkeeping on close), but no log_trade_async
+            # call meant no row was ever inserted with status='open' to later be
+            # matched and closed out. Net effect: AOX trades never appeared in
+            # trade_db.get_session_trades(), so ai_analyze_closed_trades()'s
+            # per-strategy win-rate calc could never see an 'AOX' entry -- the
+            # AI-learning ban/unban system could never ban or unban AOX no matter
+            # how it performed, since it had no data on AOX at all. Fixed by logging
+            # here, same shape place_ai_trade() already uses for Shaakuni/EMA scalp;
+            # update_closed_trades() needs no changes since it already closes out
+            # anything present in state.open_positions generically by ticket.
+            async_logger.log_trade_async({
+                'timestamp': datetime.utcnow().isoformat(), 'ticket': result.order, 'symbol': symbol,
+                'direction': direction, 'entry_price': price, 'stop_loss': sl,
+                'take_profit': tp, 'lot_size': lot_size, 'strategy_name': 'AOX',
+            })
             return result.order
         else:
             logger.warning(f"[AOX {layer_name}] {symbol}: failed retcode={result.retcode if result else 'None'}")
@@ -7272,9 +7653,42 @@ def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
     if not signal:
         return False
 
+    # BAN/UNBAN GAP FIX: AOX self-executes and `continue`s straight past the
+    # main loop's shared setup-pipeline ban check (~line 8763, which only ever
+    # sees setup dicts built by Shaakuni SSM / EMA scalp), so the AI-learning
+    # ban system could never actually stop AOX from trading even if it had
+    # been banned for a <30% win rate. Gate here instead, right where AOX has
+    # an actual signal to act on (not every scan iteration -- avoids log spam
+    # for a symbol that's rarely in-phase anyway). Matches the same
+    # substring-match convention state.banned_strategies already uses
+    # elsewhere: an AI ban of "AOX" (or any prefix of it) blocks this.
+    if any(banned.upper() in 'AOX' for banned in state.banned_strategies):
+        logger.info(f"[AOX] {symbol}: blocked by strategy ban")
+        return False
+
+    # LESSON GATING GAP FIX: same shape as the ban check above -- AOX never
+    # went through check_trade_against_lessons() at all, only the shared
+    # setup pipeline did. See that function's docstring for why a match is
+    # now safe to act on (tightened from an OR to an AND match, real ADX
+    # instead of a missing default). One corroborated match -> trade the
+    # layer smaller; two or more -> a real repeated pattern, skip this
+    # layer entirely.
+    _lesson_ctx = capture_entry_market_context(symbol)
+    _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+    if _lesson_ctx['entry_adx'] is not None:
+        _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+    _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, signal['direction'], _lesson_query_ctx)
+    _risk_fraction = signal['risk_fraction']
+    if not _lesson_ok:
+        if _lesson_matches >= 2:
+            logger.warning(f"[AOX] {symbol}: blocked -- {_lesson_matches} corroborated past losses. {_lesson_warn[:150]}")
+            return False
+        logger.info(f"[AOX] {symbol}: single lesson match, halving layer size -- {_lesson_warn[:150]}")
+        _risk_fraction = _risk_fraction * 0.5
+
     ticket = execute_aox_layer(
         symbol, signal['direction'], signal['entry_price'], signal['sl'], signal['tp'],
-        signal['risk_fraction'], signal['layer_name'], account_equity,
+        _risk_fraction, signal['layer_name'], account_equity,
     )
     if not ticket:
         return False
@@ -7406,6 +7820,17 @@ class ShaakuniSSM:
                 if not candidate_obs: return empty
                 # EXTREME OB = the LOWEST (deepest in discount) unmitigated OB
                 extreme = min(candidate_obs, key=lambda x: x['ob_low'])
+                # DELIBERATELY NOT using adaptive_sl_buffer here (unlike EMA scalp
+                # and Swappy) -- tried it, real-data A/B showed a clear regression:
+                # 140->138 trades, expectancy +0.711R->+0.624R, final equity
+                # +99.57R->+86.18R on the 90-day XAUUSDm sample. Root cause: this
+                # strategy's TP is a fixed sweep target, not tied to SL distance,
+                # so widening the buffer only ever lowers RR -- and Shaakuni's own
+                # `if rr < 1.5: return empty` gate then rejects setups a tighter
+                # buffer would have taken. A violent wick on the OB candle IS the
+                # manipulation signature this strategy is built to trade, not
+                # noise to pad around -- the existing flat atr*0.3 is correct here,
+                # left unchanged on purpose.
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
@@ -7436,6 +7861,8 @@ class ShaakuniSSM:
                 if not candidate_obs: return empty
                 # EXTREME OB = the HIGHEST (deepest in premium) unmitigated OB
                 extreme = max(candidate_obs, key=lambda x: x['ob_high'])
+                # See the BUY branch above for why adaptive_sl_buffer is
+                # deliberately NOT used here -- same real-data regression finding.
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
@@ -8243,12 +8670,36 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         if not _cross_valid:
             return None
 
+        # TRAP-AVOIDANCE FILTER: EMA scalp is the one live strategy with no
+        # manipulation/sweep-detection layer at all -- see
+        # detect_unswept_trap_nearby's docstring. Don't cross into an
+        # obvious, still-live stop-hunt target right next to entry.
+        if detect_unswept_trap_nearby(df_m5, direction, _atr_m5):
+            logger.debug(f"[EMA TRAP FILTER] {symbol}: unswept liquidity pool near price -- skip cross")
+            return None
+
         # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
+        # TRAP-AWARE SL: was a flat atr*0.3 regardless of how violent the
+        # anchor candle's own wick was -- see adaptive_sl_buffer's docstring.
         _lookback_ema = df_m5.iloc[-20:]
         if direction == 'BUY':
-            _sl_ema = float(_lookback_ema['low'].min()) - _atr_m5 * 0.3
+            _anchor_idx = _lookback_ema['low'].idxmin()
+            _anchor = _lookback_ema.loc[_anchor_idx]
+            _buf_ema = adaptive_sl_buffer(
+                float(_anchor['low']), float(_anchor['high']),
+                float(_anchor['open']), float(_anchor['close']),
+                'BUY', _atr_m5 * 0.3,
+            )
+            _sl_ema = float(_lookback_ema['low'].min()) - _buf_ema
         else:
-            _sl_ema = float(_lookback_ema['high'].max()) + _atr_m5 * 0.3
+            _anchor_idx = _lookback_ema['high'].idxmax()
+            _anchor = _lookback_ema.loc[_anchor_idx]
+            _buf_ema = adaptive_sl_buffer(
+                float(_anchor['low']), float(_anchor['high']),
+                float(_anchor['open']), float(_anchor['close']),
+                'SELL', _atr_m5 * 0.3,
+            )
+            _sl_ema = float(_lookback_ema['high'].max()) + _buf_ema
         setup = {
             'signal':    direction,
             'reason':    'EMA_SCALP_CROSS',
@@ -8274,19 +8725,92 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
 
 
 def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
-                               entry_price: float, sl: float, account_equity: float) -> bool:
+                               entry_price: float, sl: float, account_equity: float,
+                               df_m5: Optional['pd.DataFrame'] = None) -> bool:
     """
     Place a BUY STOP or SELL STOP pending order for the Swappy 3C setup.
     The order triggers only when price breaks above the 3-candle high (BUY)
     or below the 3-candle low (SELL). If not triggered in 5 candles (25 minutes
     on M5), the order expires. If price closes below setup_low (BUY) before
     triggering, the order is cancelled externally by check_swappy_expirations().
+
+    df_m5: optional -- when provided, TP tries find_swappy_structural_tp()
+    first (nearest real swing level in trade direction, min 1.5R) and only
+    falls back to the fixed 3:1 target if no qualifying structural level is
+    found. Optional (not required) so any other caller passing only the
+    original required arguments keeps working exactly as before.
     """
+    # BAN/UNBAN GAP FIX: Swappy self-executes and `continue`s straight past
+    # the main loop's shared setup-pipeline ban check (~line 8763, which only
+    # ever sees setup dicts built by Shaakuni SSM / EMA scalp), so the
+    # AI-learning ban system could never actually stop Swappy from trading
+    # even if it had been banned for a <30% win rate. Gate here, at the single
+    # call site's entry point, before any MT5 order is touched. Same
+    # substring-match convention state.banned_strategies already uses
+    # elsewhere: an AI ban of "SWAPPY_3C" (or "SWAPPY") blocks this.
+    if any(banned.upper() in 'SWAPPY_3C' for banned in state.banned_strategies):
+        logger.info(f"[SWAPPY 3C] {symbol}: blocked by strategy ban")
+        return False
+
+    # LESSON GATING GAP FIX: same shape as the ban check above -- Swappy
+    # never went through check_trade_against_lessons() at all, only the
+    # shared setup pipeline did. See that function's docstring for why a
+    # match is now safe to act on (tightened from an OR to an AND match,
+    # real ADX instead of a missing default). One corroborated match ->
+    # halve the sized risk below; two or more -> a real repeated pattern,
+    # block outright before touching MT5 at all.
+    _lesson_ctx = capture_entry_market_context(symbol)
+    _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+    if _lesson_ctx['entry_adx'] is not None:
+        _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+    _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
+    if not _lesson_ok and _lesson_matches >= 2:
+        logger.warning(f"[SWAPPY 3C] {symbol}: blocked -- {_lesson_matches} corroborated past losses. {_lesson_warn[:150]}")
+        return False
+    _lesson_halve_size = (not _lesson_ok) and _lesson_matches == 1
+    if _lesson_halve_size:
+        logger.info(f"[SWAPPY 3C] {symbol}: single lesson match, halving size -- {_lesson_warn[:150]}")
+
     try:
         sym_info = mt5.symbol_info(symbol)
         if not sym_info: return False
 
-        risk_amount = account_equity * (config.BASE_RISK_PERCENT / 100.0)
+        # SIZING GAP FIX: same as execute_aox_layer() -- this used to read
+        # config.BASE_RISK_PERCENT directly, a flat risk % bypassing
+        # CapitalController's adaptivity entirely (edge quality, session,
+        # drawdown throttle, volatility scaling, exposure reduction, symbol
+        # performance, pattern health). edge_score=70.0: Swappy is the other
+        # strategy treated as self-confirming elsewhere in this file (not
+        # EdgeEngine-scored), matches the placeholder already used for
+        # state.open_positions[...]['edge_score'] in check_swappy_expirations.
+        _cc_sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+        try:
+            _cc_pattern_health = pattern_recognizer.get_edge_health_score(symbol, direction, {})
+        except Exception:
+            _cc_pattern_health = 1.0
+        _cc_drawdown = 0.0
+        if getattr(state, 'daily_start_equity', 0) > 0:
+            _cc_drawdown = max(0.0, ((state.daily_start_equity - account_equity) / state.daily_start_equity) * 100.0)
+        _cc_open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
+        _final_risk_pct = CapitalController().calculate(
+            edge_score=70.0, symbol_metrics=_cc_sym_metrics, session=get_current_session(),
+            drawdown=_cc_drawdown, symbol=symbol, open_positions_count=_cc_open_count,
+            account_equity=account_equity, pattern_health=_cc_pattern_health,
+        )
+        if _lesson_halve_size:
+            _final_risk_pct = _final_risk_pct * 0.5
+
+        # PORTFOLIO GATE FIX: Swappy previously bypassed SymbolCorrelationTracker,
+        # MAX_CONCURRENT_TRADES, and the 25% total-portfolio-risk cap entirely
+        # -- all three only ever checked in the shared setup pipeline
+        # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
+        # sizing fixes; see portfolio_risk_gates_allow's docstring.
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        if not _gate_ok:
+            logger.info(f"[SWAPPY 3C] {symbol}: blocked by {_gate_reason}")
+            return False
+
+        risk_amount = account_equity * (_final_risk_pct / 100.0)
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return False
 
@@ -8302,14 +8826,20 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
         lot_size = round(lot_raw / lot_step) * lot_step
         lot_size = max(sym_info.volume_min, min(lot_size, sym_info.volume_max))
 
-        # TP: 3:1 RR as per Swappy spec
-        tp_dist = sl_dist * 3.0
-        if direction == 'BUY':
-            tp = entry_price + tp_dist
-            order_type = mt5.ORDER_TYPE_BUY_STOP
-        else:
-            tp = entry_price - tp_dist
-            order_type = mt5.ORDER_TYPE_SELL_STOP
+        # DYNAMIC TP FIX: was unconditionally 3:1 RR regardless of market
+        # structure -- see find_swappy_structural_tp's docstring. Try a real
+        # structural level first, fall back to the original fixed 3:1 spec
+        # target if nothing qualifies (thin/choppy structure, or no df_m5
+        # passed in at all).
+        tp = None
+        if df_m5 is not None:
+            tp = find_swappy_structural_tp(df_m5, direction, entry_price, sl_dist)
+        tp_source = "STRUCTURAL"
+        if tp is None:
+            tp_dist = sl_dist * 3.0
+            tp = (entry_price + tp_dist) if direction == 'BUY' else (entry_price - tp_dist)
+            tp_source = "FIXED_3R"
+        order_type = mt5.ORDER_TYPE_BUY_STOP if direction == 'BUY' else mt5.ORDER_TYPE_SELL_STOP
 
         # Expiry: 5 candles on M5 = 25 minutes from now
         expiry_dt = datetime.now(timezone.utc) + timedelta(minutes=25)
@@ -8352,10 +8882,20 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
                 'setup_high': sw.get('setup_high', entry_price),
                 'setup_low':  sw.get('setup_low',  sl),
                 'placed_at':  datetime.now(timezone.utc),
+                # Carried through to check_swappy_expirations() so that once
+                # this pending order is confirmed FILLED (ticket shows up in
+                # mt5.positions_get(), not just gone from orders_get() -- which
+                # also happens on a plain unfilled expiry), it can be logged to
+                # the trade DB with these actual order parameters. Previously
+                # nothing here was ever logged (see check_swappy_expirations
+                # for the full explanation), so Swappy trades never appeared in
+                # trade_db.get_session_trades() and the AI-learning ban system
+                # had zero data to ever ban/unban Swappy by.
+                'sl': sl, 'tp': tp, 'entry_price': entry_price, 'lot_size': lot_size,
             }
             logger.info(
                 f"[SWAPPY PENDING] {symbol} {direction} STOP @ {entry_price:.4f} "
-                f"SL={sl:.4f} TP={tp:.4f} lot={lot_size} expires=25min"
+                f"SL={sl:.4f} TP={tp:.4f} ({tp_source}) lot={lot_size} expires=25min"
             )
             return True
         else:
@@ -8379,12 +8919,62 @@ def check_swappy_expirations():
     orders    = mt5.orders_get()
     positions = mt5.positions_get()
     order_ids = {o.ticket for o in orders}    if orders    else set()
+    # Moved up from below (was computed after this loop) so the loop itself
+    # can tell FILLED (ticket now a live position -- MT5 reuses the pending
+    # order's ticket as the resulting position ticket) apart from genuinely
+    # EXPIRED/cancelled (ticket just gone, no position ever opened). Both used
+    # to be treated identically here, which was fine for the pre-existing
+    # 3rd-time re-entry SL tracking below (unaffected, still unconditional),
+    # but wasn't fine for the DB-logging gap fix just added: logging an
+    # expired-unfilled order as a trade would create a zombie 'open' row in
+    # the DB that no MT5 deal will ever exist to close out.
+    pos_ids   = {p.ticket for p in positions} if positions else set()
     to_remove = []
 
     for ticket, info in list(state.swappy_pending.items()):
         if ticket not in order_ids:
             state.swappy_triggered[ticket] = info  # triggered -> track for SL
             to_remove.append(ticket)
+            if ticket in pos_ids:
+                # BUG FIX: Swappy trades were never logged to the trade DB at
+                # all -- place_swappy_pending_order() only ever wrote into
+                # state.swappy_pending/state.swappy_triggered, never
+                # state.open_positions and never log_trade_async(). Net
+                # effect: Swappy trades never appeared in
+                # trade_db.get_session_trades(), so ai_analyze_closed_trades()
+                # could never see a 'SWAPPY_3C' win rate to ban/unban by --
+                # same root cause as AOX (see execute_aox_layer). Fixed here,
+                # at the one point this function can tell the order actually
+                # FILLED into a live position rather than just expiring
+                # unfilled: register it in state.open_positions (same shape
+                # AOX/place_ai_trade use, so update_closed_trades() picks up
+                # its close/exit-reason bookkeeping with no changes needed
+                # there) and log it to the DB with strategy_name='SWAPPY_3C'.
+                if not hasattr(state, 'open_positions'): state.open_positions = {}
+                state.open_positions[ticket] = {
+                    'params': {
+                        'sl': info.get('sl', 0.0), 'tp': info.get('tp', 0.0),
+                        'initial_sl': info.get('sl', 0.0),
+                        'entry_price': info.get('entry_price', 0.0), 'symbol': info['symbol'],
+                        'strategy_type': 'SWAPPY',
+                        'open_time': time.time(),
+                        'is_runner': False,
+                        'edge_score': 70.0,
+                        'exit_aggressiveness': 'HOLD',
+                        # entry_session/entry_hour/entry_adx -- see capture_entry_market_context's
+                        # docstring. Captured here at FILL-detection time (this branch only runs
+                        # once the pending order is confirmed to have become a live position),
+                        # not at the earlier pending-order placement -- closer to the real entry
+                        # moment than analyzing it whenever the loss eventually gets closed out.
+                        **capture_entry_market_context(info['symbol']),
+                    }
+                }
+                async_logger.log_trade_async({
+                    'timestamp': datetime.utcnow().isoformat(), 'ticket': ticket, 'symbol': info['symbol'],
+                    'direction': info['direction'], 'entry_price': info.get('entry_price', 0.0),
+                    'stop_loss': info.get('sl', 0.0), 'take_profit': info.get('tp', 0.0),
+                    'lot_size': info.get('lot_size', 0.0), 'strategy_name': 'SWAPPY_3C',
+                })
             continue
         sym  = info['symbol']
         tick = mt5.symbol_info_tick(sym)
@@ -8399,7 +8989,8 @@ def check_swappy_expirations():
             mt5.order_delete(ticket)
             to_remove.append(ticket)
 
-    pos_ids = {p.ticket for p in positions} if positions else set()
+    # pos_ids computed once, up at the top of this function now (see the FILLED
+    # vs EXPIRED comment there) -- reused here unchanged.
     for ticket, info in list(state.swappy_triggered.items()):
         if ticket in pos_ids: continue  # still open
         try:
@@ -8883,12 +9474,10 @@ def ai_trading_session():
                             else:
                                 if _sw_reason != 'first_setup':
                                     logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_sw_reason} -- entry allowed")
-                                # SL: last swing extreme in last 15 bars + buffer
-                                _sw_scan = df_m5.iloc[-15:]
-                                if _trade_direction == 'BUY':
-                                    _sl_sw = float(_sw_scan['low'].min()) - _atr_m5 * 0.3
-                                else:
-                                    _sl_sw = float(_sw_scan['high'].max()) + _atr_m5 * 0.3
+                                # SL: last swing extreme in last 15 bars + trap-aware buffer.
+                                # Extracted to compute_swappy_sl() so the backtest adapter uses
+                                # the exact same logic instead of a second, drift-prone copy.
+                                _sl_sw = compute_swappy_sl(df_m5, _trade_direction, _atr_m5)
 
                                 # BUG FIX: this used to build a generic `setup` dict with
                                 # entry_price = _sw['entry_level'] (candle 3's close) and let
@@ -8898,7 +9487,8 @@ def ai_trading_session():
                                 # the 3-candle high/low) -- i.e. an entry on breakout
                                 # confirmation, not a market fill at C3's close. There's
                                 # already a fully-built place_swappy_pending_order() (correct
-                                # stop-order placement, 3:1 RR per the Swappy spec, 25-minute
+                                # stop-order placement, structural TP with a 3:1 fixed-RR
+                                # fallback -- see find_swappy_structural_tp -- 25-minute
                                 # expiry) that was never called anywhere -- wire it in here
                                 # instead of reimplementing it, same pattern AOX uses
                                 # (self-contained placement + continue, skipping the shared
@@ -8906,7 +9496,7 @@ def ai_trading_session():
                                 _sw_placed = place_swappy_pending_order(
                                     symbol, _sw, _trade_direction,
                                     entry_price=_sw['stop_entry'], sl=_sl_sw,
-                                    account_equity=account_info.equity,
+                                    account_equity=account_info.equity, df_m5=df_m5,
                                 )
                                 if _sw_placed:
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
@@ -8916,37 +9506,6 @@ def ai_trading_session():
                                 else:
                                     logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
                                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
-
-                # 
-                # STRATEGY C: SSM / ICT FVG RETEST (institutional sweep)
-                # Rules: HTF OB zone  + sweep + displacement + FVG retest
-                # This is the only strategy that USES the HTF zone.
-                # Higher L3 confidence required (institutional setup).
-                #
-                if not setup and config.ENABLE_STRATEGY_SMC_FVG_RETEST:
-                    # SSM-specific HTF zone check (only for this strategy)
-                    _ssm_in_zone = _htf_zone['in_zone']
-                    _s = strategy_liquidity_fvg_engine(symbol, df_m5, df_h1, effective_trend,
-                                                        edge_mode="NORMAL", df_m15=df_m15, df_h1=df_h1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'SSM_FVG_RETEST'),
-                            'stop_loss': _s['stop_loss'],
-                            'strategy_type': 'SSM',
-                            'liquidity_distance':  0.75,
-                            'liquidity_strength':  0.85,
-                            'momentum_state':      0.8,
-                            'structure_alignment': 0.8,
-                            'entry_price':    _s.get('fvg_mid', _cur_price),
-                            'fvg_top':        _s.get('fvg_top', 0),
-                            'fvg_bottom':     _s.get('fvg_bottom', 0),
-                            'htf_confluence': _s.get('htf_confluence', 0),
-                            'htf_reason':     _s.get('htf_reason', ''),
-                            'at_htf_zone':    _ssm_in_zone,
-                            'htf_needed': True,   # SSM uses HTF zone
-                        }
-                        logger.debug(f"[SSM] {symbol}: FVG retest found, at_htf_zone={_ssm_in_zone}")
 
                 # STRATEGY D: AOX MODEL -- 25/25/50 Layered Execution
                 # Layer 1 (25%): SD zone tap
@@ -8980,44 +9539,6 @@ def ai_trading_session():
                         }
                         logger.info(f"[SHAAKUNI] {symbol}: SSM setup found | "
                                    f"{_ssm_result['signal']} @ {_ssm_result.get('limit_entry',0):.4f}")
-
-                # Generic Liquidity Grab and Kill Zone (fallback)
-                if not setup and config.ENABLE_STRATEGY_LIQUIDITY_GRAB_FALLBACK:
-                    _s = strategy_liquidity_grab(df_m5, df_h1, h1_trend, symbol, df_m1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'LIQUIDITY_GRAB'),
-                            'stop_loss': _s['stop_loss'],
-                            'strategy_type': 'SSM',
-                            'liquidity_distance':  0.65,
-                            'liquidity_strength':  0.75,
-                            'momentum_state':      0.6,
-                            'structure_alignment': 0.65,
-                            'entry_price': _cur_price,
-                            'at_htf_zone': _htf_zone['in_zone'],
-                            'htf_needed': True,
-                        }
-
-                if not setup and config.ENABLE_STRATEGY_ICT_KILLZONE_FALLBACK:
-                    _s = strategy_ict_killzone(df_m5, df_h1, h1_trend, symbol, df_m1)
-                    if _s:
-                        setup = {
-                            'signal':    _s['direction'],
-                            'reason':    _s.get('strategy_name', 'ICT_KILLZONE'),
-                            'stop_loss': _s['stop_loss'],
-                            # ICT_KILLZONE is timing-based -- kill zone time IS the confluence
-                            # It doesn't need a separate 3C sweep confirmation
-                            # (using EMA path so it doesn't hit the SSM+3C gate)
-                            'strategy_type': 'ICT',
-                            'liquidity_distance':  0.6,
-                            'liquidity_strength':  0.7,
-                            'momentum_state':      0.6,
-                            'structure_alignment': 0.6,
-                            'entry_price': _cur_price,
-                            'at_htf_zone': _htf_zone['in_zone'],
-                            'htf_needed': True,
-                        }
 
                 if not setup:
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
@@ -9058,11 +9579,11 @@ def ai_trading_session():
                 # QUOTA MODE: when AI quota exceeded, only strongest signals go through
                 _quota_active = hasattr(state, '_quota_resume') and datetime.now() < state._quota_resume
                 if _quota_active:
-                    # Quota mode: SSM/Shaakuni sweep + ICT timing = self-confirming, no AI needed
+                    # Quota mode: SSM/Shaakuni sweep = self-confirming, no AI needed
                     _strat_t = setup.get('strategy_type', 'SSM')
                     _reason  = setup.get('reason', '')
-                    _is_self_confirming = _strat_t in ('ICT', 'AOX', 'SSM') or _reason in (
-                        'ICT_KILLZONE', 'LIQUIDITY_GRAB', 'AOX_SNIPER', 'SHAAKUNI_SSM')
+                    _is_self_confirming = _strat_t in ('AOX', 'SSM') or _reason in (
+                        'AOX_SNIPER', 'SHAAKUNI_SSM')
                     if not _is_self_confirming:
                         # For EMA/Swappy in quota mode: need STRONG EMA or 3C
                         _ema_ok = setup.get('ema_strength') == 'STRONG'
@@ -9081,9 +9602,8 @@ def ai_trading_session():
                         logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
                         state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
                         continue
-                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'ICT', 'AOX'):
-                    # EMA, Swappy, ICT: don't require 3C (they have built-in confirmation)
-                    # ICT_KILLZONE: kill zone timing = confluence, 3C not needed
+                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'AOX'):
+                    # EMA, Swappy, AOX: don't require 3C (they have built-in confirmation)
                     logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
 
                 if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
@@ -9230,7 +9750,7 @@ def ai_trading_session():
                     account_equity       = account_info.equity,
                     pattern_health       = pattern_health,
                 )
-                final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 10%
+                final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 1.5% (was a no-op at the old 10.0 value -- see MAX_RISK_PERCENT's docstring)
                 logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
                              f"pattern_health={pattern_health:.2f} dd={current_drawdown:.1f}% -> final_risk={final_risk:.2f}%")
 
@@ -9284,7 +9804,7 @@ def ai_trading_session():
 
                         _strat_type   = setup.get('strategy_type', 'SSM')
                         _l3_cache_key = f"{symbol}_{direction}_{_strat_type}"
-                        _is_ssm_call  = _strat_type in ('SSM','ICT','AOX')
+                        _is_ssm_call  = _strat_type in ('SSM','AOX')
                         _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
                         _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
                         if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
@@ -9361,7 +9881,6 @@ def ai_trading_session():
                             setup['_range_scalp_mode'] = False
 
                         # Step 4: Quality gate based on strategy type
-                        # ICT_KILLZONE: timing is the confluence, allow EMA:WEAK (kill zone = setup)
                         # EMA/SWAPPY in TRENDING H4: require STRONG or 3C -- no weak signals in trend
                         # EMA/SWAPPY in RANGING H4: EMA:WEAK allowed (range scalp, confirmed by M5 trend)
                         if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
@@ -9377,22 +9896,23 @@ def ai_trading_session():
                         if _m5_dir == 'BUY' and _h4_bias == 'BEARISH':
                             # Counter-trend BUY in bearish HTF -- needs structural support
                             # Check if we have FVG or OB confluence, not just EMA cross
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
                             if not _has_struct:
                                 logger.debug(f"[HTF GATE] {symbol}: BUY rejected in BEARISH H4 -- no structural confluence")
                                 continue
                         elif _m5_dir == 'SELL' and _h4_bias == 'BULLISH':
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed') or                                          setup.get('reason','') in ('SSM_FVG', 'LIQUIDITY_GRAB', 'ICT_KILLZONE')
+                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
                             if not _has_struct:
                                 logger.debug(f"[HTF GATE] {symbol}: SELL rejected in BULLISH H4 -- no structural confluence")
                                 continue
 
                         # L3 minimum score by strategy type
-                        # ICT_KILLZONE: kill zone timing = built-in confluence  allow 5/10
+                        # AOX/SSM: sweep + macro-window/OB confluence is already strong structural
+                        # evidence -- allow a lower AI bar (5/10)
                         # EMA/SWAPPY: need Gemini to have an opinion (6+)
                         # EMA:WEAK + no 3C in trending: need strong AI conviction (7)
-                        if _strat_type in ('ICT', 'AOX', 'SSM'):
-                            _l3_min_score = 5  # kill zone time = valid signal even at score 5
+                        if _strat_type in ('AOX', 'SSM'):
+                            _l3_min_score = 5
                         elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime == 'TRENDING':
                             _l3_min_score = 7
                         else:
@@ -9427,13 +9947,37 @@ def ai_trading_session():
                             continue
 
 
-                # Check AI lessons -- warn if this setup matches a past losing pattern
-                _lesson_ok, _lesson_warn = check_trade_against_lessons(symbol, direction, {
-                    'session': session_str, 'hour': datetime.now(timezone.utc).hour
-                })
+                # GATING-POWER FIX: this used to log a match at debug level and
+                # trade anyway no matter what it found -- a lesson the bot had
+                # explicitly written down could be violated on the very next
+                # matching setup. Graduated response now, based on how many
+                # DISTINCT lessons corroborate this exact setup (see check_
+                # trade_against_lessons' docstring for why the match itself
+                # was tightened before trusting it with real power): one
+                # match could be a single AI-hallucinated or unlucky lesson,
+                # so trade smaller instead of betting full size on it; two or
+                # more is a real, repeated pattern -- block it, the same way
+                # a trader who's been burned twice the same way actually
+                # stops taking that setup. Real ADX (not the old default-100
+                # placeholder the call site never actually supplied) via
+                # capture_entry_market_context() -- same helper the loss-
+                # analysis entry-context fix already introduced.
+                _lesson_ctx = capture_entry_market_context(symbol)
+                _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+                if _lesson_ctx['entry_adx'] is not None:
+                    _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+                _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
                 if not _lesson_ok:
-                    # Log as warning but don't block -- lessons are advisory, not mandatory
-                    logger.debug(f"[AI LESSON] {symbol} {direction}: advisory warning -- {_lesson_warn[:80]}")
+                    if _lesson_matches >= 2:
+                        logger.warning(
+                            f"[AI LESSON] {symbol} {direction}: blocked -- {_lesson_matches} "
+                            f"corroborated past losses. {_lesson_warn[:150]}"
+                        )
+                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=30)
+                        continue
+                    else:
+                        logger.info(f"[AI LESSON] {symbol} {direction}: single match, halving size -- {_lesson_warn[:150]}")
+                        final_risk = final_risk * 0.5
 
                 # PORTFOLIO RISK CHECK: total risk across all open + this trade
                 # Prevent portfolio wipeout even if individual trades are sized correctly

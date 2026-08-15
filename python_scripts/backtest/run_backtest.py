@@ -4,12 +4,11 @@ CLI entry point for the backtest harness.
 
 Run one strategy:
     python3 -m backtest.run_backtest --symbol XAUUSDm --data-dir ./history/XAUUSDm \\
-        --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \\
-        --strategy ICT_KILLZONE --out trades.csv
+        --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv --strategy SWAPPY_3C --out trades.csv
 
 Run every registered strategy and compare (--all also runs AOX):
     python3 -m backtest.run_backtest --symbol XAUUSDm --data-dir ./history/XAUUSDm \\
-        --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv --m15 XAUUSDm_M15.csv \\
+        --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \\
         --h4 XAUUSDm_H4.csv --all --out trades.csv
 
 Run just AOX, with its SMT-divergence correlated pair:
@@ -17,9 +16,12 @@ Run just AOX, with its SMT-divergence correlated pair:
         --m1 XAUUSDm_M1.csv --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv \\
         --strategy AOX --corr-symbol XAGUSDm --corr-m15 XAGUSDm_M15.csv --out trades.csv
 
-See README.md for which strategies are LIVE vs NOT LIVE, and which
-timeframes each one needs (SHAAKUNI_SSM needs --h4; AOX needs --m1;
-AOX's SMT-divergence gate needs --corr-symbol/--corr-m15, optional).
+See README.md for which strategies are LIVE, and which timeframes each
+one needs. --m1 is optional -- only AOX needs it (skipped cleanly,
+printed not crashed, if omitted); SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS
+don't touch M1 at all. --h4 is needed for SHAAKUNI_SSM specifically.
+AOX's SMT-divergence gate additionally needs --corr-symbol/--corr-m15,
+optional on top of --m1.
 """
 
 import argparse
@@ -34,15 +36,24 @@ from .strategies_registry import ALL_STRATEGIES, STRATEGIES_BY_NAME
 
 AOX_NAME = "AOX"  # not a StrategyAdapter (see aox_driver.py for why) -- handled as a separate CLI path below
 
+# No StrategyAdapter here touches M1 anymore -- SHAAKUNI_SSM/SWAPPY_3C/
+# EMA_SCALP_CROSS all confirmed M1-free by reading each adapter. Only AOX
+# (handled separately below, not a StrategyAdapter) needs it.
+
 
 def main():
     p = argparse.ArgumentParser(description="TradeBotX strategy backtest harness")
     p.add_argument("--symbol", required=True, help="Symbol name as used in the live bot's SYMBOL_SPECS, e.g. XAUUSDm")
     p.add_argument("--data-dir", required=True, help="Directory containing the historical CSVs")
-    p.add_argument("--m1", required=True, help="M1 CSV filename (relative to --data-dir)")
+    p.add_argument("--m1", default=None,
+                    help="M1 CSV filename (relative to --data-dir). Only AOX actually needs M1 -- "
+                         "SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS don't touch it. "
+                         "Omit it and AOX is skipped with a clear message; everything else still runs.")
     p.add_argument("--m5", required=True, help="M5 CSV filename (relative to --data-dir)")
     p.add_argument("--h1", required=True, help="H1 CSV filename (relative to --data-dir)")
-    p.add_argument("--m15", default=None, help="M15 CSV filename (only needed for SMC_FVG_OB_RETEST's HTF confluence check)")
+    p.add_argument("--m15", default=None, help="M15 CSV filename. Not needed by any currently-live strategy "
+                                                 "(kept for AOX's --corr-m15 correlated-pair use and any future "
+                                                 "strategy that needs the primary symbol's own M15)")
     p.add_argument("--h4", default=None, help="H4 CSV filename (only needed for SHAAKUNI_SSM)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--strategy", choices=list(STRATEGIES_BY_NAME.keys()) + [AOX_NAME], help="Run a single strategy")
@@ -61,7 +72,9 @@ def main():
     bot = import_bot_module()
 
     print(f"Loading historical data for {args.symbol}...")
-    timeframes = {"M1": args.m1, "M5": args.m5, "H1": args.h1}
+    timeframes = {"M5": args.m5, "H1": args.h1}
+    if args.m1:
+        timeframes["M1"] = args.m1
     if args.m15:
         timeframes["M15"] = args.m15
     if args.h4:

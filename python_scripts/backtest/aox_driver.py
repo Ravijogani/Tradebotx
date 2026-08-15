@@ -100,7 +100,7 @@ def run_aox_backtest(bot_module, dataset: HistoricalDataset, config: AoxDriverCo
             cooldown_until = None
 
         with replay_context(bot_module, dataset, as_of, extra_symbols=extra_symbols):
-            trend = _get_trend(bot_module, config.symbol)
+            trend = _get_trend(bot_module, dataset, as_of, config.symbol)
             if trend is None:
                 i += 1
                 continue
