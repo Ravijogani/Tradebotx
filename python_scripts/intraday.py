@@ -25,6 +25,8 @@ import os
 import json
 import requests
 import google.generativeai as genai
+
+import market_intelligence as mi
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import argparse
@@ -2453,7 +2455,15 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
         df_micro = get_market_data(symbol, config.MICRO_STRUCTURE_TF, 100)
         
         if df_entry is None or df_structure is None or df_micro is None or df_d1 is None: return None
-        
+
+        # MARKET INTELLIGENCE INTEGRATION: auction-theory regime read (see
+        # market_intelligence.py's module docstring) -- replaces relying on
+        # get_market_regime_and_trend's ADX threshold alone for gating
+        # TREND_CONTINUATION below, and enables Strategy F (Balance Fade)
+        # for the one regime (price rotating inside its own value area)
+        # none of Strategies A-E were ever designed for.
+        auction = mi.classify_auction_state(df_entry)
+
         # --- 1. INTENT-BASED NARRATIVE ---
         narrative = NarrativeIntentEngine.build(symbol, df_d1, df_structure, df_entry, df_micro)
         if not narrative: return None
@@ -2509,10 +2519,35 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
             move_type = "EXPANSION_BREAKOUT"
             direction_bias = narrative['expansion_direction']
         elif direction_bias in ["BUY", "SELL"] and market_regime == "TRENDING":
-             move_type = "TREND_CONTINUATION"
-             direction_bias = "BULLISH" if direction_bias == "BUY" else "BEARISH"
-            
-        if move_type not in config.BEHAVIOR_MODES: return None
+             # MARKET INTELLIGENCE INTEGRATION: require the auction-theory
+             # read to agree, not just ADX -- ADX>25 says momentum is
+             # present, it doesn't say the market has actually left its
+             # value area on real volume follow-through. A "TRENDING" ADX
+             # reading while auction state is still BALANCE means price
+             # hasn't genuinely broken out yet; requiring IMBALANCE in the
+             # matching direction is a materially sharper confirmation
+             # (see classify_auction_state's own docstring for why).
+             _proposed_dir = "IMBALANCE_UP" if direction_bias == "BUY" else "IMBALANCE_DOWN"
+             if auction["state"] == _proposed_dir:
+                 move_type = "TREND_CONTINUATION"
+                 direction_bias = "BULLISH" if direction_bias == "BUY" else "BEARISH"
+
+        # MARKET INTELLIGENCE INTEGRATION: Strategy F (Balance Fade) has its
+        # own complete, independent trigger condition (auction state itself,
+        # confirmed inside detect_balance_fade_signal by a value-area-edge
+        # touch + rejection candle + liquidity guard) -- it was never meant
+        # to depend on move_type classification, which is a narrative-engine
+        # concept Balance Fade doesn't use at all. Without this bypass, a
+        # BALANCE reading with no independently-classified move_type (no
+        # sweep+mss, no expansion_potential>0.7, and TREND_CONTINUATION
+        # correctly not applying since that requires IMBALANCE, not BALANCE)
+        # would return None here and Strategy F would never even get a
+        # chance to run -- confirmed happening on real data: [STRAT F] only
+        # ever logged when move_type happened to ALSO independently qualify
+        # for an unrelated reason, not reliably whenever the market was
+        # actually in balance.
+        if move_type not in config.BEHAVIOR_MODES and auction["state"] != "BALANCE":
+            return None
 
         # Normalize direction_bias to BULLISH/BEARISH consistently
         if direction_bias == "BUY": direction_bias = "BULLISH"
@@ -2565,7 +2600,24 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
             entry_signal = reversal_precision_engine(symbol, df_entry, direction_bias, sweep, mss)
             if entry_signal:
                 logger.info(f"[STRAT D] {symbol}: Reversal after liquidity sweep")
-            
+
+        # STRATEGY F (MARKET INTELLIGENCE): Balance Fade -- the one regime
+        # (price rotating inside its own value area) none of A-E are
+        # designed for. Only tried once none of the trend/breakout/reversal
+        # strategies above fired AND the auction state itself confirms
+        # BALANCE -- existing, already-tested strategy priority is left
+        # completely undisturbed; this is a genuinely new fallback, not a
+        # replacement for anything.
+        if not entry_signal and auction["state"] == "BALANCE":
+            bf_signal = mi.detect_balance_fade_signal(df_entry, symbol)
+            if bf_signal:
+                entry_signal = {
+                    'direction': bf_signal['direction'], 'stop_loss': bf_signal['stop_loss'],
+                    'tp': bf_signal['take_profit'], 'strategy_name': 'BALANCE_FADE',
+                    'confidence': 0.75,
+                }
+                logger.info(f"[STRAT F] {symbol}: Balance Fade (auction state) setup found")
+
         if not entry_signal:
             logger.debug(
                 f"[NO SETUP] {symbol}: no strategy fired | "
@@ -2632,20 +2684,28 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
         # on the correct side of price; if none qualify, leave the
         # strategy's own stop_loss in place rather than override it with a
         # broken value.
-        atr_buf = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1] * 0.5
-        curr_price_for_sl = df_entry['close'].iloc[-1]
-        if direction == "BUY":
-            swing_lows = identify_swing_highs_lows(df_entry, 5)[1]
-            valid_low = next((df_entry['low'].iloc[idx] for idx in reversed(swing_lows)
-                               if df_entry['low'].iloc[idx] < curr_price_for_sl), None)
-            if valid_low is not None:
-                entry_signal['stop_loss'] = valid_low - atr_buf
-        else:
-            swing_highs = identify_swing_highs_lows(df_entry, 5)[0]
-            valid_high = next((df_entry['high'].iloc[idx] for idx in reversed(swing_highs)
-                                if df_entry['high'].iloc[idx] > curr_price_for_sl), None)
-            if valid_high is not None:
-                entry_signal['stop_loss'] = valid_high + atr_buf
+        # MARKET INTELLIGENCE INTEGRATION: Strategy F (Balance Fade) already
+        # computes its own precise SL (beyond the value area extreme, with
+        # its own liquidity-guard check already applied) -- this generic
+        # override was designed for Strategies A-E, which don't compute a
+        # structural SL this precise themselves. Overwriting Balance Fade's
+        # SL here would silently discard the whole point of its own
+        # institutional-grade stop placement.
+        if entry_signal['strategy_name'] != 'BALANCE_FADE':
+            atr_buf = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1] * 0.5
+            curr_price_for_sl = df_entry['close'].iloc[-1]
+            if direction == "BUY":
+                swing_lows = identify_swing_highs_lows(df_entry, 5)[1]
+                valid_low = next((df_entry['low'].iloc[idx] for idx in reversed(swing_lows)
+                                   if df_entry['low'].iloc[idx] < curr_price_for_sl), None)
+                if valid_low is not None:
+                    entry_signal['stop_loss'] = valid_low - atr_buf
+            else:
+                swing_highs = identify_swing_highs_lows(df_entry, 5)[0]
+                valid_high = next((df_entry['high'].iloc[idx] for idx in reversed(swing_highs)
+                                    if df_entry['high'].iloc[idx] > curr_price_for_sl), None)
+                if valid_high is not None:
+                    entry_signal['stop_loss'] = valid_high + atr_buf
 
         # 4. Final Formatting & Filters
         curr_price = df_entry['close'].iloc[-1]
@@ -2673,11 +2733,18 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
         # correct side of current price for the real direction; otherwise
         # resolve_intraday_tp's direction-aware swing-level fallback
         # handles it instead.
-        target_price = narrative['target_price']
-        target_is_valid_side = (direction == "BUY" and target_price > curr_price) or \
-                                (direction == "SELL" and target_price < curr_price)
-        if target_is_valid_side:
-            entry_signal['liquidity_target'] = target_price
+        # MARKET INTELLIGENCE INTEGRATION: never let this override Balance
+        # Fade's own POC/VWAP target -- resolve_intraday_tp() treats
+        # liquidity_target as authoritative when present (see its own
+        # docstring), which would silently discard Strategy F's real,
+        # institutionally-computed target in favor of a generic narrative
+        # one it was never designed to need.
+        if entry_signal['strategy_name'] != 'BALANCE_FADE':
+            target_price = narrative['target_price']
+            target_is_valid_side = (direction == "BUY" and target_price > curr_price) or \
+                                    (direction == "SELL" and target_price < curr_price)
+            if target_is_valid_side:
+                entry_signal['liquidity_target'] = target_price
 
         # Edge Mode Engine integration
         entry_signal['risk_multiplier'] = edge_engine.get_risk_multiplier(expected_rr, narrative['expansion_potential'], market_regime, narrative.get('lifecycle', 'PRE_EXPANSION'), narrative.get('distance_to_target', 100.0))
@@ -2689,19 +2756,30 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
             entry_signal['risk_multiplier'] *= 0.5
             
         # Behavior & Lifecycle specific RR thresholds
+        #
+        # MARKET INTELLIGENCE INTEGRATION: this whole check is narrative-
+        # engine RR math (expected_rr above is narrative['distance_to_
+        # target'] / sl_pips -- a completely different, unrelated
+        # calculation to Balance Fade's own POC/VWAP-based RR, which
+        # detect_balance_fade_signal() already validated against its own
+        # min_rr before ever returning a signal). Applying it a second time
+        # here would judge Strategy F against a number that has nothing to
+        # do with its actual trade -- skip entirely for BALANCE_FADE, same
+        # as the SL/liquidity_target overrides above.
         lifecycle = narrative.get('lifecycle', 'PRE_EXPANSION')
-        if stacking_mode != "NONE":
-            min_rr = 1.0
-        elif move_type == "EXPANSION_BREAKOUT":
-            min_rr = 2.0 if lifecycle == "PRE_EXPANSION" else 1.5
-        elif move_type == "REVERSAL_AFTER_LIQUIDITY":
-            min_rr = 1.5
-        else:
-            min_rr = 1.2
-            
-        if expected_rr < min_rr:
-            logger.info(f"[NARRATIVE VETO] {symbol} rejected. Expected RR {expected_rr:.1f} < {min_rr} (Lifecycle: {lifecycle})")
-            return None
+        if entry_signal['strategy_name'] != 'BALANCE_FADE':
+            if stacking_mode != "NONE":
+                min_rr = 1.0
+            elif move_type == "EXPANSION_BREAKOUT":
+                min_rr = 2.0 if lifecycle == "PRE_EXPANSION" else 1.5
+            elif move_type == "REVERSAL_AFTER_LIQUIDITY":
+                min_rr = 1.5
+            else:
+                min_rr = 1.2
+
+            if expected_rr < min_rr:
+                logger.info(f"[NARRATIVE VETO] {symbol} rejected. Expected RR {expected_rr:.1f} < {min_rr} (Lifecycle: {lifecycle})")
+                return None
             
         entry_signal['symbol'] = symbol
         entry_signal['trend'] = trend_direction
@@ -2883,6 +2961,22 @@ def _project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
     }
 
 
+def volatility_scaled_risk_multiplier(symbol: str) -> float:
+    """
+    MARKET INTELLIGENCE INTEGRATION: standard vol-targeting (see
+    market_intelligence.volatility_target_multiplier's own docstring) --
+    scales size by where current realized volatility sits relative to its
+    own trailing distribution, instead of every trade risking the same
+    flat % regardless of how calm or violent the instrument currently is.
+    Called from both validate_trade_risk() and place_intraday_trade() so
+    the risk percent that gets validated is always exactly the one used
+    for sizing. Falls back to 1.0 (no adjustment) on any data hiccup --
+    never blocks a trade over it.
+    """
+    df = get_market_data(symbol, config.ENTRY_TF, 250)
+    return mi.volatility_target_multiplier(df) if df is not None else 1.0
+
+
 def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]:
     """
     Validate that proposed trade risk is within acceptable limits
@@ -2910,7 +3004,7 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         # previously omitted here, so a signal with risk_multiplier != 1.0
         # could be validated against one risk_percent and then sized
         # against a different (larger) one moments later.
-        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0)
+        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * volatility_scaled_risk_multiplier(symbol)
 
         # RISK-FIX: actual_risk_percent/risk_amount now come from the same
         # real lot-size projection place_intraday_trade will use to size
@@ -3140,12 +3234,25 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             logger.info(f"[AI L3] {symbol}: score={l3['score']}/10 -- skip")
             return False
 
-        tp1, atr = resolve_intraday_tp(signal, symbol, direction, entry_price, stop_loss)
+        if signal.get('strategy_name') == 'BALANCE_FADE':
+            # Balance Fade already computed its own precise target (POC or
+            # VWAP, whichever is the fuller mean-reversion target inside
+            # the value area -- see detect_balance_fade_signal's own
+            # docstring). resolve_intraday_tp()'s liquidity_target/swing-
+            # fallback logic was built for Strategies A-E, which don't
+            # compute a target this precise themselves -- using it here
+            # would silently discard Strategy F's real target.
+            tp1 = signal.get('tp')
+            df_atr = get_market_data(symbol, config.ENTRY_TF, 30)
+            atr = float(calculate_atr(df_atr['high'], df_atr['low'], df_atr['close'],
+                                       config.ATR_PERIOD).iloc[-1]) if df_atr is not None else 0.0
+        else:
+            tp1, atr = resolve_intraday_tp(signal, symbol, direction, entry_price, stop_loss)
         if tp1 is None:
             return False
 
         # Apply Edge Mode Engine Risk Multiplier
-        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0)
+        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * volatility_scaled_risk_multiplier(symbol)
         # RISK-FIX: same projection validate_trade_risk() already used a
         # few lines up (line ~2944) to decide whether this trade was even
         # allowed through -- computed via the same shared helper so sizing

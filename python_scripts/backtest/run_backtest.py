@@ -45,6 +45,7 @@ import argparse
 import sys
 
 from .aox_driver import AoxDriverConfig, run_aox_backtest
+from .balance_fade_driver import BalanceFadeDriverConfig, run_balance_fade_backtest
 from .bot_loader import import_bot_module
 from .data import HistoricalDataset
 from .engine import BacktestEngine, BacktestConfig
@@ -58,6 +59,7 @@ from .swing_loader import import_swing_bot_module
 AOX_NAME = "AOX"  # not a StrategyAdapter (see aox_driver.py for why) -- handled as a separate CLI path below
 STRUCTURAL_SWING_NAME = "STRUCTURAL_SWING"  # also not a StrategyAdapter -- separate script/module, see swing_driver.py
 INTRADAY_NAME = "INTRADAY"  # also not a StrategyAdapter -- separate script/module, see intraday_driver.py
+BALANCE_FADE_NAME = "BALANCE_FADE"  # also not a StrategyAdapter -- see balance_fade_driver.py / market_intelligence.py
 
 # No StrategyAdapter here touches M1 anymore -- SHAAKUNI_SSM/SWAPPY_3C/
 # EMA_SCALP_CROSS all confirmed M1-free by reading each adapter. Only AOX
@@ -80,8 +82,8 @@ def main():
     p.add_argument("--h4", default=None, help="H4 CSV filename (needed for SHAAKUNI_SSM and STRUCTURAL_SWING)")
     p.add_argument("--d1", default=None, help="D1 CSV filename (only needed for STRUCTURAL_SWING)")
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--strategy", choices=list(STRATEGIES_BY_NAME.keys()) + [AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME], help="Run a single strategy")
-    group.add_argument("--all", action="store_true", help="Run every registered strategy (incl. AOX, STRUCTURAL_SWING, INTRADAY) and print a report for each")
+    group.add_argument("--strategy", choices=list(STRATEGIES_BY_NAME.keys()) + [AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME, BALANCE_FADE_NAME], help="Run a single strategy")
+    group.add_argument("--all", action="store_true", help="Run every registered strategy (incl. AOX, STRUCTURAL_SWING, INTRADAY, BALANCE_FADE) and print a report for each")
     p.add_argument("--rr", type=float, default=2.0, help="Take-profit distance as a multiple of SL distance, for strategies that don't compute their own TP (default 2.0)")
     p.add_argument("--spread", type=float, default=None, help="Override the default per-symbol spread model (price units)")
     p.add_argument("--out", default=None, help="Write the combined trade ledger to this CSV path")
@@ -120,7 +122,7 @@ def main():
         print("Both --corr-symbol and --corr-m15 are required to enable the SMT divergence check -- ignoring.")
 
     run_aox = args.strategy == AOX_NAME or args.all
-    single_strategy_name = args.strategy not in (AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME)
+    single_strategy_name = args.strategy not in (AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME, BALANCE_FADE_NAME)
     adapters = ([STRATEGIES_BY_NAME[args.strategy]] if args.strategy and single_strategy_name
                 else (ALL_STRATEGIES if not args.strategy else []))
 
@@ -176,6 +178,18 @@ def main():
             stats = summarize(intraday_trades)
             print_report(INTRADAY_NAME, True, intraday_trades, stats)
             all_trades.extend(intraday_trades)
+
+    run_balance_fade = args.strategy == BALANCE_FADE_NAME or args.all
+    if run_balance_fade:
+        if "H1" not in dataset.frames:
+            print(f"\nSkipping {BALANCE_FADE_NAME}: needs --h1 (not provided)")
+        else:
+            print(f"\nRunning {BALANCE_FADE_NAME}...")
+            bf_config = BalanceFadeDriverConfig(symbol=args.symbol, spread=args.spread)
+            bf_trades = run_balance_fade_backtest(dataset, bf_config)
+            stats = summarize(bf_trades)
+            print_report(BALANCE_FADE_NAME, True, bf_trades, stats)
+            all_trades.extend(bf_trades)
 
     if args.out and all_trades:
         write_trade_csv(all_trades, args.out)

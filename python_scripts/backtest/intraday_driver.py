@@ -131,7 +131,15 @@ def run_intraday_backtest(bot_module, dataset: HistoricalDataset, config: Intrad
             # just closed.
             raw_entry = float(h1_series["close"].iloc[i])
 
-            tp, _atr = bot_module.resolve_intraday_tp(signal, config.symbol, direction, raw_entry, stop_loss)
+            # Same bypass place_intraday_trade() applies live: Strategy F
+            # (Balance Fade) already computed its own precise target (POC/
+            # VWAP) -- resolve_intraday_tp()'s liquidity_target/swing-
+            # fallback logic was built for Strategies A-E and would
+            # silently discard it.
+            if signal.get("strategy_name") == "BALANCE_FADE":
+                tp = signal.get("tp")
+            else:
+                tp, _atr = bot_module.resolve_intraday_tp(signal, config.symbol, direction, raw_entry, stop_loss)
 
         if tp is None:
             i += 1

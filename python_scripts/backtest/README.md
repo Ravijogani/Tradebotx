@@ -36,12 +36,26 @@ Strategies A/B/C/D/E) is now backtestable too — see "INTRADAY wiring"
 below. It's a **different bot file entirely** (the Pro-tier "Intraday
 Core" strategy), so it's not part of the table above, which is
 specifically about `hybrid_trading_bot_multiuser.py`'s four setups.
-Real-data result (XAUUSDm, ~90d): 11 trades, -0.003R expectancy, 36.4% win
+Real-data result (XAUUSDm, ~90d), **before** the market_intelligence.py
+integration described below: 11 trades, -0.003R expectancy, 36.4% win
 rate, PF 1.00 — dead flat, not negative, not positive, on a sample too
 small to call either way. Two real bugs were found and fixed getting to
 that number — see "INTRADAY wiring" for what they were; both are live-code
 fixes (context_decision_engine is the actual live function), not
-backtest-only corrections.
+backtest-only corrections. **After** wiring in the auction-theory regime
+engine (see "MARKET INTELLIGENCE" below): 18 trades, +0.446R expectancy,
+33.3% win rate, PF 1.71 — a real, verified improvement, five of those
+trades coming directly from the new Balance Fade strategy (`--strategy
+INTRADAY` now needs `--m15`/`--h4`/`--d1` in addition to `--h1`).
+
+`BALANCE_FADE` (`market_intelligence.detect_balance_fade_signal`, driven
+standalone via `balance_fade_driver.py`) is also now a real, independently
+backtestable strategy in its own right — not tied to any one bot file, see
+"MARKET INTELLIGENCE" below. Real-data result (XAUUSDm, ~90d, H1): 32
+trades, +0.620R expectancy, 37.5% win rate, PF 1.96 — the best
+risk-adjusted profile of anything tested in this harness so far, though
+still a modest sample. Run it with `--strategy BALANCE_FADE` or `--all`;
+needs only `--h1`.
 
 ### Fallback and dormant strategies removed (2026-08)
 
@@ -404,6 +418,177 @@ than chasing a setup whose invalidation point already ran through.
 Run it with `--strategy INTRADAY` or `--all`; needs `--h4`, `--m15`, and
 `--d1` in addition to `--h1` (Strategy E / AOX Sniper additionally wants
 `--m1`, but is a clean no-op without it — everything else still runs).
+
+## MARKET INTELLIGENCE (`market_intelligence.py`) — auction theory, liquidity, positioning
+
+Every strategy across all three bots was originally built on retail-
+indicator regime detection (ADX trend/range, EMA stacks) or no regime
+detection at all — and, more importantly, **every one of them is a trend/
+breakout/continuation archetype. Not one was designed to profit when the
+market is rotating inside a range**, which is where price spends most of
+its time. `market_intelligence.py` is a new, shared, pure module (zero
+MT5/live-bot dependency — plain OHLCV DataFrames in, dict/float/None out)
+that replaces the retail-indicator framework with the one an institutional
+or professional prop desk actually uses, and adds the missing strategy
+archetype. It's imported directly by all three live bots and by two new
+backtest drivers (`balance_fade_driver.py` for the standalone strategy,
+plus direct calls from `intraday_driver.py`/`swing_driver.py`'s underlying
+live functions).
+
+**Auction Market Theory replaces ADX.** `classify_auction_state()` builds
+a Volume Profile (Point of Control, Value Area High/Low — the standard
+"volume profile from OHLC" approximation used by any tool without L2 data:
+each bar's `tick_volume` is distributed across every price bucket its
+range overlaps) plus VWAP, and classifies the market as **BALANCE**
+(rotating inside value — the fade regime) or **IMBALANCE_UP/DOWN** (a
+genuine initiative move that left value on real follow-through, not a
+single wick). This is a materially sharper regime read than "ADX > 25"
+because it's built from where volume actually transacted. Honest caveat,
+stated here and in the module's own docstring: MT5's `tick_volume` is tick
+*count*, not real traded volume (forex/CFDs are OTC) — a workable, standard
+proxy, not literal CME/COMEX contract volume.
+
+**`build_liquidity_map()`** generalizes the equal-highs/lows liquidity-pool
+concept Shaakuni SSM and AOX already used narrowly into a reusable
+function: detects swing highs/lows, clusters nearby ones into pools, marks
+each swept or untested.
+
+**`detect_balance_fade_signal()`** is the actual missing strategy: fires
+only when auction state reads BALANCE, fades the value area edge (VAH for
+a SELL, VAL for a BUY) back toward POC/VWAP, confirmed by a rejection
+candle, with a liquidity-map guard that refuses the fade if an untested
+pool sits just beyond the edge (price is more likely to sweep it first
+than reverse). Independently backtestable (`--strategy BALANCE_FADE`) and
+wired into all three live bots as an additional strategy.
+
+**`compute_intermarket_bias()`** generalizes AOX's SMT-divergence gate
+(previously one narrow check on one strategy) into a reusable cross-market
+confirmation any strategy could call — built and unit-tested, not yet
+wired into a live call site in this round (no second real-data symbol
+export was on hand to verify a live integration against; the function
+itself is ready).
+
+**`volatility_target_multiplier()`** — standard vol-targeting, scales size
+by current realized volatility vs. its own trailing distribution. Wired
+into all three bots' risk sizing (`CapitalController.calculate()` in
+`hybrid_trading_bot_multiuser.py`, `validate_trade_risk()`/
+`place_intraday_trade()` in `intraday.py`, `validate_trade_risk()`/
+`place_swing_trade()` in `structural_swing_pro.py`).
+
+**`fetch_cot_positioning()`/`cot_positioning_bias()`** — CFTC Commitment of
+Traders positioning (public, weekly) for Gold/Silver/Oil, the one piece of
+genuine institutional data this repo had zero of. **Not verified
+end-to-end**: this sandbox's outbound network policy blocks `cftc.gov`
+entirely (confirmed directly via a request, not assumed). The fetch is
+written defensively (same "no data → neutral, never blocks trading"
+contract every AI-optional fallback in this codebase follows) and the
+interpretation logic (`cot_positioning_bias`) is independently unit-tested
+against synthetic data, but the live network call itself needs verification
+on a real deployment host before being trusted. Not yet wired into any
+live bot's call sites this round — the fetch needing real-host
+verification first, and the pure interpretation function being ready
+whenever it is.
+
+### Wiring into `structural_swing_pro.py`
+
+`scan_for_signal()` now computes H4 auction state before trusting a
+structural continuation signal: a confirmed pullback setup firing while
+auction state shows IMBALANCE in the *opposite* direction is rejected (a
+real red flag — price is still making a genuine move against the signal).
+When no structural setup fires and auction state reads BALANCE,
+`detect_balance_fade_signal()` gets a chance instead — its output dict
+already matches what `place_swing_trade()` expects (`direction`/
+`stop_loss`/`take_profit`), no adapter needed. Risk sizing now goes
+through a new `effective_risk_percent()` helper (`config.BASE_RISK_PERCENT`
+× `volatility_target_multiplier()`), called identically by
+`validate_trade_risk()` and `place_swing_trade()` so the validated and
+sized risk can never diverge — same discipline `_project_lot_and_risk()`
+already established.
+
+### Wiring into `intraday.py`
+
+`context_decision_engine()` computes auction state right after `df_entry`
+is fetched. Two integrations, both live-code changes (this is the real
+function, not a backtest-only path):
+
+1. **TREND_CONTINUATION now requires auction confirmation, not just ADX.**
+   The existing `market_regime == "TRENDING"` check is tightened, not
+   replaced, with `auction["state"]` agreeing (IMBALANCE_UP for a BUY bias,
+   IMBALANCE_DOWN for SELL) — an ADX-trending reading while price hasn't
+   actually left its value area on real volume no longer qualifies.
+2. **Strategy F (Balance Fade)** is tried when none of A-E fired and
+   auction state reads BALANCE. Two real integration bugs were found and
+   fixed getting this to actually fire reliably, not just log a signal
+   that never converts to a trade:
+   - The `move_type not in config.BEHAVIOR_MODES` gate (checked before any
+     strategy runs) has no relationship to auction state at all — a
+     BALANCE reading with no independently-classified `move_type` (no
+     sweep+mss, no expansion_potential>0.7) returned `None` before
+     Strategy F ever got a chance to run. Fixed with an explicit bypass
+     when `auction["state"] == "BALANCE"`.
+   - The generic "Final Formatting & Filters" RR check further down uses
+     `narrative['distance_to_target']` — a completely different, unrelated
+     number to Balance Fade's own POC/VWAP-based RR (already validated
+     inside `detect_balance_fade_signal()` itself). Applying it a second
+     time would judge Strategy F against a number that has nothing to do
+     with its actual trade. Same for the structure-anchored SL override and
+     the `liquidity_target` override two sections earlier — both were
+     designed for Strategies A-E, which don't compute a target this precise
+     themselves, and would have silently discarded Strategy F's real,
+     already-correct SL/TP. All three are now skipped specifically for
+     `strategy_name == 'BALANCE_FADE'`.
+
+   `place_intraday_trade()` and `intraday_driver.py` (the backtest path)
+   both bypass `resolve_intraday_tp()` for Balance Fade signals for the
+   same reason — it would otherwise discard the signal's own `tp` in favor
+   of a liquidity-target/swing-fallback computation Balance Fade never
+   needed. Verified this actually mattered, not just defensive
+   over-engineering: before these three fixes, `[STRAT F]` logged a signal
+   exactly once across the whole ~90-day real-data run and it never became
+   a trade; after, Balance Fade contributed 5 real trades to the 18-trade
+   final result above.
+
+   Risk sizing: a new `volatility_scaled_risk_multiplier()` helper,
+   multiplied into `risk_percent` at both call sites in
+   `validate_trade_risk()` and `place_intraday_trade()` the same way
+   `risk_multiplier` already was.
+
+### Wiring into `hybrid_trading_bot_multiuser.py`
+
+Lighter-touch than the other two, a deliberate scope decision rather than
+an oversight — explained here plainly: this file's downstream pipeline
+(`CapitalController`, `portfolio_risk_gates_allow`, ban/unban, the 4-part
+post-mortem system, `get_dynamic_trade_params()`'s own dynamic TP
+computation) is the most complex and heavily-interdependent of the three
+bots' risk/execution paths, built up over many rounds of this whole
+engagement. Wiring Balance Fade in as a genuinely new live-firing strategy
+here needs its own dedicated placement path (mirroring how Swappy 3C's
+`place_swappy_pending_order()` bypasses the shared setup pipeline entirely
+to protect its own structural TP) rather than a rushed bolt-on that risks
+either breaking already-verified logic or silently losing Balance Fade's
+own real target the same way `intraday.py`'s bug did before it was caught
+above. Deferred, not dropped.
+
+What **is** wired in, real and verified:
+
+- **`_auction = mi.classify_auction_state(df_m5)`**, computed once per
+  symbol per scan, gates Strategy A (EMA Scalp Cross) — the weakest of the
+  four live setups by real-data evidence (+0.068R/trade, barely above
+  zero pre-cost, exactly the signature of a momentum-cross strategy firing
+  in both trending and ranging conditions with no regime filter). Now
+  additionally requires the M5 auction state to confirm genuine imbalance
+  in the trade direction before firing, the single highest-evidence gate
+  among the four existing strategies.
+- **`CapitalController.calculate()`** gained an optional
+  `df_for_vol_target` parameter — when passed (wired in at the main scan
+  loop's call site with `df_m5`), multiplies in
+  `volatility_target_multiplier()` alongside the existing `vol_scale`
+  factor. Not the same thing: `vol_scale` is a fixed per-symbol constant
+  (BTC=0.40, XAU=0.75, etc., normalizing dollar-per-point across
+  instrument types); this is dynamic — the *same* symbol sizes down when
+  it's currently more volatile than its own recent normal. Defaults to no
+  adjustment when no data is passed, so every other call site is
+  unaffected.
 
 ## How it works, and why it's structured this way
 

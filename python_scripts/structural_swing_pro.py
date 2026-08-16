@@ -101,6 +101,8 @@ import pandas as pd
 import requests
 from supabase import create_client, Client
 
+import market_intelligence as mi
+
 # =============================================================================
 # CLI ARGUMENTS -- identical contract to hybrid_trading_bot_multiuser.py /
 # intraday.py: bot_manager_core.py's start_bot() builds the same argv list
@@ -509,6 +511,23 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
 # diverge.
 # =============================================================================
 
+def effective_risk_percent(symbol: str) -> float:
+    """
+    MARKET INTELLIGENCE INTEGRATION: config.BASE_RISK_PERCENT scaled by
+    volatility_target_multiplier() -- standard vol-targeting instead of a
+    flat % risked on every trade regardless of how calm or violent the
+    instrument currently is. Called by both validate_trade_risk() and
+    place_swing_trade() so the risk percent that gets validated is always
+    exactly the one actually used for sizing -- same "one shared
+    computation, never two" discipline as project_lot_and_risk() itself.
+    Falls back to the unscaled base risk (multiplier 1.0) if H4 data isn't
+    available -- never blocks a trade over a data hiccup.
+    """
+    df_h4 = get_market_data(symbol, config.ENTRY_TF, config.ENTRY_BARS)
+    multiplier = mi.volatility_target_multiplier(df_h4) if df_h4 is not None else 1.0
+    return config.BASE_RISK_PERCENT * multiplier
+
+
 def project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
                           risk_percent: float, account_equity: float) -> Dict[str, float]:
     spec = get_symbol_specs(symbol)
@@ -547,14 +566,15 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
     equivalent fix for why that distinction matters."""
     try:
         symbol = signal['symbol']
+        risk_percent = effective_risk_percent(symbol)
         projection = project_lot_and_risk(symbol, signal['entry_price'], signal['stop_loss'],
-                                           config.BASE_RISK_PERCENT, account_equity)
+                                           risk_percent, account_equity)
         actual_risk_percent = projection['actual_risk_percent']
         if projection['lot_raw'] < projection['spec']['min_lot']:
             logger.info(
                 f"[RISK] {symbol}: ideal lot {projection['lot_raw']:.5f} < broker min "
                 f"{projection['spec']['min_lot']} -- real risk at min_lot is "
-                f"{actual_risk_percent:.2f}% vs intended {config.BASE_RISK_PERCENT:.2f}%"
+                f"{actual_risk_percent:.2f}% vs intended {risk_percent:.2f}%"
             )
 
         if actual_risk_percent > config.MAX_RISK_PER_TRADE_PERCENT:
@@ -726,11 +746,48 @@ def send_telegram_message(message: str) -> None:
 # =============================================================================
 
 def scan_for_signal(symbol: str) -> Optional[Dict]:
+    """
+    MARKET INTELLIGENCE INTEGRATION: auction-theory regime read (see
+    market_intelligence.py's module docstring for the full "why" -- ADX/
+    EMA-stack regime detection is retail-indicator thinking, not how a
+    professional desk actually reads a market) now gates and extends the
+    structural swing signal instead of taking it at face value:
+
+    1. A confirmed structural pullback-continuation signal that fires
+       while the H4 auction state is IMBALANCE in the OPPOSITE direction
+       is a real red flag -- price is still making a genuine initiative
+       move against the signal's own direction, not accepting the pullback
+       read. Skipped rather than fought.
+    2. When there's NO structural continuation setup but the H4 auction
+       state reads BALANCE (price rotating inside its own value area --
+       the one regime none of this bot's D1/H4 trend logic was ever
+       designed for), detect_balance_fade_signal() gets a chance to fire
+       instead. Its output is already shaped to match what
+       place_swing_trade() expects (direction/stop_loss/take_profit) --
+       same dict contract detect_structural_swing_signal() uses -- so no
+       adapter is needed.
+    """
     df_d1 = get_market_data(symbol, config.STRUCTURE_TF, config.STRUCTURE_BARS)
     df_h4 = get_market_data(symbol, config.ENTRY_TF, config.ENTRY_BARS)
     if df_d1 is None or df_h4 is None:
         return None
+
+    auction = mi.classify_auction_state(df_h4)
+
     signal = detect_structural_swing_signal(df_d1, df_h4, symbol)
+    if signal:
+        conflicting = (signal['direction'] == "BUY" and auction["state"] == "IMBALANCE_DOWN") or \
+                      (signal['direction'] == "SELL" and auction["state"] == "IMBALANCE_UP")
+        if conflicting:
+            logger.info(
+                f"[AUCTION VETO] {symbol}: structural {signal['direction']} setup rejected -- "
+                f"H4 auction state is {auction['state']} (opposing initiative move still active)"
+            )
+            signal = None
+
+    if signal is None and auction["state"] == "BALANCE":
+        signal = mi.detect_balance_fade_signal(df_h4, symbol)
+
     if signal:
         signal['symbol'] = symbol
     return signal
@@ -753,7 +810,7 @@ def place_swing_trade(signal: Dict, account_equity: float) -> bool:
         entry_price = tick.ask if direction == "BUY" else tick.bid
 
         projection = project_lot_and_risk(symbol, entry_price, signal['stop_loss'],
-                                           config.BASE_RISK_PERCENT, account_equity)
+                                           effective_risk_percent(symbol), account_equity)
         lot_size = projection['lot_size']
         logger.info(
             f"[LOT] {symbol}: risk=${projection['actual_risk_amount']:.2f} "

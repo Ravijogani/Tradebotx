@@ -90,6 +90,8 @@ import os
 import json
 import requests
 import google.generativeai as genai
+
+import market_intelligence as mi
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
@@ -279,7 +281,8 @@ class CapitalController:
     def calculate(self, edge_score: float, symbol_metrics: float,
                   session: str, drawdown: float, symbol: str = "",
                   open_positions_count: int = 0, account_equity: float = 0,
-                  pattern_health: float = 1.0) -> float:
+                  pattern_health: float = 1.0,
+                  df_for_vol_target: Optional[pd.DataFrame] = None) -> float:
         """
         Professional risk sizing. Considers:
         1. Edge quality (higher edge = slightly more size)
@@ -289,6 +292,16 @@ class CapitalController:
         5. Total open exposure (reduce size if already have open positions)
         6. This symbol's own recent live trade-score (symbol_metrics)
         7. This setup's historical pattern-match edge health (pattern_health)
+        8. MARKET INTELLIGENCE INTEGRATION: current realized volatility vs.
+           its own trailing distribution (df_for_vol_target, optional) --
+           NOT the same thing as `vol_scale` below (a fixed per-symbol
+           constant normalizing dollar-per-point across instrument types).
+           This is dynamic: the SAME symbol sizes down when it's currently
+           more volatile than its own recent normal, and up (capped) when
+           it's currently calmer -- standard vol-targeting, layered on top
+           of, not replacing, the existing per-symbol normalization.
+           Defaults to no adjustment (1.0) when no data is passed in, so
+           every call site that doesn't opt in is completely unaffected.
 
         BUG FIX: symbol_metrics was a parameter here (and the live call site
         already computed a real value for it via
@@ -341,8 +354,11 @@ class CapitalController:
         # extremes, same conservative-nudge reasoning as sym_perf_mult).
         pattern_mult = max(0.5, min(1.3, pattern_health))
 
+        mi_vol_target_mult = (mi.volatility_target_multiplier(df_for_vol_target)
+                               if df_for_vol_target is not None else 1.0)
+
         risk = (self.base_risk * edge_mult * sess_agg * dd_adj * vol_scale *
-                exposure_mult * sym_perf_mult * pattern_mult)
+                exposure_mult * sym_perf_mult * pattern_mult * mi_vol_target_mult)
         return max(0.25, min(1.5, risk))  # Hard cap at 1.5% for scalping
 
     def allow_stacking(self, edge_score: float, regime: str, lifecycle: str) -> bool:
@@ -9428,6 +9444,12 @@ def ai_trading_session():
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                     continue
 
+                # MARKET INTELLIGENCE INTEGRATION: auction-theory regime
+                # read (see market_intelligence.py's module docstring) --
+                # computed once here, used to gate Strategy A below and to
+                # give Strategy F (Balance Fade) a chance further down.
+                _auction = mi.classify_auction_state(df_m5)
+
                 #
                 # STRATEGY A: EMA SCALP (9/25/50/200 EMA crossover)
                 # Rules: H4 bias  (already checked) + M5 EMA pullback  (already checked)
@@ -9438,7 +9460,20 @@ def ai_trading_session():
                 # (state._rej double-counting, and the pattern pre-filter now
                 # actually gating instead of only logging).
                 #
-                if not setup and config.ENABLE_STRATEGY_EMA_SCALP:
+                # MARKET INTELLIGENCE INTEGRATION: additionally requires the
+                # M5 auction state to confirm genuine imbalance in the trade
+                # direction, not just an EMA cross. Real-data backtest
+                # evidence (whole-project review) found this specific
+                # strategy's edge was the weakest of the four live setups
+                # (+0.068R/trade, barely above zero pre-cost) -- exactly the
+                # signature of a momentum-cross strategy firing in both
+                # trending AND ranging conditions with no regime filter
+                # (wins in the trend, bleeds small losses in the chop that
+                # dominates). This is the single highest-evidence gate to
+                # add among all four existing strategies.
+                _ema_scalp_regime_ok = _auction["state"] == (
+                    "IMBALANCE_UP" if _trade_direction == "BUY" else "IMBALANCE_DOWN")
+                if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _ema_scalp_regime_ok:
                     setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol)
 
                 # 
@@ -9749,6 +9784,7 @@ def ai_trading_session():
                     open_positions_count = len(my_bot_positions),
                     account_equity       = account_info.equity,
                     pattern_health       = pattern_health,
+                    df_for_vol_target    = df_m5,
                 )
                 final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 1.5% (was a no-op at the old 10.0 value -- see MAX_RISK_PERCENT's docstring)
                 logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
