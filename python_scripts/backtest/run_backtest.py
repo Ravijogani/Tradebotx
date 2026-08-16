@@ -79,6 +79,12 @@ def main():
     p.add_argument("--m15", default=None, help="M15 CSV filename. Not needed by any currently-live strategy "
                                                  "(kept for AOX's --corr-m15 correlated-pair use and any future "
                                                  "strategy that needs the primary symbol's own M15)")
+    p.add_argument("--m30", default=None, help="M30 CSV filename. Optional -- exercises the SHAAKUNI_SSM/"
+                                                 "SWAPPY_3C/EMA_SCALP_CROSS shared M30 Change-of-Character veto "
+                                                 "(classify_m30_character, see _get_trend in strategies_registry.py). "
+                                                 "Without it, that one gate is simply not exercised; no strategy "
+                                                 "requires it to run. No native M30 export yet -- resample M15 to "
+                                                 "M30 (pandas .resample('30min')) if you don't have one.")
     p.add_argument("--h4", default=None, help="H4 CSV filename (needed for SHAAKUNI_SSM and STRUCTURAL_SWING)")
     p.add_argument("--d1", default=None, help="D1 CSV filename (only needed for STRUCTURAL_SWING)")
     group = p.add_mutually_exclusive_group(required=True)
@@ -103,6 +109,8 @@ def main():
         timeframes["M1"] = args.m1
     if args.m15:
         timeframes["M15"] = args.m15
+    if args.m30:
+        timeframes["M30"] = args.m30
     if args.h4:
         timeframes["H4"] = args.h4
     if args.d1:

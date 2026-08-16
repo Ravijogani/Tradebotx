@@ -3218,6 +3218,76 @@ def detect_break_of_structure(df: pd.DataFrame, swing_highs: List[int], swing_lo
     if current_price < df['low'].iloc[swing_lows[-1]]: return "BEARISH_BOS"
     return None
 
+
+def classify_m30_character(df_m30: 'pd.DataFrame') -> Dict:
+    """
+    MARKET STRUCTURE INTEGRATION: uses identify_swing_highs_lows() +
+    detect_break_of_structure() -- both correctly implemented, textbook
+    ICT/SMC swing-fractal + structure-break logic, but neither had a
+    single call site anywhere in this file until now (found during an
+    SMC-logic audit). The M30 timeframe was already being fetched every
+    scan cycle specifically for this -- see _fetch_symbol_data's own
+    "M30/M15 (ChoCh)" docstring comment -- cached, and then never read by
+    anything.
+
+    Distinguishes Break of Structure from Change of Character properly.
+    detect_break_of_structure() alone only reports which direction broke,
+    not whether that agrees with or fights the currently-established
+    trend -- and that distinction IS the difference between the two ICT
+    concepts:
+      - Established M30 trend, read from its last two confirmed swing
+        highs/lows: higher-high + higher-low = bullish structure in
+        progress; lower-high + lower-low = bearish structure in progress;
+        anything else (e.g. higher-high + lower-low, an expanding range)
+        = NEUTRAL, no established character to break from.
+      - A break in the SAME direction as the established trend = BOS
+        (continuation confirmation -- expected, not new information).
+      - A break AGAINST the established trend = CHOCH (character change:
+        M30's own internal structure just flipped). This is the useful,
+        leading signal -- it can catch a shift before H4/H1's own
+        EMA-based bias (a lagging read) updates.
+
+    Returns {'signal': 'BOS'|'CHOCH'|'NONE', 'break_direction':
+    'BULLISH'|'BEARISH'|None, 'established_trend':
+    'BULLISH'|'BEARISH'|'NEUTRAL'}. Pure function of the M30 DataFrame --
+    no MT5 calls, callable identically from live and from the backtest
+    harness (mirrors market_intelligence.py's live/backtest-parity
+    discipline).
+    """
+    empty = {'signal': 'NONE', 'break_direction': None, 'established_trend': 'NEUTRAL'}
+    if df_m30 is None or len(df_m30) < 20:
+        return empty
+    try:
+        swing_highs, swing_lows = identify_swing_highs_lows(df_m30, lookback=5)
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return empty
+
+        hh = df_m30['high'].iloc[swing_highs[-1]] > df_m30['high'].iloc[swing_highs[-2]]
+        hl = df_m30['low'].iloc[swing_lows[-1]]   > df_m30['low'].iloc[swing_lows[-2]]
+        lh = df_m30['high'].iloc[swing_highs[-1]] < df_m30['high'].iloc[swing_highs[-2]]
+        ll = df_m30['low'].iloc[swing_lows[-1]]   < df_m30['low'].iloc[swing_lows[-2]]
+        if hh and hl:
+            established = 'BULLISH'
+        elif lh and ll:
+            established = 'BEARISH'
+        else:
+            established = 'NEUTRAL'
+
+        brk = detect_break_of_structure(df_m30, swing_highs, swing_lows)
+        if brk is None:
+            return {**empty, 'established_trend': established}
+        break_direction = 'BULLISH' if brk == 'BULLISH_BOS' else 'BEARISH'
+
+        if established == 'NEUTRAL' or break_direction == established:
+            signal = 'BOS'
+        else:
+            signal = 'CHOCH'
+
+        return {'signal': signal, 'break_direction': break_direction, 'established_trend': established}
+    except Exception as e:
+        logger.debug(f"classify_m30_character: {e}")
+        return empty
+
 def get_market_regime_and_trend(symbol: str) -> Tuple[str, str]:
     df_regime = get_market_data(symbol, config.TREND_TF, 100)
     if df_regime is None or df_regime.empty or len(df_regime) < 50: 
@@ -9429,6 +9499,26 @@ def ai_trading_session():
                         continue
                 h1_trend = effective_trend  # downstream uses h1_trend
 
+                # -- M30 STRUCTURE-SHIFT GATE (Break of Structure vs Change of --
+                # Character) -- see classify_m30_character()'s own docstring for
+                # the full "why": this is the missing "M30/M15 (ChoCh)" layer
+                # _fetch_symbol_data's docstring already described but nothing
+                # ever computed. df_m30 is already fetched/cached above (no new
+                # MT5 call). Vetoes only the specific case where M30's own
+                # structure has JUST flipped against the H4/H1 bias direction
+                # this scan is about to trade -- a leading warning the HTF bias
+                # may be stale, not a broad "M30 must agree" requirement (BOS
+                # confirming the existing trend, or a NEUTRAL/no-signal read,
+                # both pass through unaffected).
+                _m30_char = classify_m30_character(df_m30)
+                _choch_veto_dir = 'BEARISH' if effective_trend == 'BULLISH' else 'BULLISH'
+                if _m30_char['signal'] == 'CHOCH' and _m30_char['break_direction'] == _choch_veto_dir:
+                    logger.info(
+                        f"[CHOCH VETO] {symbol}: M30 structure just flipped "
+                        f"{_m30_char['break_direction']} against {effective_trend} H4/H1 bias -- skip"
+                    )
+                    state._rej['choch_veto'] = state._rej.get('choch_veto', 0) + 1
+                    continue
 
                 # -- EMA MOMENTUM GATE (9/15 EMA slope filter) ----------------
                 # Flat EMAs = compressing / ranging market = fakeout zone.

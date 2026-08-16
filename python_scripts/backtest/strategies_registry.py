@@ -68,6 +68,40 @@ import pandas as pd
 from .data import HistoricalDataset
 from .replay_data import replay_context
 
+# EFFICIENCY: classify_m30_character() memoized per M30 bar boundary (see
+# _get_m30_character() below) -- _get_trend() is called once per M5/M1
+# replay step, up to ~6x more often than the M30 series actually advances.
+_m30_char_cache: dict = {}
+
+
+def _get_m30_character(bot, dataset: HistoricalDataset, as_of) -> dict:
+    """
+    Wraps bot.classify_m30_character() with memoization keyed by which M30
+    bar it would be computed from, not by `as_of` itself. Without this,
+    the first M30-gated real-data backtest run took several times longer
+    than the equivalent ungated run for no behavioral reason: every M5 (or
+    M1) replay step re-ran classify_m30_character()'s O(n) fractal
+    swing-scan over a fresh 60-bar M30 window, even though up to 6
+    consecutive M5 bars share the exact same "most recent M30 bar" and so
+    get the identical result. Caching per M30 boundary computes it once
+    per M30 bar instead of once per M5/M1 bar -- same results, not a
+    behavior change, confirmed by re-running the exact backtest this was
+    found in and comparing trade-for-trade before/after this fix.
+    """
+    empty = {'signal': 'NONE', 'break_direction': None, 'established_trend': 'NEUTRAL'}
+    m30_time = dataset.frames["M30"]["time"]
+    pos = m30_time.searchsorted(as_of, side="left") - 1
+    if pos < 0:
+        return empty
+    boundary = m30_time.iloc[pos]
+    key = (id(dataset), boundary)
+    cached = _m30_char_cache.get(key)
+    if cached is None:
+        df_m30 = dataset.window("M30", as_of, 60)
+        cached = bot.classify_m30_character(df_m30)
+        _m30_char_cache[key] = cached
+    return cached
+
 
 @dataclass
 class StrategyResult:
@@ -149,6 +183,19 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
     effective_trend = h4_bias if h4_bias != "NEUTRAL" else h1_trend
     if effective_trend == "NEUTRAL":
         return None  # live falls back to state.approved_bias -- see docstring above
+
+    # M30 STRUCTURE-SHIFT GATE: mirrors the live scan loop's CHoCH veto
+    # (see classify_m30_character()'s docstring in hybrid_trading_bot_
+    # multiuser.py for the full "why"). Optional here -- if the dataset
+    # wasn't given --m30, this gate is simply not exercised (same
+    # graceful-degradation pattern as --h4/--d1/--m1 elsewhere in this
+    # harness), not a hard requirement.
+    if "M30" in dataset.frames:
+        m30_char = _get_m30_character(bot, dataset, as_of)
+        choch_veto_dir = "BEARISH" if effective_trend == "BULLISH" else "BULLISH"
+        if m30_char["signal"] == "CHOCH" and m30_char["break_direction"] == choch_veto_dir:
+            return None  # live does `continue` here -- see [CHOCH VETO] log line
+
     return effective_trend
 
 
