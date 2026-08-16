@@ -22,14 +22,23 @@ not a StrategyAdapter, see swing_driver.py):
         --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv --h4 XAUUSDm_H4.csv --d1 XAUUSDm_D1.csv \\
         --strategy STRUCTURAL_SWING --out trades.csv
 
+Run INTRADAY (intraday.py's context_decision_engine cascade -- Strategies
+A/B/C/D/E -- also a separate script/module, see intraday_driver.py):
+    python3 -m backtest.run_backtest --symbol XAUUSDm --data-dir ./history/XAUUSDm \\
+        --m5 XAUUSDm_M5.csv --h1 XAUUSDm_H1.csv --h4 XAUUSDm_H4.csv \\
+        --m15 XAUUSDm_M15.csv --d1 XAUUSDm_D1.csv --strategy INTRADAY --out trades.csv
+
 See README.md for which strategies are LIVE, and which timeframes each
-one needs. --m1 is optional -- only AOX needs it (skipped cleanly,
-printed not crashed, if omitted); SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS
-don't touch M1 at all. --h4 is needed for SHAAKUNI_SSM specifically.
+one needs. --m1 is optional -- only AOX and INTRADAY's Strategy E (AOX
+Sniper) need it (both skip that one piece cleanly, not crashed, if
+omitted); SHAAKUNI_SSM/SWAPPY_3C/EMA_SCALP_CROSS don't touch M1 at all.
+--h4 is needed for SHAAKUNI_SSM, STRUCTURAL_SWING, and INTRADAY.
 AOX's SMT-divergence gate additionally needs --corr-symbol/--corr-m15,
-optional on top of --m1. --d1 is needed only for STRUCTURAL_SWING (also
-needs --h4); export_mt5_history.py doesn't export D1 by default -- resample
-H4 to D1 (pandas .resample('1D')) if you don't have a native D1 export yet.
+optional on top of --m1. --d1 is needed for STRUCTURAL_SWING and INTRADAY;
+export_mt5_history.py doesn't export D1 by default -- resample H4 to D1
+(pandas .resample('1D')) if you don't have a native D1 export yet. --m15 is
+needed for INTRADAY (its M15 confirmation windows) in addition to AOX's
+--corr-m15 use.
 """
 
 import argparse
@@ -39,6 +48,8 @@ from .aox_driver import AoxDriverConfig, run_aox_backtest
 from .bot_loader import import_bot_module
 from .data import HistoricalDataset
 from .engine import BacktestEngine, BacktestConfig
+from .intraday_driver import IntradayDriverConfig, run_intraday_backtest
+from .intraday_loader import import_intraday_module
 from .report import summarize, print_report, write_trade_csv
 from .strategies_registry import ALL_STRATEGIES, STRATEGIES_BY_NAME
 from .swing_driver import SwingDriverConfig, run_swing_backtest
@@ -46,6 +57,7 @@ from .swing_loader import import_swing_bot_module
 
 AOX_NAME = "AOX"  # not a StrategyAdapter (see aox_driver.py for why) -- handled as a separate CLI path below
 STRUCTURAL_SWING_NAME = "STRUCTURAL_SWING"  # also not a StrategyAdapter -- separate script/module, see swing_driver.py
+INTRADAY_NAME = "INTRADAY"  # also not a StrategyAdapter -- separate script/module, see intraday_driver.py
 
 # No StrategyAdapter here touches M1 anymore -- SHAAKUNI_SSM/SWAPPY_3C/
 # EMA_SCALP_CROSS all confirmed M1-free by reading each adapter. Only AOX
@@ -68,8 +80,8 @@ def main():
     p.add_argument("--h4", default=None, help="H4 CSV filename (needed for SHAAKUNI_SSM and STRUCTURAL_SWING)")
     p.add_argument("--d1", default=None, help="D1 CSV filename (only needed for STRUCTURAL_SWING)")
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--strategy", choices=list(STRATEGIES_BY_NAME.keys()) + [AOX_NAME, STRUCTURAL_SWING_NAME], help="Run a single strategy")
-    group.add_argument("--all", action="store_true", help="Run every registered strategy (incl. AOX, STRUCTURAL_SWING) and print a report for each")
+    group.add_argument("--strategy", choices=list(STRATEGIES_BY_NAME.keys()) + [AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME], help="Run a single strategy")
+    group.add_argument("--all", action="store_true", help="Run every registered strategy (incl. AOX, STRUCTURAL_SWING, INTRADAY) and print a report for each")
     p.add_argument("--rr", type=float, default=2.0, help="Take-profit distance as a multiple of SL distance, for strategies that don't compute their own TP (default 2.0)")
     p.add_argument("--spread", type=float, default=None, help="Override the default per-symbol spread model (price units)")
     p.add_argument("--out", default=None, help="Write the combined trade ledger to this CSV path")
@@ -108,7 +120,7 @@ def main():
         print("Both --corr-symbol and --corr-m15 are required to enable the SMT divergence check -- ignoring.")
 
     run_aox = args.strategy == AOX_NAME or args.all
-    single_strategy_name = args.strategy not in (AOX_NAME, STRUCTURAL_SWING_NAME)
+    single_strategy_name = args.strategy not in (AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME)
     adapters = ([STRATEGIES_BY_NAME[args.strategy]] if args.strategy and single_strategy_name
                 else (ALL_STRATEGIES if not args.strategy else []))
 
@@ -148,6 +160,22 @@ def main():
             stats = summarize(swing_trades)
             print_report(STRUCTURAL_SWING_NAME, True, swing_trades, stats)
             all_trades.extend(swing_trades)
+
+    run_intraday = args.strategy == INTRADAY_NAME or args.all
+    if run_intraday:
+        missing = [flag for flag, tf in (("--d1", "D1"), ("--h4", "H4"), ("--m15", "M15")) if tf not in dataset.frames]
+        if missing:
+            print(f"\nSkipping {INTRADAY_NAME}: needs {', '.join(missing)} (not provided)")
+        else:
+            print(f"\nRunning {INTRADAY_NAME}...")
+            if "M1" not in dataset.frames:
+                print("  (no --m1 -- Strategy E / AOX Sniper will be a clean no-op, everything else still runs)")
+            intraday_bot = import_intraday_module()
+            intraday_config = IntradayDriverConfig(symbol=args.symbol, spread=args.spread)
+            intraday_trades = run_intraday_backtest(intraday_bot, dataset, intraday_config)
+            stats = summarize(intraday_trades)
+            print_report(INTRADAY_NAME, True, intraday_trades, stats)
+            all_trades.extend(intraday_trades)
 
     if args.out and all_trades:
         write_trade_csv(all_trades, args.out)

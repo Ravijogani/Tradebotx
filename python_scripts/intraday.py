@@ -2612,15 +2612,41 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
             logger.info(f"[AI VETO] Context engine direction {direction} conflicts with AI bias {ai_bias}")
             return None
             
-        # Structure anchored SL
+        # Structure anchored SL -- only when the swing point is still
+        # genuinely on the correct side of current price.
+        #
+        # BUG FIX (found via the first real-data backtest of this cascade,
+        # not visible from code review alone): swing_highs[-1]/
+        # swing_lows[-1] is just the CHRONOLOGICALLY most recent pivot
+        # identify_swing_highs_lows() detected in the window, not
+        # necessarily one that's still valid as a stop level. In a live
+        # trend, price regularly moves back through an old local high/low
+        # that's still the "last" one detected -- the previous code used
+        # it unconditionally, which puts the computed stop-loss on the
+        # WRONG side of entry (e.g. a SELL's "stop" ends up BELOW current
+        # price -- in the trade's own profit direction). No broker
+        # actually accepts that as a real stop order; on real XAUUSDm data
+        # this pattern showed up on the majority of STRAT A (H4 Trend
+        # Pullback) signals in a single ~90-day window. Fixed by walking
+        # back through detected pivots for the nearest one still genuinely
+        # on the correct side of price; if none qualify, leave the
+        # strategy's own stop_loss in place rather than override it with a
+        # broken value.
         atr_buf = calculate_atr(df_entry['high'], df_entry['low'], df_entry['close'], 14).iloc[-1] * 0.5
+        curr_price_for_sl = df_entry['close'].iloc[-1]
         if direction == "BUY":
             swing_lows = identify_swing_highs_lows(df_entry, 5)[1]
-            if swing_lows: entry_signal['stop_loss'] = df_entry['low'].iloc[swing_lows[-1]] - atr_buf
+            valid_low = next((df_entry['low'].iloc[idx] for idx in reversed(swing_lows)
+                               if df_entry['low'].iloc[idx] < curr_price_for_sl), None)
+            if valid_low is not None:
+                entry_signal['stop_loss'] = valid_low - atr_buf
         else:
             swing_highs = identify_swing_highs_lows(df_entry, 5)[0]
-            if swing_highs: entry_signal['stop_loss'] = df_entry['high'].iloc[swing_highs[-1]] + atr_buf
-                
+            valid_high = next((df_entry['high'].iloc[idx] for idx in reversed(swing_highs)
+                                if df_entry['high'].iloc[idx] > curr_price_for_sl), None)
+            if valid_high is not None:
+                entry_signal['stop_loss'] = valid_high + atr_buf
+
         # 4. Final Formatting & Filters
         curr_price = df_entry['close'].iloc[-1]
         tick_info = get_symbol_specs(symbol)
@@ -2628,8 +2654,31 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
         if sl_pips == 0: sl_pips = 1
         expected_rr = narrative['distance_to_target'] / sl_pips
         
-        entry_signal['liquidity_target'] = narrative['target_price']
-        
+        # BUG FIX (found via the first real-data backtest of this cascade):
+        # narrative['target_price'] is derived purely from narrative['dol']
+        # (BUY_SIDE/SELL_SIDE -- "where is the next liquidity pool"), which
+        # has no guaranteed relationship to `direction` -- the REAL trade
+        # direction the firing strategy (A/B/C/D/E) actually chose a few
+        # lines up. The two can disagree (e.g. dol says BUY_SIDE while
+        # Strategy A's own structure read fires a SELL), and the previous
+        # code attached target_price as this trade's liquidity_target
+        # unconditionally. resolve_intraday_tp()'s minimum-RR check only
+        # measures absolute distance, not which side of entry the target
+        # is on, so it does NOT catch this: a target on the wrong side can
+        # still clear a 1.5:1 RR test PURELY BECAUSE it's far away, while
+        # being a TP that's actually deep in loss territory for this
+        # trade's real direction. On real XAUUSDm data this produced TP
+        # exits with severely negative R-multiples (-7.3R, -2.7R, -2.9R in
+        # one ~90-day run). Only attach it when it's genuinely on the
+        # correct side of current price for the real direction; otherwise
+        # resolve_intraday_tp's direction-aware swing-level fallback
+        # handles it instead.
+        target_price = narrative['target_price']
+        target_is_valid_side = (direction == "BUY" and target_price > curr_price) or \
+                                (direction == "SELL" and target_price < curr_price)
+        if target_is_valid_side:
+            entry_signal['liquidity_target'] = target_price
+
         # Edge Mode Engine integration
         entry_signal['risk_multiplier'] = edge_engine.get_risk_multiplier(expected_rr, narrative['expansion_potential'], market_regime, narrative.get('lifecycle', 'PRE_EXPANSION'), narrative.get('distance_to_target', 100.0))
         if narrative['expansion_potential'] > 0.8:
@@ -3009,6 +3058,56 @@ def ai_validate_intraday_trade(symbol: str, direction: str, strategy_name: str,
     return {'score': 6, 'approved': True, 'reason': 'parse_fallback', 'ts': now_t}
 
 
+def resolve_intraday_tp(signal: Dict, symbol: str, direction: str,
+                         entry_price: float, stop_loss: float) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Take-profit resolution used by place_intraday_trade() -- extracted out
+    (BACKTEST-EXTRACTION, matching how strategy_ema_scalp_cross was pulled
+    out of the other bot file's main loop specifically to make it
+    backtestable) so backtest/intraday_driver.py can call the exact same
+    logic instead of reimplementing it. Two copies of "what's the real TP"
+    is exactly the kind of drift this whole harness exists to prevent.
+
+    Structural liquidity pool (swing highs/lows) target, not ATR multiples
+    -- context_decision_engine's own narrative-derived liquidity_target
+    wins if it clears a 1.5:1 minimum RR; otherwise falls back to the
+    nearest real H1 swing level in trade direction; otherwise a raw ATR*4
+    projection as a last resort. Returns (tp, atr) -- atr is returned too
+    since place_intraday_trade also stores it on the open position record,
+    and this is the one place it's already computed.
+    """
+    df = get_market_data(symbol, config.ENTRY_TF, 50)
+    if df is None:
+        return None, None
+    atr = calculate_atr(df['high'], df['low'], df['close'], config.ATR_PERIOD).iloc[-1]
+
+    sl_dist = abs(entry_price - stop_loss)
+    if 'liquidity_target' in signal and signal['liquidity_target']:
+        tp1 = float(signal['liquidity_target'])
+        # Validate RR -- if liquidity target gives < 1.5:1, skip it
+        tp_dist = abs(tp1 - entry_price)
+        if sl_dist > 0 and tp_dist / sl_dist < 1.5:
+            # Extend to minimum 2:1 RR
+            tp1 = (entry_price + sl_dist * 2.0) if direction == "BUY" else (entry_price - sl_dist * 2.0)
+    else:
+        # Fallback: find nearest H1 swing in trade direction
+        df_h1_tp = get_market_data(symbol, mt5.TIMEFRAME_H1, 100)
+        if df_h1_tp is not None and len(df_h1_tp) >= 20:
+            if direction == "BUY":
+                # TP = highest swing high above entry (nearest liquidity)
+                highs = [df_h1_tp['high'].iloc[i] for i in range(-50, -1)
+                         if df_h1_tp['high'].iloc[i] > entry_price + sl_dist * 1.5]
+                tp1 = min(highs) if highs else entry_price + atr * 4.0
+            else:
+                lows  = [df_h1_tp['low'].iloc[i] for i in range(-50, -1)
+                         if df_h1_tp['low'].iloc[i] < entry_price - sl_dist * 1.5]
+                tp1 = max(lows) if lows else entry_price - atr * 4.0
+        else:
+            tp1 = (entry_price + atr * 4.0) if direction == "BUY" else (entry_price - atr * 4.0)
+
+    return float(tp1), float(atr)
+
+
 def place_intraday_trade(signal: Dict, account_equity: float):
     """Execute intraday trade with pre-trade risk validation"""
     try:
@@ -3029,10 +3128,7 @@ def place_intraday_trade(signal: Dict, account_equity: float):
         
         entry_price = tick.ask if direction == "BUY" else tick.bid
 
-        df    = get_market_data(symbol, config.ENTRY_TF, 50)
         df_h1 = get_market_data(symbol, mt5.TIMEFRAME_H1, 30)
-        if df is None:
-            return False
 
         # L3 AI validation -- score this specific setup
         tp_for_l3 = signal.get('tp', entry_price + abs(entry_price - signal['stop_loss']) * 2.0)
@@ -3043,35 +3139,11 @@ def place_intraday_trade(signal: Dict, account_equity: float):
         if not l3['approved']:
             logger.info(f"[AI L3] {symbol}: score={l3['score']}/10 -- skip")
             return False
-        
-        atr = calculate_atr(df['high'], df['low'], df['close'], config.ATR_PERIOD).iloc[-1]
-        
-        # TP: Structural liquidity pool (swing highs/lows) -- NOT ATR multiples
-        # ATR*6 is arbitrary math. Real TP = next liquidity target in H1 structure.
-        sl_dist = abs(entry_price - stop_loss)
-        if 'liquidity_target' in signal and signal['liquidity_target']:
-            tp1 = float(signal['liquidity_target'])
-            # Validate RR -- if liquidity target gives < 1.5:1, skip it
-            tp_dist = abs(tp1 - entry_price)
-            if sl_dist > 0 and tp_dist / sl_dist < 1.5:
-                # Extend to minimum 2:1 RR
-                tp1 = (entry_price + sl_dist * 2.0) if direction == "BUY" else (entry_price - sl_dist * 2.0)
-        else:
-            # Fallback: find nearest H1 swing in trade direction
-            df_h1_tp = get_market_data(symbol, mt5.TIMEFRAME_H1, 100)
-            if df_h1_tp is not None and len(df_h1_tp) >= 20:
-                if direction == "BUY":
-                    # TP = highest swing high above entry (nearest liquidity)
-                    highs = [df_h1_tp['high'].iloc[i] for i in range(-50, -1)
-                             if df_h1_tp['high'].iloc[i] > entry_price + sl_dist * 1.5]
-                    tp1 = min(highs) if highs else entry_price + atr * 4.0
-                else:
-                    lows  = [df_h1_tp['low'].iloc[i] for i in range(-50, -1)
-                             if df_h1_tp['low'].iloc[i] < entry_price - sl_dist * 1.5]
-                    tp1 = max(lows) if lows else entry_price - atr * 4.0
-            else:
-                tp1 = (entry_price + atr * 4.0) if direction == "BUY" else (entry_price - atr * 4.0)
-        
+
+        tp1, atr = resolve_intraday_tp(signal, symbol, direction, entry_price, stop_loss)
+        if tp1 is None:
+            return False
+
         # Apply Edge Mode Engine Risk Multiplier
         risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0)
         # RISK-FIX: same projection validate_trade_risk() already used a

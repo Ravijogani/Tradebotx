@@ -31,6 +31,18 @@ and dormant strategies removed" below for what used to be here and why.
 | `AOX` (layered execution) | Yes | **Yes** | Backtestable via a dedicated stateful driver, not a `StrategyAdapter` — see "AOX wiring" below. **Not yet tested against real data** (needs M1) |
 | `STRUCTURAL_SWING` | Yes | **Yes** | Lives in a **separate script** (`structural_swing_pro.py`), not this file — see "STRUCTURAL_SWING wiring" below for why. Real-data result (XAUUSDm, ~90d resampled D1): 3 trades, +1.65R expectancy, 66.7% win rate — a genuinely small sample (this strategy fires rarely by design), re-run once you have a longer native D1 export before trusting the numbers over the mechanics |
 
+Separately, `intraday.py`'s own live cascade (`context_decision_engine`,
+Strategies A/B/C/D/E) is now backtestable too — see "INTRADAY wiring"
+below. It's a **different bot file entirely** (the Pro-tier "Intraday
+Core" strategy), so it's not part of the table above, which is
+specifically about `hybrid_trading_bot_multiuser.py`'s four setups.
+Real-data result (XAUUSDm, ~90d): 11 trades, -0.003R expectancy, 36.4% win
+rate, PF 1.00 — dead flat, not negative, not positive, on a sample too
+small to call either way. Two real bugs were found and fixed getting to
+that number — see "INTRADAY wiring" for what they were; both are live-code
+fixes (context_decision_engine is the actual live function), not
+backtest-only corrections.
+
 ### Fallback and dormant strategies removed (2026-08)
 
 Two separate rounds of removal, both driven by the same principle: code
@@ -310,6 +322,89 @@ all with correct SL/TP sides and sane R-multiples matching their computed
 RR. Run it with `--strategy STRUCTURAL_SWING` or `--all`; needs `--d1` in
 addition to `--h4` (see "Getting historical data" below).
 
+### INTRADAY wiring (separate script, real bugs found and fixed)
+
+`intraday.py` is a third, separate script — the Pro-tier "Intraday Core"
+strategy, previously never backtested at all despite being live and
+charging more than the free tier. Its real live entry point is
+`context_decision_engine()`, which checks five named strategies in
+priority order every time it's called (Strategy E = AOX Sniper, B = H1 OB
+Retest, A = H4 Trend Pullback, C = London Open Breakout, D = reversal
+after liquidity sweep — see that function's own comments in intraday.py).
+Confirmed real call sites for all five (not dead/flag-gated code) by
+reading the function directly, same discipline as everywhere else in this
+harness.
+
+Needed its own loader (`intraday_loader.py`, mirrors `bot_loader.py` —
+including the genai stub, since intraday.py does import
+`google.generativeai` even though the backtest never reaches it with no
+GEMINI_API_KEY set) and its own replay patch (`intraday_replay.py`,
+mirrors `replay_data.py`). Closer in shape to `aox_driver.py` than
+`swing_driver.py`: `context_decision_engine()` is **not** a pure function
+— it calls `get_market_data()` and `datetime.now()` internally through
+several nested live helpers (`NarrativeIntentEngine.build`,
+`get_market_regime_and_trend`, all five `strategy_*` functions,
+`is_in_kill_zone`/`get_active_macro_window`/`get_current_session`, and
+`strategy_london_open_breakout`'s own session-prime check) — so this
+driver needs the full patch-and-freeze machinery, unlike
+`structural_swing_pro.py`'s pure `detect_structural_swing_signal()`.
+
+One extraction was needed for backtest/live parity: `place_intraday_trade`
+mixed its real TP-selection logic (liquidity-target-with-RR-floor, falling
+back to the nearest real H1 swing level, falling back to an ATR
+projection) in with real MT5 order construction. Pulled the TP logic out
+into `resolve_intraday_tp()` — same "strategy_ema_scalp_cross extraction"
+precedent as the other bot file — so `intraday_driver.py` calls the exact
+same function `place_intraday_trade` does instead of reimplementing it.
+
+**Two real, live bugs found via the first real-data run — not backtest
+artifacts, both fixed directly in `context_decision_engine()` itself:**
+
+1. **Structure-anchored stop-loss could land on the wrong side of entry.**
+   The SL override took `identify_swing_highs_lows()`'s *chronologically
+   most recent* pivot unconditionally (`swing_highs[-1]` /
+   `swing_lows[-1]`) with no check that it was still actually ahead of
+   price. In a live trend, price regularly moves back through an old local
+   high/low that's still the "last" one detected in a 200-bar window — so
+   a SELL's "stop" could end up *below* current price (in the trade's own
+   profit direction), which no broker accepts as a real stop. On real
+   XAUUSDm data this affected the majority of Strategy A signals in a
+   single ~90-day window. Fixed by walking back through detected pivots
+   for the nearest one still genuinely on the correct side of price;
+   falls through to the firing strategy's own stop-loss if none qualify.
+2. **The narrative-derived TP target had no direction check.**
+   `entry_signal['liquidity_target'] = narrative['target_price']` was
+   attached to every trade unconditionally. `narrative['target_price']` is
+   derived from `narrative['dol']` ("where's the next liquidity pool"),
+   which has **no guaranteed relationship** to `direction` — the real
+   trade direction the firing strategy actually chose a few lines earlier.
+   When they disagreed, the resulting TP landed on the wrong side of
+   entry — and `resolve_intraday_tp`'s minimum-RR check didn't catch it,
+   because it only measures absolute distance, not which side of entry the
+   target is on. On real data this produced "TP" exits with R-multiples of
+   -7.3R, -2.7R, and -2.9R in a single run — a target that looked like a
+   win by exit-reason label but was actually a severe loss. Fixed by only
+   attaching `liquidity_target` when it's genuinely on the correct side of
+   current price for the real direction; `resolve_intraday_tp`'s own
+   direction-aware swing-level fallback handles it otherwise.
+
+**One backtest-only limitation, disclosed rather than silently absorbed:**
+these strategies mix timeframes (an M15 rejection candle informing a tight
+SL, nested inside this driver's H1 walk cadence), so by the time of fill —
+this bar's own close, up to ~45-59 minutes after the M15 confirmation
+candle — price can occasionally have moved enough to put an otherwise-valid
+tight stop on the wrong side, purely as an artifact of walking a coarser
+bar than the finest timeframe a signal used. Live doesn't have this gap
+(the real fill happens seconds after the decision, not up to an hour
+later). `intraday_driver.py` guards against it directly: any signal whose
+SL/TP aren't genuinely on the correct side of the actual fill price is
+skipped, the same discipline a careful trader would apply manually rather
+than chasing a setup whose invalidation point already ran through.
+
+Run it with `--strategy INTRADAY` or `--all`; needs `--h4`, `--m15`, and
+`--d1` in addition to `--h1` (Strategy E / AOX Sniper additionally wants
+`--m1`, but is a clean no-op without it — everything else still runs).
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses
@@ -357,11 +452,11 @@ python export_mt5_history.py --symbol XAUUSDm --days 365 --out-dir ./history/XAU
 ```
 
 Produces `XAUUSDm_M1.csv`, `_M5.csv`, `_M15.csv`, `_H1.csv`, `_H4.csv`,
-`_D1.csv`. M1 is only needed by `AOX`; H4 is needed by `SHAAKUNI_SSM` and
-`STRUCTURAL_SWING`; D1 is needed only by `STRUCTURAL_SWING`. M15 isn't
-needed by any currently-live strategy on its own (only via `--corr-m15`
-for AOX's correlated-pair check). `SWAPPY_3C`/`EMA_SCALP_CROSS` only need
-M5/H1.
+`_D1.csv`. M1 is needed by `AOX` and (optionally, Strategy E) `INTRADAY`;
+H4 is needed by `SHAAKUNI_SSM`, `STRUCTURAL_SWING`, and `INTRADAY`; D1 is
+needed by `STRUCTURAL_SWING` and `INTRADAY`; M15 is needed by `INTRADAY`
+(in addition to AOX's `--corr-m15` use). `SWAPPY_3C`/`EMA_SCALP_CROSS`
+only need M5/H1.
 
 No native D1 export yet? `pandas.read_csv(...).resample('1D', on='time')`
 over an H4 export (aggregate `open`→first, `high`→max, `low`→min,
