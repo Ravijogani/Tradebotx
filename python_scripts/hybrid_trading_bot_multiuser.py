@@ -366,6 +366,21 @@ class CapitalController:
                 regime in ["TRENDING","TRENDING_UP","TRENDING_DOWN"] and
                 lifecycle in ["EXPANSION","SWEEP_AND_DISPLACE"])
 
+    def should_throttle_frequency(self, recent_edge_quality_low: bool) -> bool:
+        # BUG FIX: this method was never actually defined on CapitalController.
+        # A same-named 2-line def existed but as a nested function *after* the
+        # `return` statement inside portfolio_risk_gates_allow() below -- dead
+        # code, unreachable, and never attached to this class. Every live call
+        # site (main scan loop) called cap_ctrl.should_throttle_frequency(...)
+        # against a class that had no such attribute, raising AttributeError
+        # on every real SSM/EMA-Scalp-Cross candidate, caught by the outer
+        # `except Exception` handler -- which sent a "Critical Error" Telegram
+        # alert, slept 60s, and retried into the identical crash. This entry
+        # path could not have placed a live trade. Restored here verbatim
+        # from the orphaned implementation (its logic was already correct,
+        # it just lived in the wrong place).
+        return recent_edge_quality_low
+
 
 def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple[bool, str]:
     """
@@ -402,9 +417,6 @@ def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple
         return False, f"portfolio risk cap ({total_risk_pct:.1f}% > 25%)"
 
     return True, ""
-
-    def should_throttle_frequency(self, recent_edge_quality_low: bool) -> bool:
-        return recent_edge_quality_low
 
 
 class MidTradeContext:
@@ -5246,7 +5258,8 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
 
 
 def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
-                          entry_price: float, strategy_type: str = 'EMA', range_scalp_mode: bool = False) -> dict:
+                          entry_price: float, strategy_type: str = 'EMA', range_scalp_mode: bool = False,
+                          ema50_tp_hint: Optional[float] = None) -> dict:
     """
     STRUCTURAL SL/TP -- nearest valid POI, not fixed RR multiples.
 
@@ -5260,6 +5273,20 @@ def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
       Fixed 3:1 gives $45 TP on $15 risk. Price rarely travels that far cleanly.
       Structural 1:1.5 gives $22 TP -- the nearest swing where sells are stacked.
       BE at 1:1 locks $15. Price hits $22 TP. Clean, realistic exit.
+
+    BUG FIX: `ema50_tp_hint` used to be referenced near the end of this
+    function (the "use 50 EMA as TP" override) without ever being a
+    parameter or a local assignment -- a guaranteed NameError on every
+    single call, three lines before the already-fully-computed swing-level
+    TP1/TP2/RR result could reach `return result`. The outer try/except
+    caught it and returned {}, so the one live call site always fell
+    through to the generic fixed-RR TP fallback -- this entire structural
+    TP feature (swing-level TP, the RR auto-adjust, range-scalp capping)
+    has never actually run in production. Adding the parameter with a
+    safe `None` default fixes the crash and restores that already-correct
+    computation without changing behavior for the existing call site
+    (which doesn't pass it, so the EMA50 override sub-block -- the one
+    genuinely optional refinement here -- stays a no-op exactly as before).
     """
     import math
     result = {'sl': 0.0, 'tp1': 0.0, 'tp2': 0.0, 'sl_source': 'STRUCTURAL', 'rr1': 0.0}
@@ -5932,6 +5959,26 @@ def manage_all_positions():
             #   SWAPPY -> bypass Stage 1/2; only BE at 2R, let run to 3R+ min
             # =========================================================
 
+            # BUG FIX: is_buy / _min_buffer / current_profit_dist used to be
+            # computed much further down (after the AOX/SWAPPY branches
+            # below, which each `continue` before ever reaching that point),
+            # so every AOX and SWAPPY breakeven-move hit a NameError on
+            # every single call. manage_all_positions() has one try/except
+            # around the whole `for pos in positions` loop, so that
+            # NameError didn't just skip this one position -- it aborted
+            # management (BE + trailing) for every other open position
+            # still left in that cycle's loop too. Hoisted here, before the
+            # strategy branches that need them, so AOX/SWAPPY BE-moves (and
+            # every other position queued behind them in the same cycle)
+            # actually run. Spread/ATR-buffer inputs (symbol, m_atr) and
+            # pos/entry_price/current_price are all already set above this
+            # point in the loop.
+            _tick_trail = mt5.symbol_info_tick(symbol)
+            _spread_trail = (_tick_trail.ask - _tick_trail.bid) if _tick_trail else m_atr * 0.1
+            _min_buffer = max(_spread_trail * 1.5, m_atr * 0.15)
+            is_buy = (pos.type == 0)
+            current_profit_dist = (current_price - entry_price) if is_buy else (entry_price - current_price)
+
             _strategy_type = params.get('strategy_type', 'GENERIC')
 
             # -- AOX: SD-based TPs were set at entry; do NOT trail-stop them early.
@@ -6002,13 +6049,9 @@ def manage_all_positions():
             if sl_dist == 0:
                 continue
 
-            # Spread-aware buffer: SL must be at least 1.5x spread away from entry
-            _tick_trail = mt5.symbol_info_tick(symbol)
-            _spread_trail = (_tick_trail.ask - _tick_trail.bid) if _tick_trail else m_atr * 0.1
-            _min_buffer = max(_spread_trail * 1.5, m_atr * 0.15)
-
-            is_buy = (pos.type == 0)
-            current_profit_dist = (current_price - entry_price) if is_buy else (entry_price - current_price)
+            # is_buy / _min_buffer / current_profit_dist: computed once,
+            # earlier in this loop (see the BUG FIX comment above the
+            # AOX/SWAPPY branches) -- no longer recomputed here.
 
             # ------------------------------------------------------------------
             # STAGE 1: BREAKEVEN (first time r_multiple hits BREAKEVEN_TRIGGER_RR)
@@ -9843,6 +9886,32 @@ def ai_trading_session():
                         _is_ssm_call  = _strat_type in ('SSM','AOX')
                         _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
                         _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
+
+                        # BUG FIX: _l3_min_score used to only be computed much
+                        # further down (after this if/else, using _h4_regime /
+                        # ema_strength / 3c_confirmed), but the cached-score
+                        # branch immediately below reads it right away -- a
+                        # guaranteed NameError on every cache hit (which is
+                        # the common case; that's the entire point of caching
+                        # the L3 Gemini score for 15/5 minutes). Caught by
+                        # this block's own except, which silently falls back
+                        # to H4-structural-bias-only and skips the AI score
+                        # gate entirely -- so on every cached call, Layer 3's
+                        # "only the best setups (score >= 7) proceed" check
+                        # was never actually being enforced. `regime` is
+                        # already computed earlier in the scan loop (see the
+                        # identical `_h4_regime = regime` alias re-done below
+                        # for the non-cached branch, left in place -- same
+                        # inputs, so recomputing it there too is harmless),
+                        # so this only needed hoisting, no new data.
+                        _h4_regime_early = regime
+                        if _strat_type in ('AOX', 'SSM'):
+                            _l3_min_score = 5
+                        elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime_early == 'TRENDING':
+                            _l3_min_score = 7
+                        else:
+                            _l3_min_score = 6
+
                         if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
                             _l3_score    = _l3_cached_score
                             _l3_approved = _l3_score >= _l3_min_score

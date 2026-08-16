@@ -566,7 +566,7 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
     equivalent fix for why that distinction matters."""
     try:
         symbol = signal['symbol']
-        risk_percent = effective_risk_percent(symbol)
+        risk_percent = signal.get('risk_percent') or effective_risk_percent(symbol)
         projection = project_lot_and_risk(symbol, signal['entry_price'], signal['stop_loss'],
                                            risk_percent, account_equity)
         actual_risk_percent = projection['actual_risk_percent']
@@ -790,6 +790,15 @@ def scan_for_signal(symbol: str) -> Optional[Dict]:
 
     if signal:
         signal['symbol'] = symbol
+        # EFFICIENCY FIX: validate_trade_risk() and place_swing_trade() each
+        # independently called effective_risk_percent(symbol), which does
+        # its own fresh get_market_data(H4) fetch -- on top of the df_h4
+        # already fetched right here. That's 3 separate MT5 round-trips for
+        # the identical H4 series per symbol per scan-to-trade cycle instead
+        # of 1. df_h4 is already in hand, so compute it once here and hand
+        # it down on the signal dict; both call sites fall back to
+        # effective_risk_percent(symbol) (unchanged) if it's ever missing.
+        signal['risk_percent'] = config.BASE_RISK_PERCENT * mi.volatility_target_multiplier(df_h4)
     return signal
 
 
@@ -810,7 +819,8 @@ def place_swing_trade(signal: Dict, account_equity: float) -> bool:
         entry_price = tick.ask if direction == "BUY" else tick.bid
 
         projection = project_lot_and_risk(symbol, entry_price, signal['stop_loss'],
-                                           effective_risk_percent(symbol), account_equity)
+                                           signal.get('risk_percent') or effective_risk_percent(symbol),
+                                           account_equity)
         lot_size = projection['lot_size']
         logger.info(
             f"[LOT] {symbol}: risk=${projection['actual_risk_amount']:.2f} "

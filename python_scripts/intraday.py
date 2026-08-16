@@ -2789,7 +2789,19 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
         entry_signal['expected_rr'] = expected_rr
         entry_signal['contributing_strategies'] = [entry_signal['strategy_name']]
         entry_signal['narrative'] = narrative  # Pass active narrative up to the manager
-        
+
+        # EFFICIENCY FIX: validate_trade_risk() and place_intraday_trade()
+        # each independently call volatility_scaled_risk_multiplier(symbol),
+        # which does its own fresh get_market_data(H1, 250) fetch -- on top
+        # of the df_entry (H1, 200 bars -- already comfortably covers
+        # volatility_target_multiplier's own 100-bar default lookback)
+        # already fetched above for the auction-state read. That's 3
+        # separate MT5 round-trips for near-identical H1 data per symbol
+        # per scan instead of 1. Computed once here and handed down; both
+        # call sites fall back to their own live fetch (unchanged) if it's
+        # ever missing.
+        entry_signal['risk_mult_vol'] = mi.volatility_target_multiplier(df_entry)
+
         logger.info(f"[DECISION ENGINE] [{symbol}] {move_type} | Dir: {direction} | Mode: {edge_engine.mode} | Exp RR: {expected_rr:.1f}")
         return entry_signal
         
@@ -3004,7 +3016,10 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         # previously omitted here, so a signal with risk_multiplier != 1.0
         # could be validated against one risk_percent and then sized
         # against a different (larger) one moments later.
-        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * volatility_scaled_risk_multiplier(symbol)
+        _risk_mult_vol = signal.get('risk_mult_vol')
+        if _risk_mult_vol is None:
+            _risk_mult_vol = volatility_scaled_risk_multiplier(symbol)
+        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * _risk_mult_vol
 
         # RISK-FIX: actual_risk_percent/risk_amount now come from the same
         # real lot-size projection place_intraday_trade will use to size
@@ -3252,7 +3267,10 @@ def place_intraday_trade(signal: Dict, account_equity: float):
             return False
 
         # Apply Edge Mode Engine Risk Multiplier
-        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * volatility_scaled_risk_multiplier(symbol)
+        _risk_mult_vol = signal.get('risk_mult_vol')
+        if _risk_mult_vol is None:
+            _risk_mult_vol = volatility_scaled_risk_multiplier(symbol)
+        risk_percent = state.current_risk_percent * signal.get('risk_multiplier', 1.0) * _risk_mult_vol
         # RISK-FIX: same projection validate_trade_risk() already used a
         # few lines up (line ~2944) to decide whether this trade was even
         # allowed through -- computed via the same shared helper so sizing
