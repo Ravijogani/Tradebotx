@@ -126,7 +126,8 @@ class StrategyAdapter:
     call: Callable  # (bot, dataset, as_of, symbol) -> Optional[StrategyResult]
 
 
-def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[str]:
+def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str,
+                apply_regime_gate: bool = False) -> Optional[str]:
     """
     Replicates the live main loop's actual `effective_trend` computation:
     H4 macro bias (get_h4_macro_bias) leads, H1 trend (strict EMA50/EMA200
@@ -190,11 +191,29 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
     # wasn't given --m30, this gate is simply not exercised (same
     # graceful-degradation pattern as --h4/--d1/--m1 elsewhere in this
     # harness), not a hard requirement.
+    m30_char = None
     if "M30" in dataset.frames:
         m30_char = _get_m30_character(bot, dataset, as_of)
         choch_veto_dir = "BEARISH" if effective_trend == "BULLISH" else "BULLISH"
         if m30_char["signal"] == "CHOCH" and m30_char["break_direction"] == choch_veto_dir:
             return None  # live does `continue` here -- see [CHOCH VETO] log line
+
+    # MARKET REGIME ROUTER: mirrors the live scan loop's _regime_ok gate,
+    # which real-data verification showed only actually helps EMA Scalp
+    # Cross -- SSM and Swappy both had it tried and reverted (removed
+    # trades outperformed kept trades for both; see hybrid_trading_bot_
+    # multiuser.py's [MARKET REGIME ROUTER] comment for the full evidence
+    # and the retest/pullback-vs-cross-entry mechanism explaining why).
+    # So `apply_regime_gate` is opt-in here, not automatic for every
+    # caller of _get_trend() -- only _adapt_ema_scalp_cross passes True.
+    if apply_regime_gate:
+        df_m5_regime = dataset.window("M5", as_of, 60)
+        if len(df_m5_regime) >= 10:
+            auction = bot.mi.classify_auction_state(df_m5_regime)
+            regime = bot.mi.classify_market_regime(auction, m30_char)
+            direction = "BUY" if effective_trend == "BULLISH" else "SELL"
+            if direction not in regime["allowed_directions"]:
+                return None  # live logs [REGIME] and skips this strategy, not this symbol's whole scan
 
     return effective_trend
 
@@ -328,7 +347,10 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     unconditionally wrong.
     """
     with replay_context(bot, dataset, as_of):
-        trend = _get_trend(bot, dataset, as_of, symbol)
+        # apply_regime_gate=True: real-data verified this is the one
+        # strategy where the M5-auction-state gate actually helps (see
+        # _get_trend's own comment) -- not the default for SSM/Swappy.
+        trend = _get_trend(bot, dataset, as_of, symbol, apply_regime_gate=True)
         if trend not in ("BULLISH", "BEARISH"):
             return None
         direction = "BUY" if trend == "BULLISH" else "SELL"

@@ -9724,9 +9724,60 @@ def ai_trading_session():
 
                 # MARKET INTELLIGENCE INTEGRATION: auction-theory regime
                 # read (see market_intelligence.py's module docstring) --
-                # computed once here, used to gate Strategy A below and to
-                # give Strategy F (Balance Fade) a chance further down.
+                # computed once here.
                 _auction = mi.classify_auction_state(df_m5)
+
+                # MARKET REGIME ROUTER: routes among EMA Scalp / Swappy 3C /
+                # Shaakuni SSM by what the market is actually doing right
+                # now -- computed once here (_regime), but applied
+                # SELECTIVELY below (_regime_ok), not as a blanket gate on
+                # all three. See classify_market_regime()'s own docstring
+                # for why "know which validated strategy fits now" is the
+                # answer to "smart enough to trade in all conditions,"
+                # not "know more strategies" (this repo already tried
+                # that -- see strategies_registry.py's "REMOVED 2026-08").
+                #
+                # REAL-DATA FINDING (2026-08, kept here rather than only in
+                # the commit message -- this is exactly the kind of
+                # correction future edits need to see in context, not
+                # rediscover): first applied as a blanket gate on all
+                # three. Real-data backtest showed a clear, quantified
+                # split, not a uniform improvement:
+                #   EMA Scalp:  133->30 trades removed... no -- 15->5
+                #     trades; REMOVED trades averaged -0.123R, KEPT trades
+                #     averaged +0.790R. The gate correctly filtered worse
+                #     setups. Kept for this strategy.
+                #   Shaakuni SSM: 133->30 trades; REMOVED trades averaged
+                #     +0.831R, KEPT trades averaged +0.305R -- the gate
+                #     removed BETTER-than-average trades, the opposite of
+                #     what a filter should do. Total accumulated equity
+                #     collapsed 94.78R -> 9.14R. NOT applied to SSM.
+                #   Swappy 3C: 18->4 trades; REMOVED trades averaged
+                #     +0.290R, KEPT trades averaged -0.013R -- same
+                #     direction as SSM, too thin a remaining sample (4) to
+                #     be fully confident, but no evidence it helped. NOT
+                #     applied to Swappy.
+                # The likely mechanism: SSM and Swappy both enter on a
+                # RETEST/PULLBACK (SSM's OB retest limit order; Swappy's
+                # own 3rd-candle pullback) -- a real, valid consolidation
+                # inside an established trend that classify_auction_state's
+                # M5 read can easily score as BALANCE even in a textbook-
+                # correct setup. EMA Scalp enters on the cross itself, no
+                # deliberate pause -- so a genuine M5 BALANCE read there
+                # really does mean "no real momentum behind this cross,"
+                # which is what the gate is supposed to catch. Same
+                # underlying auction-state signal, structurally different
+                # meaning depending on whether the strategy's entry design
+                # expects a pause or not.
+                _regime = mi.classify_market_regime(_auction, _m30_char)
+                _regime_ok = _trade_direction in _regime["allowed_directions"]
+                if not _regime_ok:
+                    logger.debug(
+                        f"[REGIME] {symbol}: {_regime['regime']} -- {_trade_direction} not "
+                        f"favorable per M5 auction state ({_regime['reason']}) -- "
+                        f"only gates EMA Scalp below, not SSM/Swappy (see comment)."
+                    )
+                    state._rej['regime_stand_aside'] = state._rej.get('regime_stand_aside', 0) + 1
 
                 # PDH/PDL liquidity reference -- small, cheap fetch (10 D1
                 # bars), not part of the async fetcher's cached timeframe
@@ -9747,20 +9798,20 @@ def ai_trading_session():
                 # (state._rej double-counting, and the pattern pre-filter now
                 # actually gating instead of only logging).
                 #
-                # MARKET INTELLIGENCE INTEGRATION: additionally requires the
-                # M5 auction state to confirm genuine imbalance in the trade
-                # direction, not just an EMA cross. Real-data backtest
-                # evidence (whole-project review) found this specific
-                # strategy's edge was the weakest of the four live setups
-                # (+0.068R/trade, barely above zero pre-cost) -- exactly the
-                # signature of a momentum-cross strategy firing in both
-                # trending AND ranging conditions with no regime filter
-                # (wins in the trend, bleeds small losses in the chop that
-                # dominates). This is the single highest-evidence gate to
-                # add among all four existing strategies.
-                _ema_scalp_regime_ok = _auction["state"] == (
-                    "IMBALANCE_UP" if _trade_direction == "BUY" else "IMBALANCE_DOWN")
-                if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _ema_scalp_regime_ok:
+                # Regime-gated by the market regime router above (_regime_ok)
+                # -- real-data confirmed this strategy is the one where it
+                # actually works: removed trades averaged -0.123R, kept
+                # trades averaged +0.790R (contrast with SSM/Swappy below,
+                # where the same gate was tried and reverted -- see the
+                # router's own comment for the full evidence and the
+                # mechanism explaining the difference). This was already
+                # the single highest-evidence gate this strategy needed on
+                # its own (+0.068R/trade pre-gate, the weakest edge of the
+                # four live setups, exactly the signature of a momentum-
+                # cross firing in both trending and ranging conditions with
+                # no regime filter) -- now expressed through the shared
+                # router instead of its own separate auction-state check.
+                if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _regime_ok:
                     setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol, df_h1, _df_d1_liq)
 
                 # 
@@ -9768,7 +9819,12 @@ def ai_trading_session():
                 # Rules: H4 bias  + 2 trend candles + 1 failed pullback on M5
                 #        + BUY near support / SELL near resistance (M5 level)
                 # No HTF OB needed. Support/resistance = recent M5 swing levels.
-                # 
+                # NOT gated by the market regime router (see its comment
+                # above): real-data verification showed the M5-auction-
+                # state gate removed better-than-average Swappy trades, not
+                # worse ones -- Swappy's own 3rd-candle pullback is a valid
+                # in-trend consolidation the M5 auction read can score as
+                # BALANCE even in a correct setup.
                 if not setup:
                     _sw = detect_swappy_3c(df_m5, _trade_direction, df_h1, _df_d1_liq)
                     if _sw['confirmed']:
@@ -9843,7 +9899,19 @@ def ai_trading_session():
                             continue  # AOX placed a layer, skip rest of pipeline this iteration
 
                 # SHAAKUNI SSM: dedicated HTF sweep + extreme OB entry
-                # This replaces generic liquidity grab with proper Shaakuni rules
+                # This replaces generic liquidity grab with proper Shaakuni rules.
+                # NOT gated by the market regime router (see its comment
+                # above): first tried, then reverted on real-data evidence
+                # -- the M5-auction-state gate removed trades averaging
+                # +0.831R while keeping ones averaging +0.305R, the opposite
+                # of a working filter, and collapsed total accumulated
+                # equity 94.78R -> 9.14R on the ~90-day sample. SSM's entry
+                # IS the OB retest (a limit order waiting for price to come
+                # back to the sweep zone) -- exactly the kind of pause the
+                # M5 auction read can score as BALANCE even in a textbook-
+                # correct setup. SSM already has its own regime awareness
+                # via effective_trend (H4/H1) and the M30 CHoCH gate; a
+                # third, M5-only layer was redundant at best here.
                 if not setup and df_h1 is not None:
                     _ssm_result = strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, effective_trend, _df_d1_liq)
                     if _ssm_result:

@@ -683,6 +683,125 @@ levels only move once an hour, but Swappy/EMA call this once per M5 bar in
 a backtest replay, up to 6-12x more often than the underlying data
 actually changes.
 
+### Market regime router — the "smart in all conditions" piece, and a self-caught mistake
+
+Requested directly, after being asked to make the bot know "every single
+depth detailed thing of trading" so it's "smart enough to trade in all the
+conditions." Reading that literally as "add more strategies/concepts" would
+have repeated a mistake this repo already made once: see "Fallback and
+dormant strategies removed (2026-08)" above — 11 well-known
+strategies/concepts (Wyckoff, volume profile, support/resistance, volume
+imbalance, trend pullback, mean-reversion BB, ICT killzone, liquidity grab,
+FVG retest engine among them) were built and then removed from this exact
+codebase after producing zero real edge. More strategies did not make the
+bot smarter; it made it noisier. The correct reading of "smart in all
+conditions" is a bot that recognizes *when a condition doesn't suit any of
+its strategies and stands aside* — the piece that was actually missing.
+
+`classify_market_regime(auction, m30_char)` in `market_intelligence.py`
+synthesizes the auction-state classifier and the M30-character classifier
+(both already live, previously never combined into one verdict) into a
+single regime label:
+
+- `TREND_UP` / `TREND_DOWN` — M5 auction state shows a genuine initiative
+  move (`IMBALANCE_UP`/`IMBALANCE_DOWN`), *and* it isn't contradicted by a
+  just-happened M30 CHoCH in the opposite direction (a same-direction CHoCH,
+  or no M30 read at all, does not downgrade the regime).
+- `BALANCE` — auction state is rotating inside value; `allowed_directions`
+  is the **empty set**. This is the actual "stand-aside" state: not a
+  fourth strategy, a deliberate absence of one.
+- `CHOPPY` — no reliable auction-state read, or a trend regime that got
+  contradicted by a fresh opposing M30 CHoCH; also stands aside.
+
+Each regime carries `allowed_directions` (`{"BUY"}`, `{"SELL"}`, or `set()`)
+and a human-readable `reason` string logged at the point of use. Unit
+tested with 10 cases covering both trend directions, the BALANCE
+stand-aside, CHOPPY on missing/empty auction data, a same-direction CHoCH
+not vetoing, an opposing CHoCH downgrading a trend to CHOPPY, and BALANCE
+ignoring `m30_char` entirely (there's no trend to un-confirm).
+
+**First attempt, and why it was wrong.** The obvious wiring is a blanket
+gate: compute `_regime` once per symbol per bar, and require the
+strategy's trade direction to be in `allowed_directions` before letting
+*any* of Shaakuni SSM, Swappy 3C, or EMA Scalp Cross fire. Two things had
+to be caught before this could ship:
+
+1. Placement: `_regime` is computed before "STRATEGY D: AOX MODEL" in the
+   scan loop's strategy order (Swappy → AOX → SSM). A single blanket
+   `continue` placed right after computing `_regime` would have silently
+   skipped AOX's own entry logic whenever the regime didn't favor the
+   current trade direction — disabling a strategy that (a) is a
+   structurally different manipulation/mean-reversion archetype (SD-tap →
+   Turtle Soup → Hippo/mitigation), not a continuation strategy the regime
+   router is even meant to describe, and (b) has never been verifiable in
+   this sandbox at all (`--m1` has never been available here). Caught
+   before running anything, by tracing the call order — fixed by gating
+   each of the three continuation strategies individually at their own
+   call sites, leaving AOX's condition completely untouched.
+2. The gate itself, once applied only to the three intended strategies and
+   run against real data, turned out to **help one and hurt two**:
+
+   | Strategy | Trades (before → after) | Expectancy (before → after) | PF | Equity |
+   |---|---|---|---|---|
+   | SHAAKUNI_SSM | 133 → 30 | +0.713R → +0.305R | 1.71 → 1.30 | +94.78R → +9.14R |
+   | SWAPPY_3C | 18 → 4 | +0.223R → -0.012R | 1.33 → 0.98 | +4.01R → -0.05R |
+   | EMA_SCALP_CROSS | 15 → 5 | +0.182R → +0.790R | 1.30 → 2.95 | +2.72R → +3.95R |
+
+   A mixed table like that is not self-explanatory — fewer trades and lower
+   *total* equity is exactly what a good filter looks like too, if it's
+   cutting a long tail of small losers. So before accepting or rejecting
+   anything, every trade the gate removed was split out from every trade it
+   kept, and each side's average R-multiple was computed:
+
+   | Strategy | Removed trades (n, avg R) | Kept trades (n, avg R) |
+   |---|---|---|
+   | SHAAKUNI_SSM | 103 trades, **+0.831R** avg | 30 trades, +0.305R avg |
+   | SWAPPY_3C | 14 trades, **+0.290R** avg | 4 trades, -0.013R avg |
+   | EMA_SCALP_CROSS | 10 trades, -0.123R avg | 5 trades, **+0.790R** avg |
+
+   For SSM and Swappy, the trades the regime gate *removed* outperformed
+   the trades it *kept* — the filter was anti-correlated with quality, not
+   an improvement, and the change in the summary numbers was an illusion of
+   fewer-trades-means-tighter-filter. Only for EMA Scalp Cross did the gate
+   correctly cut the worse half.
+
+   The mechanistic reason: SSM's OB-retest entry and Swappy's 3rd-candle
+   pullback entry both involve a deliberate pause/consolidation *within* an
+   already-valid setup — exactly the kind of pattern the M5 auction-state
+   classifier can legitimately score as `BALANCE` even when the trade is a
+   textbook-correct continuation. EMA Scalp Cross enters directly on the
+   EMA cross with no deliberate pause, so a genuine `BALANCE` read there
+   really does mean "no momentum yet" — the same regime gate measures
+   different things depending on how the strategy's entry itself already
+   uses (or doesn't use) a pause.
+
+**Final wiring, corrected before shipping**: the regime gate is opt-in, not
+automatic. `_get_trend()` in `strategies_registry.py` takes a new
+`apply_regime_gate: bool = False` parameter — only `_adapt_ema_scalp_cross`
+passes `True`; SSM's and Swappy's adapters call it with the default (off).
+The live scan loop in `hybrid_trading_bot_multiuser.py` mirrors this: SSM's
+and Swappy's call sites were reverted to their original, ungated
+conditions (with the full evidence table above left in-code as a comment,
+not just in the commit message, so the next person who's tempted to
+"just gate everything" sees why not to); only EMA Scalp Cross's call site
+checks `_regime_ok`. AOX remains completely untouched, as it was from the
+first design.
+
+Confirmed with a full re-run after the correction: SHAAKUNI_SSM and
+SWAPPY_3C returned to their exact pre-regime-router baseline (133
+trades/+0.713R/PF 1.71/+94.78R and 18 trades/+0.223R/PF 1.33/+4.01R,
+respectively — byte-identical to the numbers before any regime-router code
+existed), while EMA_SCALP_CROSS kept its improvement (5 trades/+0.790R/PF
+2.95/+3.95R). STRUCTURAL_SWING and BALANCE_FADE, untouched controls, were
+unchanged. Zero tracebacks; trade sidedness (SL/TP correctly signed per
+BUY/SELL) spot-checked on the EMA Scalp Cross ledger rows.
+
+This is the same discipline this whole engagement has followed throughout:
+a change that moves the summary numbers is not automatically a working
+filter, and "the numbers changed in the direction I expected" still needs
+checking against "did it change them for the right reason" before it
+ships.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

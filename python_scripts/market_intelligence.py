@@ -89,6 +89,22 @@ FRAMEWORK
    into a single live call site) to every reference level above, usable
    by any strategy in any of the three bots.
 
+7. Market regime router. classify_market_regime() is the answer to "the
+   bot should be smart enough to trade in all conditions" -- not by
+   knowing more strategies (this exact repo already tried that: 11
+   well-known concepts -- Wyckoff, volume profile, S/R, ICT killzones,
+   liquidity grab, FVG retest, mean-reversion BB, trend pullback -- were
+   built, wired, and removed after producing zero real edge; see
+   strategies_registry.py's "REMOVED 2026-08" note), but by routing among
+   the strategies already validated here: TREND_UP/DOWN (a genuine
+   auction imbalance, what SSM/Swappy/EMA-Scalp are actually built for),
+   BALANCE (rotating inside value -- none of hybrid_trading_bot_
+   multiuser.py's live strategies fit; that's what detect_balance_
+   fade_signal exists for, elsewhere), or CHOPPY (no reliable read, or
+   conflicting M5-auction-vs-M30-structure evidence). BALANCE and CHOPPY
+   both resolve to an explicit, first-class STAND-ASIDE state -- no
+   strategy fires -- which nothing in this codebase modeled before this.
+
 WHAT THIS FILE DELIBERATELY DOES NOT DO
 ----------------------------------------
 No real order-book depth, no dark-pool prints, no true institutional order
@@ -950,3 +966,85 @@ def nearest_liquidity_target(entry_price: float, direction: str, levels: List[Di
         return None
     candidates.sort(key=lambda c: c[0])
     return candidates[0][1]
+
+
+# =============================================================================
+# MARKET REGIME ROUTER -- decide WHICH strategy archetype fits right now,
+# not add another one
+# =============================================================================
+
+def classify_market_regime(auction: Dict, m30_char: Optional[Dict] = None) -> Dict:
+    """
+    Synthesizes signals this module (and classify_m30_character() in
+    hybrid_trading_bot_multiuser.py) already compute into ONE coherent
+    per-scan regime read, with an explicit STAND-ASIDE state -- the piece
+    that was missing. This is not a new strategy or a new indicator: it's
+    routing among strategies already built and real-data validated
+    elsewhere in this codebase, which is the actual, evidence-backed
+    answer to "the bot should be smart enough to trade in all conditions."
+    (This exact repo already tried the other interpretation -- give the
+    bot more strategies/indicators/concepts -- and removed 11 of them
+    after they produced zero real edge; see strategies_registry.py's
+    "REMOVED 2026-08" note. More knowledge didn't make the bot smarter.
+    Knowing which of a small number of validated setups fits the current
+    market, and knowing when none of them do, is what "smart" means here.)
+
+    Takes the ALREADY-COMPUTED auction (classify_auction_state()) and
+    m30_char (classify_m30_character(), optional) dicts rather than raw
+    DataFrames -- this function does no new computation of its own beyond
+    combining two results the caller already has, so wiring it in is free.
+
+    Regime logic:
+      - auction IMBALANCE_UP/DOWN -> TREND_UP/TREND_DOWN: a genuine
+        initiative move, the one condition SSM/Swappy/EMA-Scalp-style
+        continuation strategies are actually built for.
+      - auction BALANCE -> BALANCE: price rotating inside its value area.
+        None of this codebase's currently-live hybrid_trading_bot_
+        multiuser.py strategies are a fade/mean-reversion archetype (that
+        gap is what detect_balance_fade_signal() exists to fill, wired
+        into intraday.py/structural_swing_pro.py already) -- so BALANCE
+        here means no strategy in THIS file's lineup should fire, not
+        that the market is untradeable in general.
+      - auction None/insufficient data -> CHOPPY: no reliable read at all.
+      - CHoCH CONFLICT: if the auction state says TREND_UP/DOWN but
+        m30_char reports a CHoCH break in the OPPOSITE direction (M30's
+        own structure just flipped against what the M5 auction read is
+        claiming), that's genuinely conflicting evidence, not confidently
+        trending -- downgraded to CHOPPY rather than trusted at face
+        value. BOS (confirming the trend) or no m30_char signal at all
+        both pass through unaffected.
+
+    Returns {'regime': 'TREND_UP'|'TREND_DOWN'|'BALANCE'|'CHOPPY',
+    'allowed_directions': frozenset of 'BUY'/'SELL' (empty for BALANCE/
+    CHOPPY -- the explicit stand-aside case), 'reason': str}.
+    """
+    state = auction.get("state") if auction else None
+
+    if state == "IMBALANCE_UP":
+        regime = "TREND_UP"
+        reason = "auction IMBALANCE_UP -- genuine initiative move higher"
+    elif state == "IMBALANCE_DOWN":
+        regime = "TREND_DOWN"
+        reason = "auction IMBALANCE_DOWN -- genuine initiative move lower"
+    elif state == "BALANCE":
+        regime = "BALANCE"
+        reason = "auction BALANCE -- rotating inside value, no continuation edge here"
+    else:
+        regime = "CHOPPY"
+        reason = "no reliable auction-state read"
+
+    if m30_char and regime in ("TREND_UP", "TREND_DOWN"):
+        opposing = "BEARISH" if regime == "TREND_UP" else "BULLISH"
+        if m30_char.get("signal") == "CHOCH" and m30_char.get("break_direction") == opposing:
+            regime = "CHOPPY"
+            reason = (f"auction said {state} but M30 structure just flipped "
+                      f"{m30_char['break_direction']} -- conflicting evidence, not confidently trending")
+
+    allowed = {
+        "TREND_UP": frozenset({"BUY"}),
+        "TREND_DOWN": frozenset({"SELL"}),
+        "BALANCE": frozenset(),
+        "CHOPPY": frozenset(),
+    }[regime]
+
+    return {"regime": regime, "allowed_directions": allowed, "reason": reason}
