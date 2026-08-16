@@ -590,6 +590,99 @@ What **is** wired in, real and verified:
   adjustment when no data is passed, so every other call site is
   unaffected.
 
+### Liquidity reference levels (PDH/PDL, session H/L) + HTF FVG — refining entries and TP targets
+
+Requested directly: which SMC liquidity concepts (previous day high/low,
+last H1 candle, the last completed Asian/London/New York session range,
+higher-timeframe order blocks, H1/HTF fair value gaps) should refine entry
+quality and TP targeting across Shaakuni SSM, Swappy 3C, and EMA Scalp
+Cross. HTF order blocks were already live (that's literally what SSM's
+extreme-OB entry is). The rest either sat as **dead code** or didn't exist:
+
+- `compute_liquidity_reference_levels(df_d1, df_h1)` — PDH/PDL (previous
+  *completed* D1 bar, not the still-forming current one), H1_HIGH/H1_LOW
+  (last closed H1 candle), and `{ASIAN,LONDON,NEW_YORK}_HIGH/LOW` (the
+  realized range of the last *completed* occurrence of each UTC session
+  window — a trailing run of in-session bars still touching the latest bar
+  is skipped in favor of the previous complete one). Each level tagged
+  BUY_SIDE/SELL_SIDE (same convention as `build_liquidity_map`) and
+  swept/untested against the H1 series. This generalizes
+  `intraday.py`'s `detect_htf_liquidity_targets()` — which did the same
+  "prev day high/low as TP target" idea, correctly, but had **zero call
+  sites anywhere** — to every reference level above, usable by any
+  strategy in any of the three bots.
+- `detect_fvg_zones(df, direction)` — the same 3-candle-imbalance FVG
+  definition `detect_fpfvg()` already used, but that one only ever ran on
+  M1 for AOX. Reimplemented here (not imported — same zero-dependency-on-
+  bot-files discipline as `find_swing_points`) so H1/H4 FVGs are usable
+  anywhere, returning unmitigated zones (not just a midpoint).
+- `liquidity_confluence_check(entry_price, direction, levels, fvg_zones, atr)`
+  — is this entry actually reacting to a real level, or sitting in open
+  air? `nearest_liquidity_target(entry_price, direction, levels, sl_distance, min_rr)`
+  — the nearest untested level beyond entry that clears a minimum RR, as
+  a TP source (returns `None`, never overwriting a strategy's own target,
+  if nothing qualifies).
+
+**Wired in, three different ways, deliberately — not one generic filter
+bolted onto all three:**
+
+- **Shaakuni SSM**: confluence is a *soft* filter, not a veto — a
+  confluent entry keeps the existing 1.5:1 minimum RR; a non-confluent one
+  needs a stricter 2.0:1. TP is upgraded to the nearest qualifying
+  liquidity level only when it's genuinely farther out (better RR) than
+  the sweep's own target — never a downgrade. Real-data result: 135 → 133
+  trades, +0.703R → +0.713R expectancy — a wash, not a meaningful move
+  either direction (confluence rarely matched at the exact OB entry price
+  in this window).
+- **Swappy 3C**: a +0.10 strength bonus (matching the function's own
+  existing bonus-stacking pattern) when the stop-entry trigger sits at an
+  untested level or a fresh FVG. **Disclosed limitation**: `strength`
+  only ever feeds `EdgeEngine.calculate()`, which is LIVE-ONLY and never
+  invoked by the backtest harness at all — this change is correct by
+  construction and unit-tested, but its effect on trade selection is not
+  backtest-verifiable, the same class of limitation as the volatility-
+  target sizing integration.
+- **EMA Scalp Cross**: a genuine hard veto, not a soft nudge — deliberately
+  different from SSM's approach because this strategy's `liquidity_strength`
+  field has the exact same EdgeEngine-only, backtest-invisible problem
+  Swappy's `strength` does, so a scoring-only nudge here would have been
+  completely unverifiable either way. A real, backtest-observable gate was
+  the only way to actually check this mattered — justified further by
+  this being the weakest-edge strategy already gated once this session
+  (auction-imbalance filter). Real-data result: 74 → 15 trades (an ~80%
+  reduction), but expectancy nearly tripled: +0.068R → +0.182R, PF 1.12 →
+  1.30. Final accumulated equity over this ~90-day window actually
+  dropped (+5.05R → +2.72R) purely because so much fewer volume more than
+  offset the quality improvement — an honest trade-off between setup
+  quality and trade frequency, not a clean win, disclosed as such.
+
+**AOX was explicitly not touched.** Its entry logic is a 3-phase stateful
+state machine (SD-tap → SMT+FVG Turtle Soup → Hippo/mitigation) that
+persists across bar-closes, and this sandbox has no real M1 export to
+backtest it with at all (`--m1` has never been available here — every AOX
+run this whole engagement shows "Skipping AOX: needs --m1"). Wiring an
+unverifiable change into the most complex, stateful entry logic in the
+repo would have violated this project's core discipline of never shipping
+a live-behavior change without running it against real data first.
+
+**Efficiency finding, found and fixed while verifying this exact change**:
+`identify_swing_highs_lows()` (in `hybrid_trading_bot_multiuser.py`, the
+function `classify_m30_character()`'s CHoCH gate depends on) used a
+Python-level nested loop calling `df['high'].iloc[i]` repeatedly instead of
+slicing numpy arrays — a real bottleneck once called frequently enough
+(profiling a real-data run pinned it as the majority of a multi-minute
+slowdown). Rewritten to numpy-array slicing, confirmed **byte-identical**
+output against the original via 60 randomized equivalence tests (including
+forced tied values — the one case a careless rewrite of a *strict*
+dominance check could silently get wrong) and 47x faster on a 3000-bar
+benchmark. Separately, `compute_liquidity_reference_levels()` itself is now
+memoized (`cached_liquidity_reference_levels()` in
+`hybrid_trading_bot_multiuser.py`) keyed on `(df_d1's last bar time,
+df_h1's last bar time)` — PDH/PDL only move once a day, H1_HIGH/session
+levels only move once an hour, but Swappy/EMA call this once per M5 bar in
+a backtest replay, up to 6-12x more often than the underlying data
+actually changes.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

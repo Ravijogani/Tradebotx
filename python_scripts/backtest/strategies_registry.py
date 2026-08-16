@@ -200,7 +200,11 @@ def _get_trend(bot, dataset: HistoricalDataset, as_of, symbol: str) -> Optional[
 
 
 def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
-    # Live call site: strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, effective_trend)
+    # Live call site: strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5,
+    # effective_trend, df_d1) -- df_d1 optional (PDH/PDL liquidity
+    # confluence/TP source), same graceful-degradation as the M30 gate
+    # above: without --d1, strategy_shaakuni_ssm still runs, it just
+    # never sees PDH/PDL as a candidate reference level.
     if "H4" not in dataset.frames:
         return None  # needs H4 -- see export_mt5_history.py / README
     with replay_context(bot, dataset, as_of):
@@ -210,9 +214,10 @@ def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
         df_h1 = dataset.window("H1", as_of, 60)
         df_h4 = dataset.window("H4", as_of, 60)
         df_m5 = dataset.window("M5", as_of, 60)
+        df_d1 = dataset.window("D1", as_of, 10) if "D1" in dataset.frames else None
         if len(df_m5) < 10:
             return None
-        r = bot.strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, trend)
+        r = bot.strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, trend, df_d1)
     if not r:
         return None
     return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],
@@ -256,7 +261,13 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 80)  # find_swappy_structural_tp scans up to 80 bars back
         if len(df_m5) < 20:
             return None
-        sw = bot.detect_swappy_3c(df_m5, direction)
+        # MARKET INTELLIGENCE INTEGRATION: df_h1/df_d1 optional (liquidity
+        # confluence strength bonus, see detect_swappy_3c's own docstring)
+        # -- H1 always available (SWAPPY_3C is in STRATEGIES_LIVE, and
+        # every real run provides --h1), D1 only if --d1 was given.
+        df_h1_sw = dataset.window("H1", as_of, 60) if "H1" in dataset.frames else None
+        df_d1_sw = dataset.window("D1", as_of, 10) if "D1" in dataset.frames else None
+        sw = bot.detect_swappy_3c(df_m5, direction, df_h1_sw, df_d1_sw)
         if not sw.get("confirmed"):
             return None
         atr_m5 = float(bot.calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
@@ -324,7 +335,12 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
         df_m5 = dataset.window("M5", as_of, 210)  # 200 EMA needs real history to be stable
         if len(df_m5) < 60:
             return None
-        r = bot.strategy_ema_scalp_cross(df_m5, direction, symbol)
+        # MARKET INTELLIGENCE INTEGRATION: df_h1/df_d1 optional (liquidity
+        # confluence feeding the existing liquidity_strength EdgeEngine
+        # input, see strategy_ema_scalp_cross's own docstring).
+        df_h1_ema = dataset.window("H1", as_of, 60) if "H1" in dataset.frames else None
+        df_d1_ema = dataset.window("D1", as_of, 10) if "D1" in dataset.frames else None
+        r = bot.strategy_ema_scalp_cross(df_m5, direction, symbol, df_h1_ema, df_d1_ema)
     if not r:
         return None
     return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],

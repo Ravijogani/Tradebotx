@@ -69,6 +69,26 @@ FRAMEWORK
    trailing distribution -- standard vol-targeting, not a flat % risk
    regardless of how calm or violent the instrument currently is.
 
+6. Liquidity REFERENCE levels + HTF fair value gaps, as a shared entry
+   confluence check and TP source. compute_liquidity_reference_levels()
+   computes the specific named levels professional/SMC traders actually
+   watch -- previous day high/low, the last closed H1 candle's high/low,
+   and the realized range of the last completed Asian/London/New York
+   session -- each tagged swept/untested, same convention as
+   build_liquidity_map()'s equal-highs/lows pools (this is the *named*
+   reference-level layer; build_liquidity_map is the *generic* fractal-
+   clustering layer -- complementary, not redundant). detect_fvg_zones()
+   generalizes the existing M1-only AOX fair-value-gap detector to any
+   timeframe (H1/H4 included -- the 3-candle imbalance definition never
+   needed to be M1-specific). liquidity_confluence_check() answers "is
+   this entry actually reacting to a real level, or sitting in open air"
+   as an entry-quality gate; nearest_liquidity_target() answers "what's
+   the next real liquidity level in my direction" as a TP source --
+   generalizes intraday.py's detect_htf_liquidity_targets() (which did
+   exactly this with D1 swing highs/prev-day H/L, but was never wired
+   into a single live call site) to every reference level above, usable
+   by any strategy in any of the three bots.
+
 WHAT THIS FILE DELIBERATELY DOES NOT DO
 ----------------------------------------
 No real order-book depth, no dark-pool prints, no true institutional order
@@ -678,3 +698,255 @@ def cot_positioning_bias(cot_data: Optional[Dict], extreme_percentile_hint: floa
     if net_ratio <= -extreme_percentile_hint:
         return {"bias": "CROWDED_SHORT", "net_ratio": net_ratio}
     return {"bias": "NEUTRAL", "net_ratio": net_ratio}
+
+
+# =============================================================================
+# LIQUIDITY REFERENCE LEVELS (PDH/PDL, session H/L) + HTF FAIR VALUE GAPS
+# =============================================================================
+
+# Session hour boundaries in UTC. Mirrors hybrid_trading_bot_multiuser.py's
+# get_current_session() (LONDON_NY overlap 13-16 folded into LONDON there
+# for time-of-day classification) but defined independently here -- this
+# module has zero dependency on any bot file's config, same discipline as
+# find_swing_points() being reimplemented rather than imported.
+_SESSION_HOURS_UTC: Dict[str, Tuple[int, int]] = {
+    "ASIAN": (0, 8),
+    "LONDON": (7, 16),
+    "NEW_YORK": (16, 22),
+}
+
+
+def compute_session_high_low(df_h1: pd.DataFrame, session_hours: Tuple[int, int]) -> Optional[Tuple[float, float, "pd.Timestamp"]]:
+    """
+    Finds the most recently COMPLETED occurrence of a UTC hour window
+    (e.g. Asian session 00:00-08:00) in df_h1 and returns its realized
+    (high, low, end_time). "Completed" matters: if the current bar is
+    still inside that session, the range isn't final yet and using it as
+    a liquidity reference would be premature -- so a trailing run of
+    in-session bars that touches the very last row in df_h1 is skipped in
+    favor of the previous complete run.
+
+    Returns None if there's no complete occurrence yet (not enough
+    history, or the only run found is still in progress).
+    """
+    if df_h1 is None or len(df_h1) < 3:
+        return None
+    times = pd.to_datetime(df_h1["time"])
+    hours = times.dt.hour
+    start, end = session_hours
+    in_session = (hours >= start) & (hours < end)
+    if not in_session.any():
+        return None
+
+    idx = np.where(in_session.to_numpy())[0]
+    runs: List[Tuple[int, int]] = []
+    run_start = idx[0]
+    prev = idx[0]
+    for i in idx[1:]:
+        if i != prev + 1:
+            runs.append((run_start, prev))
+            run_start = i
+        prev = i
+    runs.append((run_start, prev))
+
+    last_row_idx = len(df_h1) - 1
+    if runs[-1][1] == last_row_idx:
+        if len(runs) < 2:
+            return None  # only run found is still in progress -- nothing complete yet
+        chosen = runs[-2]
+    else:
+        chosen = runs[-1]
+
+    seg = df_h1.iloc[chosen[0]:chosen[1] + 1]
+    return float(seg["high"].max()), float(seg["low"].min()), df_h1["time"].iloc[chosen[1]]
+
+
+def compute_liquidity_reference_levels(df_d1: Optional[pd.DataFrame],
+                                        df_h1: Optional[pd.DataFrame]) -> List[Dict]:
+    """
+    The specific NAMED liquidity levels professional/SMC traders actually
+    watch -- distinct from build_liquidity_map()'s generic equal-highs/
+    lows clustering:
+      - PDH / PDL: previous COMPLETED daily candle's high/low (df_d1's
+        second-to-last row -- the last row can still be today's
+        in-progress day, same "don't use the still-forming bar"
+        discipline as everywhere else in this module).
+      - H1_HIGH / H1_LOW: the most recently CLOSED H1 candle's high/low
+        (df_h1's second-to-last row, for the same reason).
+      - {ASIAN,LONDON,NEW_YORK}_HIGH/LOW: the realized range of the last
+        COMPLETED occurrence of each session (see compute_session_high_low).
+
+    Each level is tagged BUY_SIDE (sits above current price -- price is
+    drawn UP to take resting sell-stops/breakout orders there, same
+    convention build_liquidity_map() uses) or SELL_SIDE (below), and
+    swept (price has since traded through it, checked against the H1
+    series regardless of which timeframe the level itself came from --
+    H1 is granular enough to catch an intraday sweep of yesterday's PDH
+    that hasn't yet produced a new D1 bar above it) or still untested.
+
+    Returns a list of {label, price, side, swept}, nearest-to-current-
+    price first. Pure function -- no MT5, callable identically live and
+    in the backtest harness.
+    """
+    if df_h1 is None or len(df_h1) < 3:
+        return []
+    current_price = float(df_h1["close"].iloc[-1])
+    levels: List[Dict] = []
+
+    highs = df_h1["high"].to_numpy()
+    lows = df_h1["low"].to_numpy()
+
+    def _swept_since(price: float, side: str) -> bool:
+        if side == "BUY_SIDE":
+            return bool((highs >= price).any())
+        return bool((lows <= price).any())
+
+    def _add(label: str, price: Optional[float]):
+        if price is None or pd.isna(price):
+            return
+        side = "BUY_SIDE" if price > current_price else "SELL_SIDE"
+        levels.append({"label": label, "price": float(price), "side": side,
+                        "swept": _swept_since(float(price), side)})
+
+    if df_d1 is not None and len(df_d1) >= 2:
+        _add("PDH", float(df_d1["high"].iloc[-2]))
+        _add("PDL", float(df_d1["low"].iloc[-2]))
+
+    if len(df_h1) >= 3:
+        _add("H1_HIGH", float(df_h1["high"].iloc[-2]))
+        _add("H1_LOW", float(df_h1["low"].iloc[-2]))
+
+    for sess_label, hours in _SESSION_HOURS_UTC.items():
+        res = compute_session_high_low(df_h1, hours)
+        if res:
+            hi, lo, _ = res
+            _add(f"{sess_label}_HIGH", hi)
+            _add(f"{sess_label}_LOW", lo)
+
+    levels.sort(key=lambda lvl: abs(lvl["price"] - current_price))
+    return levels
+
+
+def detect_fvg_zones(df: pd.DataFrame, direction: str, lookback: int = 20,
+                      max_zones: int = 3) -> List[Dict]:
+    """
+    Fair Value Gap detection, generalized to any timeframe. The existing
+    detect_fpfvg() in hybrid_trading_bot_multiuser.py only ever runs on
+    M1 (for AOX), but the 3-candle-imbalance definition itself is
+    timeframe-agnostic -- the same textbook ICT gap, just reimplemented
+    here (not imported, same zero-dependency-on-bot-files discipline as
+    find_swing_points()) so H1/H4 FVGs are usable by any strategy in any
+    of the three bots, not only AOX's M1 read.
+
+    Bullish FVG: candle[i-1].high < candle[i+1].low (the displacement
+    candle at i left a gap nothing has traded back into).
+    Bearish FVG: candle[i-1].low > candle[i+1].high.
+
+    Returns up to `max_zones` UNMITIGATED gaps (price hasn't traded back
+    into the zone since), most recent first: {low, high, mid, direction}.
+    """
+    if df is None or len(df) < lookback + 3:
+        return []
+    zones: List[Dict] = []
+    start = max(2, len(df) - lookback)
+    for i in range(len(df) - 2, start - 1, -1):
+        c_before = df.iloc[i - 1]
+        c_after = df.iloc[i + 1]
+        if direction == "BUY":
+            if float(c_before["high"]) < float(c_after["low"]):
+                gap_low, gap_high = float(c_before["high"]), float(c_after["low"])
+                later_lows = df["low"].iloc[i + 2:]
+                mitigated = bool((later_lows <= gap_high).any()) if len(later_lows) else False
+                if not mitigated:
+                    zones.append({"low": gap_low, "high": gap_high,
+                                  "mid": (gap_low + gap_high) / 2, "direction": "BUY"})
+        else:
+            if float(c_before["low"]) > float(c_after["high"]):
+                gap_high, gap_low = float(c_before["low"]), float(c_after["high"])
+                later_highs = df["high"].iloc[i + 2:]
+                mitigated = bool((later_highs >= gap_low).any()) if len(later_highs) else False
+                if not mitigated:
+                    zones.append({"low": gap_low, "high": gap_high,
+                                  "mid": (gap_low + gap_high) / 2, "direction": "SELL"})
+        if len(zones) >= max_zones:
+            break
+    return zones
+
+
+def liquidity_confluence_check(entry_price: float, direction: str, levels: List[Dict],
+                                fvg_zones: Optional[List[Dict]] = None,
+                                atr: Optional[float] = None,
+                                tolerance_atr_mult: float = 0.5) -> Dict:
+    """
+    Entry-quality gate: is this entry actually reacting to a real
+    liquidity reference, or sitting in open air with no reason for orders
+    to be resting there? A setup at a random price is a weaker entry than
+    one at a level real participants are actually watching.
+
+    For BUY: supporting confluence = an UNTESTED SELL_SIDE reference
+    level (a prior low / session low / PDL -- demand is expected to
+    defend there) at or just below entry_price, or entry sitting inside
+    (or just above) a bullish unmitigated FVG. SELL mirrors this.
+
+    tolerance_atr_mult (default 0.5x ATR, or ~0.15% of price if atr isn't
+    supplied): how close entry needs to be to count as "at" the level --
+    real liquidity has a zone, not a single tick.
+
+    Returns {'confluent': bool, 'matched_level': Optional[str], 'reason': str}.
+    Pure function -- no MT5, callable identically live and in the
+    backtest harness.
+    """
+    tolerance = (atr * tolerance_atr_mult) if atr else abs(entry_price) * 0.0015
+    supporting_side = "SELL_SIDE" if direction == "BUY" else "BUY_SIDE"
+
+    for lvl in levels or []:
+        if lvl["side"] != supporting_side or lvl["swept"]:
+            continue
+        if direction == "BUY" and lvl["price"] <= entry_price and entry_price - lvl["price"] <= tolerance:
+            return {"confluent": True, "matched_level": lvl["label"],
+                    "reason": f"at untested {lvl['label']} ({lvl['price']:.4f})"}
+        if direction == "SELL" and lvl["price"] >= entry_price and lvl["price"] - entry_price <= tolerance:
+            return {"confluent": True, "matched_level": lvl["label"],
+                    "reason": f"at untested {lvl['label']} ({lvl['price']:.4f})"}
+
+    for fvg in fvg_zones or []:
+        if fvg["direction"] != direction:
+            continue
+        if fvg["low"] - tolerance <= entry_price <= fvg["high"] + tolerance:
+            return {"confluent": True, "matched_level": "FVG",
+                    "reason": f"inside {direction} FVG [{fvg['low']:.4f}-{fvg['high']:.4f}]"}
+
+    return {"confluent": False, "matched_level": None,
+            "reason": "no untested reference level or FVG near entry"}
+
+
+def nearest_liquidity_target(entry_price: float, direction: str, levels: List[Dict],
+                              sl_distance: float, min_rr: float = 1.5) -> Optional[float]:
+    """
+    Finds the nearest UNTESTED reference level beyond entry, in the trade
+    direction, that clears min_rr against sl_distance. Generalizes
+    intraday.py's dead detect_htf_liquidity_targets() (same "prev day
+    high/low as TP target" idea, but only ever built for D1 swings and
+    never wired into a single live call site) to every reference level
+    compute_liquidity_reference_levels() returns, usable by any strategy
+    in any of the three bots.
+
+    Returns None if nothing qualifies -- the caller keeps its own
+    existing TP unchanged, same "never overwrite a strategy's own
+    already-correct target" discipline detect_balance_fade_signal's
+    live-wiring already established.
+    """
+    if sl_distance <= 0:
+        return None
+    target_side = "BUY_SIDE" if direction == "BUY" else "SELL_SIDE"
+    candidates: List[Tuple[float, float]] = []
+    for lvl in levels or []:
+        if lvl["side"] != target_side or lvl["swept"]:
+            continue
+        dist = abs(lvl["price"] - entry_price)
+        if sl_distance > 0 and dist / sl_distance >= min_rr:
+            candidates.append((dist, lvl["price"]))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])
+    return candidates[0][1]
