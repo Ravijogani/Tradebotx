@@ -3843,6 +3843,43 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
             rng = c['high'] - c['low']
             return body(c) / rng if rng > 0 else 0
 
+        # DECISION JOURNAL -- see decision_journal.py. Swappy's whole thesis is
+        # "two trend candles then a failed pullback", so each of those three
+        # candle conditions is a confirmation worth recording separately: if
+        # the strategy underperforms, we want to know WHICH leg of the pattern
+        # was marginal on the losers, not just that the pattern matched.
+        _sj = dj.DecisionJournal(getattr(df, 'attrs', {}).get('symbol', ''),
+                                 direction=direction, strategy='SWAPPY_3C')
+
+        def _leg_notes(c1_ok, c2_ok, seq_ok, c3_ok, holds_ok, seq_label):
+            _sj.note(dj.TRIGGER, 'c1_trend_candle',
+                     dj.CONFIRMED if c1_ok else dj.VETO,
+                     'C1 is a full-bodied trend candle' if c1_ok
+                     else 'C1 failed the body/direction test')
+            _sj.note(dj.TRIGGER, 'c2_continuation',
+                     dj.CONFIRMED if c2_ok else dj.VETO,
+                     'C2 continued the move with a full body' if c2_ok
+                     else 'C2 did not continue with a full body')
+            # NOTE the shared key name. Using 'higher_low' for BUY and
+            # 'lower_high' for SELL made these direction proxies rather than
+            # comparable confirmations -- the analyzer then reported an "edge"
+            # for them that was really just "SELLs outperformed BUYs in this
+            # window". Same concept => same key; direction lives on the
+            # journal itself and in the `value`.
+            _sj.note(dj.STRUCTURE, 'trend_structure_intact',
+                     dj.CONFIRMED if seq_ok else dj.VETO,
+                     f'{seq_label} intact -- trend structure held' if seq_ok
+                     else f'{seq_label} broken -- structure did not hold',
+                     value=seq_label)
+            _sj.note(dj.TRIGGER, 'c3_pullback',
+                     dj.CONFIRMED if c3_ok else dj.VETO,
+                     'C3 pulled back against the move' if c3_ok
+                     else 'C3 was not a pullback candle')
+            _sj.note(dj.TRIGGER, 'c3_failed_to_break',
+                     dj.CONFIRMED if holds_ok else dj.VETO,
+                     'C3 failed to break C1 -- pullback rejected' if holds_ok
+                     else 'C3 broke through C1 -- pullback was not rejected')
+
         if direction == 'BUY':
             # Two green candles then one red pullback
             # Threshold 0.25/0.20: realistic for M5 scalping candles (Asian session has small candles)
@@ -3856,6 +3893,7 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
             # Bonus: C3 closes above the midpoint of C1 (strong rejection)
             c3_above_mid = c3['close'] > (c1['low'] + c1['high']) / 2
 
+            _leg_notes(c1_green, c2_green, higher_low, c3_red, c3_holds, 'higher_low')
             if c1_green and c2_green and higher_low and c3_red and c3_holds:
                 strength = 0.65
                 if c3_above_mid: strength += 0.15
@@ -3871,6 +3909,16 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else [],
                     mi.detect_fvg_zones(df, 'BUY'), atr=_sw_atr)
                 if _sw_conf['confluent']: strength += 0.10
+                _sj.note(dj.LIQUIDITY, 'liquidity_confluence',
+                         dj.CONFIRMED if _sw_conf['confluent'] else dj.NEUTRAL,
+                         (f"stop-entry sits at {_sw_conf['matched_level']}"
+                          if _sw_conf['confluent'] else
+                          'stop-entry is not near a named level or fresh FVG'),
+                         value=_sw_conf.get('matched_level'))
+                _sj.note(dj.TRIGGER, 'c3_strong_rejection',
+                         dj.CONFIRMED if c3_above_mid else dj.NEUTRAL,
+                         'C3 closed above C1 midpoint -- strong rejection' if c3_above_mid
+                         else 'C3 closed below C1 midpoint -- weaker rejection')
                 # PREMIUM/DISCOUNT + OTE bonus (Raja Banks/Guardeer research,
                 # market_intelligence.py section 8) -- same non-blocking
                 # strength-bonus pattern as the liquidity-confluence bonus
@@ -3882,9 +3930,21 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                 _sw_pd = mi.premium_discount_confluence('BUY', _sw_eq)
                 if _sw_eq is not None and _sw_pd['favorable']: strength += 0.05
                 _sw_ote = mi.compute_ote_zone(df, 'BUY')
-                if mi.in_ote_zone(entry_level, _sw_ote): strength += 0.05
+                _sw_in_ote = mi.in_ote_zone(entry_level, _sw_ote)
+                if _sw_in_ote: strength += 0.05
+                if _sw_eq is not None:
+                    _sj.note(dj.LOCATION, 'premium_discount',
+                             dj.CONFIRMED if _sw_pd['favorable'] else dj.AGAINST,
+                             _sw_pd['reason'], value=_sw_eq['zone'])
+                _sj.note(dj.LOCATION, 'ote_zone',
+                         dj.CONFIRMED if _sw_in_ote else dj.NEUTRAL,
+                         'entry inside the OTE retracement window' if _sw_in_ote
+                         else 'entry outside the OTE window')
+                _sj.measure(strength=round(min(1.0, strength), 3), avg_body=round(avg_body, 5))
+                _sj.decide(True, f'Swappy bull pattern confirmed, strength {min(1.0, strength):.2f}')
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BULL",
+                    "journal": _sj.to_dict(),
                     "strength": min(1.0, strength),
                     "entry_level": entry_level,       # C3 close = initial reference
                     "stop_entry":  _setup_high,        # Buy Stop: place order above this
@@ -3904,6 +3964,7 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
             c3_holds = c3['close'] < c1['high']
             c3_below_mid = c3['close'] < (c1['low'] + c1['high']) / 2
 
+            _leg_notes(c1_red, c2_red, lower_high, c3_green, c3_holds, 'lower_high')
             if c1_red and c2_red and lower_high and c3_green and c3_holds:
                 strength = 0.65
                 if c3_below_mid: strength += 0.15
@@ -3918,15 +3979,37 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else [],
                     mi.detect_fvg_zones(df, 'SELL'), atr=_sw_atr)
                 if _sw_conf['confluent']: strength += 0.10
+                _sj.note(dj.LIQUIDITY, 'liquidity_confluence',
+                         dj.CONFIRMED if _sw_conf['confluent'] else dj.NEUTRAL,
+                         (f"stop-entry sits at {_sw_conf['matched_level']}"
+                          if _sw_conf['confluent'] else
+                          'stop-entry is not near a named level or fresh FVG'),
+                         value=_sw_conf.get('matched_level'))
+                _sj.note(dj.TRIGGER, 'c3_strong_rejection',
+                         dj.CONFIRMED if c3_below_mid else dj.NEUTRAL,
+                         'C3 closed below C1 midpoint -- strong rejection' if c3_below_mid
+                         else 'C3 closed above C1 midpoint -- weaker rejection')
                 # PREMIUM/DISCOUNT + OTE bonus -- mirror of the BUY branch
                 # above, see its comment for why this is a bonus, not a gate.
                 _sw_eq = mi.compute_equilibrium_zone(df)
                 _sw_pd = mi.premium_discount_confluence('SELL', _sw_eq)
                 if _sw_eq is not None and _sw_pd['favorable']: strength += 0.05
                 _sw_ote = mi.compute_ote_zone(df, 'SELL')
-                if mi.in_ote_zone(entry_level, _sw_ote): strength += 0.05
+                _sw_in_ote = mi.in_ote_zone(entry_level, _sw_ote)
+                if _sw_in_ote: strength += 0.05
+                if _sw_eq is not None:
+                    _sj.note(dj.LOCATION, 'premium_discount',
+                             dj.CONFIRMED if _sw_pd['favorable'] else dj.AGAINST,
+                             _sw_pd['reason'], value=_sw_eq['zone'])
+                _sj.note(dj.LOCATION, 'ote_zone',
+                         dj.CONFIRMED if _sw_in_ote else dj.NEUTRAL,
+                         'entry inside the OTE retracement window' if _sw_in_ote
+                         else 'entry outside the OTE window')
+                _sj.measure(strength=round(min(1.0, strength), 3), avg_body=round(avg_body, 5))
+                _sj.decide(True, f'Swappy bear pattern confirmed, strength {min(1.0, strength):.2f}')
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BEAR",
+                    "journal": _sj.to_dict(),
                     "strength": min(1.0, strength),
                     "entry_level": entry_level,
                     "stop_entry":  _setup_low,         # Sell Stop: place order below this
@@ -3938,7 +4021,10 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                                f"C1.high({c1['high']:.4f}). Sell Stop at {_setup_low:.4f}.")
                 }
 
-        return {**empty, "reason": "Swappy conditions not met"}
+        # Rejected setups carry their journal too -- knowing WHICH leg of the
+        # pattern usually fails is as useful as knowing why trades lose.
+        _sj.decide(False, 'Swappy conditions not met')
+        return {**empty, "reason": "Swappy conditions not met", "journal": _sj.to_dict()}
 
     except Exception as e:
         return {**empty, "reason": f"Swappy error: {e}"}
@@ -7616,7 +7702,8 @@ def detect_fpfvg(df_m1: 'pd.DataFrame', direction: str) -> float:
 
 def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                       sl: float, tp: float, risk_fraction: float,
-                      layer_name: str, account_equity: float) -> int:
+                      layer_name: str, account_equity: float,
+                      journal: Optional[Dict[str, Any]] = None) -> int:
     """
     Place one AOX layer with fractional risk allocation.
     risk_fraction: 0.25 for Layer 1&2, 0.50 for Layer 3
@@ -7739,6 +7826,12 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                 'timestamp': datetime.utcnow().isoformat(), 'ticket': result.order, 'symbol': symbol,
                 'direction': direction, 'entry_price': price, 'stop_loss': sl,
                 'take_profit': tp, 'lot_size': lot_size, 'strategy_name': 'AOX',
+                # Decision journal for this AOX layer (decision_journal.py).
+                # AOX is the one live strategy that has never been backtested,
+                # so recording its reasoning now means that when M1 history
+                # finally arrives, every AOX trade already explains itself.
+                'metadata': {'layer': layer_name, 'risk_fraction': risk_fraction,
+                             'journal': journal},
             })
             return result.order
         else:
@@ -7779,12 +7872,33 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
 
         #  PHASE 0: Waiting for spike + SD zone tap
         if aox_state['phase'] == 0:
+            # DECISION JOURNAL -- see decision_journal.py. AOX is a 3-phase
+            # state machine, so each layer gets its own journal recording the
+            # conditions that phase required. This is the strategy that has
+            # NEVER been backtested (no M1 history available), which makes
+            # journalling it more valuable here than anywhere else: when M1
+            # data does arrive, every AOX decision will already be explaining
+            # itself instead of needing this work done retroactively.
+            _aj = dj.DecisionJournal(symbol, strategy='AOX_L1_SD_TAP')
             spike = detect_manipulation_spike(df_m5, atr)
-            if not spike: return None
+            if not spike:
+                _aj.note(dj.LIQUIDITY, 'manipulation_spike', dj.VETO, 'no manipulation spike detected')
+                return None
             fib = compute_aox_fibonacci(spike)
             direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
+            _aj.direction = direction
+            _aj.note(dj.LIQUIDITY, 'manipulation_spike', dj.CONFIRMED,
+                     f"{spike['type']} manipulation spike detected -- fading it {direction}",
+                     value=spike['type'])
 
             # Check effective trend alignment
+            _trend_conflict = (effective_trend != 'NEUTRAL' and
+                               ((direction == 'BUY' and effective_trend == 'BEARISH') or
+                                (direction == 'SELL' and effective_trend == 'BULLISH')))
+            _aj.note(dj.BIAS, 'htf_trend_alignment',
+                     dj.VETO if _trend_conflict else dj.CONFIRMED,
+                     (f'{direction} conflicts with {effective_trend} HTF bias' if _trend_conflict
+                      else f'{direction} does not fight the {effective_trend} HTF bias'))
             if effective_trend != 'NEUTRAL':
                 if direction == 'BUY' and effective_trend == 'BEARISH': return None
                 if direction == 'SELL' and effective_trend == 'BULLISH': return None
@@ -7792,6 +7906,12 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             # Check SD zone: price must be at -2.0 to -2.5 SD (minor) OR -4.0 to -4.5 SD (major reversal)
             reached_sd2 = spike.get('reached_sd2', False)
             reached_sd4 = spike.get('reached_sd4', False)
+            _aj.note(dj.LOCATION, 'sd_zone_tap',
+                     dj.CONFIRMED if (reached_sd2 or reached_sd4) else dj.VETO,
+                     ('price tapped the -4.0/-4.5 SD major reversal zone' if reached_sd4
+                      else 'price tapped the -2.0/-2.5 SD zone' if reached_sd2
+                      else 'price never reached a qualifying SD zone'),
+                     value='SD4' if reached_sd4 else 'SD2' if reached_sd2 else None)
             if not reached_sd2 and not reached_sd4:
                 return None
             # SD4 major reversal zone = higher conviction, larger L1 allocation
@@ -7801,16 +7921,36 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
 
             # Check sniper zone
             in_sniper = fib['sniper_entry'] <= cur_price <= fib['sniper_top']
+            _aj.note(dj.LOCATION, 'sniper_zone',
+                     dj.CONFIRMED if in_sniper else dj.VETO,
+                     ('price inside the Fibonacci sniper entry zone' if in_sniper
+                      else 'price outside the sniper entry zone'))
             if not in_sniper: return None
 
             # TDO filter
             tdo = get_true_day_open(symbol)
+            _tdo_fail = False
             if tdo and tdo > 0:
-                if direction == 'BUY' and cur_price > tdo: return None
-                if direction == 'SELL' and cur_price < tdo: return None
+                _tdo_fail = ((direction == 'BUY' and cur_price > tdo) or
+                             (direction == 'SELL' and cur_price < tdo))
+                _aj.note(dj.LOCATION, 'true_day_open',
+                         dj.VETO if _tdo_fail else dj.CONFIRMED,
+                         (f'price on the wrong side of true day open ({tdo:.5f}) for a {direction}'
+                          if _tdo_fail else
+                          f'price on the correct side of true day open ({tdo:.5f})'),
+                         value=tdo)
+            else:
+                _aj.note(dj.LOCATION, 'true_day_open', dj.NEUTRAL, 'no true-day-open reference available')
+            if _tdo_fail:
+                return None
 
             # Macro window: HARD GATE -- AOX only executes during institutional 20-min windows
             macro = get_active_macro_window()
+            _aj.note(dj.TIMING, 'macro_window',
+                     dj.CONFIRMED if macro else dj.VETO,
+                     (f'inside institutional macro window {macro}' if macro
+                      else 'outside every institutional macro window'),
+                     value=macro)
             if not macro:
                 logger.debug(f"[AOX L1] {symbol}: outside macro window -- skip (wait for 8:50/9:50/10:50/13:50 EST)")
                 return None
@@ -7819,10 +7959,14 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             # LAYER 1: at SD tap (25% minor zone, 35% major reversal zone)
             sl1 = fib['sl_level'] + (0.001 if direction == 'SELL' else -0.001)
             tp1 = fib['tp2_mid']
+            _aj.measure(atr=round(atr, 5), risk_fraction=_l1_alloc,
+                        sl_distance=round(abs(cur_price - sl1), 5))
+            _aj.decide(True, f'AOX L1 fired at SD tap, {_l1_alloc*100:.0f}% allocation')
             return {
                 'direction': direction, 'entry_price': cur_price, 'sl': sl1, 'tp': tp1,
                 'risk_fraction': _l1_alloc, 'layer_name': 'L1_SD_TAP', 'next_phase': 1,
                 'state_updates': {'spike': spike, 'fib': fib, 'direction': direction},
+                'journal': _aj.to_dict(),
             }
 
         #  PHASE 1: Waiting for SMT + FPFVG (Turtle Soup)
@@ -7831,25 +7975,44 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             spike     = aox_state['spike']
             fib       = aox_state['fib']
 
+            _aj = dj.DecisionJournal(symbol, direction=direction, strategy='AOX_L2_TURTLE')
+
             # Check SMT divergence
             smt_ok = check_smt_divergence(symbol, spike['type'])
+            _aj.note(dj.STRUCTURE, 'smt_divergence',
+                     dj.CONFIRMED if smt_ok else dj.VETO,
+                     ('correlated market confirms via SMT divergence' if smt_ok
+                      else 'no SMT divergence -- correlated market does not confirm'))
             if not smt_ok: return None
 
             # CISD on M1
             cisd = detect_cisd_trigger(df_m1, direction)
+            _aj.note(dj.TRIGGER, 'cisd',
+                     dj.CONFIRMED if cisd else dj.VETO,
+                     ('M1 change-in-state-of-delivery confirmed' if cisd
+                      else 'no M1 CISD trigger'))
             if not cisd: return None
 
             # Find FPFVG (First Presented FVG) on M1 for Turtle Soup
             fpfvg = detect_fpfvg(df_m1, direction)
+            _aj.note(dj.LIQUIDITY, 'fpfvg',
+                     dj.CONFIRMED if fpfvg != 0.0 else dj.VETO,
+                     (f'first-presented FVG located at {fpfvg:.5f} (Turtle Soup)' if fpfvg != 0.0
+                      else 'no first-presented FVG on M1'),
+                     value=fpfvg or None)
             if fpfvg == 0.0: return None
 
             # LAYER 2: 25% at SMT confirmation + FVG
             sl2 = fib['sl_level']
             tp2 = fib['tp1_near']   # TP1 at 1.47 (first partial)
+            _aj.measure(atr=round(atr, 5), risk_fraction=0.25,
+                        sl_distance=round(abs(cur_price - sl2), 5))
+            _aj.decide(True, 'AOX L2 fired: SMT + CISD + FPFVG all confirmed')
             return {
                 'direction': direction, 'entry_price': cur_price, 'sl': sl2, 'tp': tp2,
                 'risk_fraction': 0.25, 'layer_name': 'L2_TURTLE', 'next_phase': 2,
                 'state_updates': {'fpfvg': fpfvg},
+                'journal': _aj.to_dict(),
             }
 
         #  PHASE 2: Waiting for Mitigation Block (Hippo)
@@ -7859,25 +8022,42 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
 
             # Hippo: price has reversed and is now at a mitigation/breaker block
             # Detect: price pulled back to the FPFVG area and is rejecting
+            _aj = dj.DecisionJournal(symbol, direction=direction, strategy='AOX_L3_HIPPO')
             fpfvg = aox_state.get('fpfvg', 0)
-            if fpfvg == 0: return None
+            if fpfvg == 0:
+                _aj.note(dj.LIQUIDITY, 'fpfvg_carried', dj.VETO, 'no FPFVG carried from L2')
+                return None
 
             fvg_dist = abs(cur_price - fpfvg)
             near_fvg = fvg_dist <= atr * 1.5
+            _aj.note(dj.LOCATION, 'near_mitigation_block',
+                     dj.CONFIRMED if near_fvg else dj.VETO,
+                     (f'price back at the mitigation block ({fvg_dist:.5f} away, within 1.5 ATR)'
+                      if near_fvg else
+                      f'price {fvg_dist:.5f} from the mitigation block -- too far (>1.5 ATR)'),
+                     value=round(fvg_dist, 5))
 
             # Confirm reversal direction is holding
             ema9 = float(df_m5['close'].ewm(span=9, adjust=False).mean().iloc[-1])
             reversal_holding = (direction == 'BUY'  and cur_price > ema9) or                                (direction == 'SELL' and cur_price < ema9)
+            _aj.note(dj.STRUCTURE, 'reversal_holding',
+                     dj.CONFIRMED if reversal_holding else dj.VETO,
+                     ('reversal still holding above/below the 9 EMA' if reversal_holding
+                      else 'reversal has failed -- price back through the 9 EMA'))
 
             if not (near_fvg and reversal_holding): return None
 
             # LAYER 3: 50% at Hippo/Mitigation block
             sl3 = fib['sl_level']
             tp3 = fib['tp2_far']   # Final target: 2.64 level
+            _aj.measure(atr=round(atr, 5), risk_fraction=0.50,
+                        sl_distance=round(abs(cur_price - sl3), 5))
+            _aj.decide(True, 'AOX L3 fired at the mitigation block with reversal holding')
             return {
                 'direction': direction, 'entry_price': cur_price, 'sl': sl3, 'tp': tp3,
                 'risk_fraction': 0.50, 'layer_name': 'L3_HIPPO', 'next_phase': 3,
                 'state_updates': {},
+                'journal': _aj.to_dict(),
             }
 
     except Exception as e:
@@ -7973,6 +8153,7 @@ def run_aox_layered_entry(symbol: str, df_m5: 'pd.DataFrame',
     ticket = execute_aox_layer(
         symbol, signal['direction'], signal['entry_price'], signal['sl'], signal['tp'],
         _risk_fraction, signal['layer_name'], account_equity,
+        journal=signal.get('journal'),
     )
     if not ticket:
         return False
@@ -9073,6 +9254,18 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         _below_200 = _cur_price < _e200
         _200_gate_pass = (direction == 'BUY' and _above_200) or \
                          (direction == 'SELL' and _below_200)
+
+        # DECISION JOURNAL -- see decision_journal.py. This strategy has the
+        # most gates of any live setup (6 internal + 2 at the call site + 4
+        # shared upstream), and the frequency audit showed it firing ~0.08
+        # trades/day. Recording each gate's verdict is how we find out which
+        # of them is doing the filtering and whether that filtering helps.
+        _ej = dj.DecisionJournal(symbol, direction=direction, strategy='EMA_SCALP_CROSS')
+        _ej.note(dj.BIAS, 'ema200_trend_gate',
+                 dj.CONFIRMED if _200_gate_pass else dj.VETO,
+                 (f'price on the correct side of the 200 EMA ({_e200:.4f}) for a {direction}'
+                  if _200_gate_pass else
+                  f'price on the WRONG side of the 200 EMA ({_e200:.4f}) for a {direction}'))
         if not _200_gate_pass:
             logger.debug(f'[EMA 200 GATE] {symbol}: {direction} blocked -- '
                          f'price={_cur_price:.4f} {"below" if direction=="BUY" else "above"} '
@@ -9082,6 +9275,13 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         # meaningfully separated from the 50 EMA. Bunched/braided
         # EMAs = ranging market = a cross here is noise, not
         # momentum, and disproportionately reverses into the stop.
+        _ema_sep = abs(_e25 - _e50)
+        _ema_sep_ok = _ema_sep > (_atr_m5 * config.EMA_DISTANCE_RULE_ATR_MULT)
+        _ej.note(dj.REGIME, 'ema_separation',
+                 dj.CONFIRMED if _ema_sep_ok else dj.VETO,
+                 (f'25/50 EMAs separated by {_ema_sep:.4f} -- trending, not braided'
+                  if _ema_sep_ok else
+                  f'25/50 EMAs bunched ({_ema_sep:.4f}) -- ranging, a cross here is noise'))
         if abs(_e25 - _e50) <= (_atr_m5 * config.EMA_DISTANCE_RULE_ATR_MULT):
             logger.debug(f'[EMA DISTANCE] {symbol}: EMAs bunched '
                          f'(25={_e25:.4f} 50={_e50:.4f} gap={abs(_e25-_e50):.4f} '
@@ -9092,6 +9292,12 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         # EMA cross is only valid after W/M/H&S pattern forms.
         # Without this, we trade random crossovers in ranging markets.
         _ema_pattern = detect_ema_pattern_prefilter(df_m5, direction, _atr_m5)
+        _ej.note(dj.STRUCTURE, 'wm_hs_pattern',
+                 dj.CONFIRMED if _ema_pattern['found'] else dj.VETO,
+                 (f"{_ema_pattern['pattern']} pattern formed before the cross"
+                  if _ema_pattern['found'] else
+                  'no qualifying W/M/H&S pattern before the cross'),
+                 value=_ema_pattern.get('pattern'))
         if not _ema_pattern['found']:
             logger.debug(f"[EMA PATTERN] {symbol}: no qualifying pattern -- skip cross")
             return None
@@ -9125,15 +9331,36 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         _cross_valid = (_cross_bull and direction == 'BUY') or \
                        (_cross_bear and direction == 'SELL')
 
+        _ej.note(dj.TRIGGER, 'cross_valid',
+                 dj.CONFIRMED if _cross_valid else dj.VETO,
+                 ('9/25 EMA trigger fired in the bias direction' if _cross_valid
+                  else 'no 9/25 EMA trigger in the bias direction'))
         if not _cross_valid:
+            _ej.decide(False, 'no valid EMA trigger')
             return None
+        # WHICH of the three trigger variants fired -- a hard cross, an
+        # anticipatory near-cross, or a 9-EMA bounce. These are materially
+        # different entry qualities bundled under one strategy name, and
+        # nothing recorded which one a given trade used until now.
+        _trigger_kind = ('hard_cross' if ((_e9p <= _e25p and _e9 > _e25) or (_e9p >= _e25p and _e9 < _e25))
+                         else 'near_cross' if (_near_cross_bull or _near_cross_bear)
+                         else 'ema9_bounce')
+        _ej.note(dj.TRIGGER, f'trigger_{_trigger_kind}', dj.CONFIRMED,
+                 f'entry trigger was a {_trigger_kind.replace("_", " ")}',
+                 value=_trigger_kind)
 
         # TRAP-AVOIDANCE FILTER: EMA scalp is the one live strategy with no
         # manipulation/sweep-detection layer at all -- see
         # detect_unswept_trap_nearby's docstring. Don't cross into an
         # obvious, still-live stop-hunt target right next to entry.
-        if detect_unswept_trap_nearby(df_m5, direction, _atr_m5):
+        _trap_near = detect_unswept_trap_nearby(df_m5, direction, _atr_m5)
+        _ej.note(dj.LIQUIDITY, 'unswept_trap_nearby',
+                 dj.VETO if _trap_near else dj.CONFIRMED,
+                 ('an unswept liquidity pool sits right next to entry -- likely stop-hunt target'
+                  if _trap_near else 'no unswept liquidity pool adjacent to entry'))
+        if _trap_near:
             logger.debug(f"[EMA TRAP FILTER] {symbol}: unswept liquidity pool near price -- skip cross")
+            _ej.decide(False, 'unswept trap adjacent to entry')
             return None
 
         # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
@@ -9176,10 +9403,24 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
             _cur_price, direction,
             cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else [],
             mi.detect_fvg_zones(df_m5, direction), atr=_atr_m5)
+        _ej.note(dj.LIQUIDITY, 'liquidity_confluence',
+                 dj.CONFIRMED if _ema_conf['confluent'] else dj.VETO,
+                 (f"cross sits at {_ema_conf['matched_level']}" if _ema_conf['confluent']
+                  else 'cross is in open air -- no named level or fresh FVG nearby'),
+                 value=_ema_conf.get('matched_level'))
         if not _ema_conf['confluent']:
             logger.debug(f"[EMA LIQUIDITY] {symbol}: no liquidity reference/FVG near cross -- skip")
+            _ej.decide(False, 'no liquidity confluence at the cross')
             return None
         _liq_strength = min(1.0, (0.8 if _ema_m5['strength'] == 'STRONG' else 0.65) + 0.15)
+        _ej.note(dj.REGIME, 'ema_momentum_strength',
+                 dj.CONFIRMED if _ema_m5['strength'] == 'STRONG' else dj.WEAK,
+                 f"M5 EMA momentum reads {_ema_m5['strength']}",
+                 value=_ema_m5['strength'])
+        _ej.measure(atr_m5=round(_atr_m5, 5), e9=round(_e9, 5), e25=round(_e25, 5),
+                    e50=round(_e50, 5), e200=round(_e200, 5),
+                    sl_distance=round(abs(_cur_price - _sl_ema), 5))
+        _ej.decide(True, f'all EMA gates passed via {_trigger_kind}')
 
         setup = {
             'signal':    direction,
@@ -9196,6 +9437,7 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
             'structure_alignment': 0.65,
             'entry_price': _cur_price,
             'htf_needed': False,   # EMA scalp never needs HTF OB
+            'journal': _ej.to_dict(),
         }
         logger.debug(f"[EMA SCALP] {symbol}: 9/25 cross {'bullish' if _cross_bull else 'bearish'} "
                      f"e9={_e9:.4f} e25={_e25:.4f} e50={_e50:.4f} e200={_e200:.4f} "

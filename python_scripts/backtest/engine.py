@@ -323,10 +323,19 @@ class BacktestEngine:
         jrnl = getattr(result, "journal", None)
         if jrnl:
             jrnl = dict(jrnl)
+            # float() on r_multiple is load-bearing, not cosmetic: it is
+            # computed from numpy price columns, so it is an np.float64. That
+            # serializes as `np.float64(-1.01)`, which is neither valid JSON
+            # (the live path writes journals to a Supabase JSONB column) nor
+            # parseable by analyze_journal.py -- which is exactly how
+            # EMA_SCALP_CROSS journals were written successfully but silently
+            # failed to load. decision_journal._plain() coerces everything
+            # that goes through the journal's own methods; this dict is built
+            # here directly, so it has to do the same.
             jrnl["exit"] = {
                 "outcome": trade.exit_reason,
                 "reason": trade.exit_attribution,
-                "r_multiple": trade.r_multiple,
+                "r_multiple": float(trade.r_multiple) if trade.r_multiple is not None else None,
                 "at": str(trade.exit_time),
             }
             trade.journal = jrnl

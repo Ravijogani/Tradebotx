@@ -79,6 +79,38 @@ RISK = "RISK"              # RR, spread, exposure, correlation, sizing
 TIMING = "TIMING"          # session, rollover window, news proximity
 
 
+def _plain(v: Any) -> Any:
+    """
+    Coerce a value to something JSON/repr-safe.
+
+    Found by running the analyzer on real output: numpy scalars serialize as
+    `np.float64(23.08)`, which is neither valid JSON nor parseable by
+    ast.literal_eval -- so EMA_SCALP_CROSS journals silently failed to load
+    in analyze_journal.py even though they were written. Worse, the LIVE path
+    writes journals into a Supabase JSONB column, and np.float64 is not JSON
+    serializable at all: that would have raised on the first real EMA trade.
+    Fixed at the source so every journal is safe by construction rather than
+    relying on each caller to remember to cast.
+    """
+    # EXACT type check, not isinstance: np.float64 SUBCLASSES Python float, so
+    # an isinstance shortcut passes it through untouched and the leak survives
+    # (found exactly that way -- np.int64 was coerced while np.float64 wasn't).
+    if v is None or type(v) in (bool, int, float, str):
+        return v
+    # numpy / pandas scalars expose .item()
+    item = getattr(v, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            pass
+    if isinstance(v, dict):
+        return {str(k): _plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    return str(v)
+
+
 class DecisionJournal:
     """
     Accumulates the case for (or against) one trade, then its life and death.
@@ -118,13 +150,13 @@ class DecisionJournal:
         """
         self.entry_checks.append({
             "cat": category, "key": key, "verdict": verdict,
-            "detail": detail, "value": value,
+            "detail": str(detail), "value": _plain(value),
         })
         return self
 
     def measure(self, **kwargs) -> "DecisionJournal":
         """Record the raw numbers behind the decision (rr, atr, spread, ...)."""
-        self.numbers.update(kwargs)
+        self.numbers.update({k: _plain(v) for k, v in kwargs.items()})
         return self
 
     def decide(self, taken: bool, detail: str = "") -> "DecisionJournal":
@@ -143,7 +175,7 @@ class DecisionJournal:
         'trail_stop', 'tighten_stop', 'manual_close'. `why` is the trigger.
         """
         entry = {"what": what, "why": why, "at": at}
-        entry.update(extra)
+        entry.update({k: _plain(v) for k, v in extra.items()})
         self.management.append(entry)
         return self
 
@@ -160,8 +192,8 @@ class DecisionJournal:
         demand different fixes; 'SL' alone tells you nothing.
         """
         self.exit = {"outcome": outcome, "reason": reason,
-                     "r_multiple": r_multiple, "at": at}
-        self.exit.update(extra)
+                     "r_multiple": _plain(r_multiple), "at": at}
+        self.exit.update({k: _plain(v) for k, v in extra.items()})
         return self
 
     # ---------------- serialization / summary ----------------

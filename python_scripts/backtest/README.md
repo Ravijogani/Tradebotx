@@ -1109,6 +1109,64 @@ finding is recorded as a hypothesis with a clear test: re-run this analysis
 on more instruments and more history, and if the pattern holds there, then
 change the targets.
 
+### Journaling extended to Swappy 3C, EMA Scalp Cross and AOX
+
+Same instrumentation as SSM, now across every live strategy in the scalping
+bot. Coverage verified on real data: 132/132 SSM, 18/18 Swappy, 5/5 EMA
+Scalp journalled, with results byte-identical to before (no behavioural
+change). AOX is journalled per layer (`AOX_L1_SD_TAP`, `AOX_L2_TURTLE`,
+`AOX_L3_HIPPO`) — deliberately valuable there because AOX is the one live
+strategy that has **never been backtested**, so when M1 history finally
+arrives every AOX decision will already explain itself.
+
+**Two real bugs the analyzer caught by being pointed at its own output:**
+
+1. **numpy scalars broke serialization.** `np.float64` values serialize as
+   `np.float64(23.08)` — neither valid JSON nor parseable by
+   `ast.literal_eval`. EMA Scalp journals were being *written* but silently
+   failed to *load*. Worse, the live path writes journals into a Supabase
+   **JSONB** column and `np.float64` is not JSON-serializable at all, so this
+   would have raised on the first real EMA trade in production. Fixed at the
+   source with a `_plain()` coercion in `decision_journal.py` — and note the
+   subtlety that made the first fix insufficient: **`np.float64` subclasses
+   Python `float`**, so an `isinstance(v, float)` shortcut passes it straight
+   through. It needs an exact-type check. One more leak lived in
+   `engine.py`, which builds the exit dict directly and so bypassed the
+   journal's own coercion.
+
+2. **Direction-specific key names faked an edge.** Swappy's journal used
+   `higher_low` for BUY and `lower_high` for SELL, and `c3_above_mid` /
+   `c3_below_mid` likewise. Those are the *same concept* per direction, so
+   they became BUY/SELL proxies — and the analyzer duly reported a
+   confident-looking ±0.333R "edge" for them that was really just "SELLs
+   outperformed BUYs in this window." Fixed to one shared key per concept,
+   with direction recorded separately; the spurious edges correctly collapsed
+   to "no contrast" afterwards. A new **directional split** section was added
+   to the analyzer so the asymmetry it was masking is visible on purpose
+   rather than by accident.
+
+**Two structural findings about the strategies themselves:**
+
+- **EMA Scalp Cross cannot learn from its taken trades.** All eight of its
+  confirmations report "no contrast" — because every one of them is a *hard
+  veto*, so every surviving trade has all of them by construction.
+  Confirmation-edge analysis is uninformative for an all-mandatory-gate
+  strategy. The only way to learn about it is to journal the **rejected**
+  setups (which gate rejected how many, and what those rejected setups would
+  have done). That is the clear next step for this strategy specifically,
+  and is noted rather than half-built.
+
+- **EMA Scalp Cross never actually traded a cross.** All 5 trades in the
+  window fired via the `ema9_bounce` variant — not one hard 9/25 cross, not
+  one near-cross. The strategy is named for, and documented as, a crossover
+  system, and in practice it is trading 9-EMA bounces. Worth knowing before
+  anyone tunes "the cross".
+
+- **Swappy's premium/discount reads anti-correlated too** (-0.285R edge,
+  n=6 vs 12), the same direction as SSM's much larger sample. Consistent
+  story across two strategies now, though still one instrument and one
+  window — the same caveat as everything else here.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

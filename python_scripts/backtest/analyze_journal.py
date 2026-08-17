@@ -212,6 +212,44 @@ def report_traded_objections(journals: List[Dict[str, Any]], min_n: int = 5) -> 
     print()
 
 
+def report_direction_split(journals: List[Dict[str, Any]]) -> None:
+    """
+    BUY vs SELL performance.
+
+    Added after a real instrumentation bug: Swappy's journal used
+    direction-specific key names ('higher_low' for BUY, 'lower_high' for
+    SELL), so the confirmation table reported an "edge" for them that was
+    actually just "SELLs outperformed BUYs in this window". The keys are
+    shared now -- and the directional signal it was masking is genuinely
+    worth seeing, so it gets its own section instead of leaking into another.
+    """
+    print("=" * 92)
+    print("4. DIRECTIONAL SPLIT (a real asymmetry here is a finding, not noise)")
+    print("=" * 92)
+    buckets: Dict[str, List[float]] = defaultdict(list)
+    for j in journals:
+        r = (j.get("exit") or {}).get("r_multiple")
+        if r is None:
+            continue
+        buckets[j.get("direction") or "?"].append(r)
+    if not buckets:
+        print("No outcomes recorded.\n")
+        return
+    print(f"{'Direction':<12}{'Trades':>8}{'Total R':>10}{'Avg R':>9}")
+    print("-" * 92)
+    for d, rs in sorted(buckets.items()):
+        print(f"{d:<12}{len(rs):>8}{sum(rs):>+10.2f}{sum(rs)/len(rs):>+9.3f}")
+    if len(buckets) == 2:
+        vals = list(buckets.values())
+        gap = abs(sum(vals[0])/len(vals[0]) - sum(vals[1])/len(vals[1]))
+        if min(len(v) for v in vals) < 10:
+            print(f"  Gap {gap:.3f}R per trade, but samples are small -- not actionable yet.")
+        elif gap > 0.3:
+            print(f"  Gap {gap:.3f}R per trade is large. Worth checking whether one side is")
+            print("  structurally disadvantaged (spread, session, or a directional bug).")
+    print()
+
+
 def main():
     p = argparse.ArgumentParser(description="Mine decision journals from a backtest ledger")
     p.add_argument("--ledger", required=True, help="Path to a ledger CSV written with --out")
@@ -236,6 +274,7 @@ def main():
     report_confirmation_edges(journals, args.min_n)
     report_loss_causes(journals)
     report_traded_objections(journals)
+    report_direction_split(journals)
 
 
 if __name__ == "__main__":

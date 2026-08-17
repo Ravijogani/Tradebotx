@@ -305,7 +305,8 @@ def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
     return StrategyResult(direction=direction, stop_loss=sl,
                            reason=f"SWAPPY_3C_{sw['pattern']}",
                            confidence=sw.get("strength", 0.0),
-                           order_type="LIMIT", limit_entry=stop_entry, take_profit=tp)
+                           order_type="LIMIT", limit_entry=stop_entry, take_profit=tp,
+                           journal=sw.get("journal"))
 
 
 def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
@@ -370,7 +371,8 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
     if not r:
         return None
     return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],
-                           reason=r.get("reason", "EMA_SCALP_CROSS"))
+                           reason=r.get("reason", "EMA_SCALP_CROSS"),
+                           journal=r.get("journal"))
 
 
 STRATEGIES_LIVE = [
