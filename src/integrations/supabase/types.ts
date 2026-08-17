@@ -666,6 +666,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          accepted_risk_disclaimer_at: string | null
           created_at: string
           email: string
           full_name: string | null
@@ -675,6 +676,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          accepted_risk_disclaimer_at?: string | null
           created_at?: string
           email: string
           full_name?: string | null
@@ -684,6 +686,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          accepted_risk_disclaimer_at?: string | null
           created_at?: string
           email?: string
           full_name?: string | null
