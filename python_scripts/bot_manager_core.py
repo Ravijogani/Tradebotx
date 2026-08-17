@@ -293,6 +293,57 @@ class InvalidScriptPath(ValueError):
     pass
 
 
+class MissingBotDependency(RuntimeError):
+    """A required shared module isn't present next to the bot script."""
+    pass
+
+
+# Shared modules every bot script imports at MODULE SCOPE. If one is missing on
+# the deployment host, the subprocess dies instantly with a ModuleNotFoundError
+# that only lands in bot_startup_stderr -- the manager reports a "started" bot,
+# the dashboard shows it running, and the operator finds out by opening a log
+# file in Notepad. That is exactly what happened on the Lightsail host after
+# risk_limits.py / bot_control.py / decision_journal.py were added to the repo
+# but not copied to c:\trading-bot, and the stale WINDOWS_DEPLOYMENT_GUIDE.md
+# file list (which still named only the LEGACY hybrid_trading_bot.py) is why.
+#
+# Checked up-front instead, so a missing file produces one clear, actionable
+# error naming the file, before any process is spawned.
+#
+# Keep this in sync with the guide's file list. To regenerate it from the code
+# rather than by hand:
+#   python3 -c "import ast,glob,os; ..."  # see WINDOWS_DEPLOYMENT_GUIDE.md
+REQUIRED_BOT_MODULES = (
+    'market_intelligence.py',
+    'risk_limits.py',
+    'bot_control.py',
+    'decision_journal.py',
+)
+
+
+def verify_bot_dependencies(bot_dir: Path, script_name: str) -> None:
+    """
+    Raise MissingBotDependency if any shared module the bot needs is absent.
+
+    Deliberately a filesystem check rather than an import attempt: importing
+    these in the manager process would execute their module-scope code and
+    could mask a genuine problem in the child, and the manager may be running
+    a different interpreter than the bot subprocess.
+
+    hybrid_trading_bot.py (the legacy script) predates all four modules and
+    doesn't import them, so it is exempt.
+    """
+    if script_name == 'hybrid_trading_bot.py':
+        return
+    missing = [m for m in REQUIRED_BOT_MODULES if not (bot_dir / m).is_file()]
+    if missing:
+        raise MissingBotDependency(
+            f"Cannot start {script_name}: missing required module(s) in {bot_dir}: "
+            f"{', '.join(missing)}. Copy them from the repo's python_scripts/ "
+            f"directory to the bot directory and start again."
+        )
+
+
 def resolve_bot_script(bot_dir: Path, requested_name: str) -> Path:
     """Resolve a caller-supplied script name to a real file inside bot_dir.
 
@@ -313,6 +364,9 @@ def resolve_bot_script(bot_dir: Path, requested_name: str) -> Path:
     candidate = (resolved_dir / name).resolve()
     if resolved_dir not in candidate.parents and candidate != resolved_dir:
         raise InvalidScriptPath(f"Resolved script path escapes bot directory: {candidate}")
+
+    # Fail loudly HERE rather than spawning a subprocess that dies on import.
+    verify_bot_dependencies(resolved_dir, name)
 
     return candidate
 
@@ -410,6 +464,13 @@ def build_bot_blueprint(get_secret, bot_dir: Path, build_launch_args=None):
             except InvalidScriptPath as e:
                 logger.error(f"Rejected bot start: {e}")
                 return jsonify({'error': 'Invalid script_path'}), 400
+            except MissingBotDependency as e:
+                # Surface the full message: unlike InvalidScriptPath (where the
+                # detail is withheld because the input is caller-controlled and
+                # possibly hostile), this names OUR missing files and is only
+                # actionable if the operator can actually read it.
+                logger.error(f"Refusing bot start: {e}")
+                return jsonify({'error': str(e), 'code': 'missing_dependency'}), 500
 
             if not bot_script.exists():
                 logger.error(f"Bot script not found: {bot_script}")

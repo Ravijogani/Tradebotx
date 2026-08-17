@@ -42,14 +42,67 @@ Complete guide for deploying the trading bot manager on **Windows Server** via A
 
 ### Step 2: Upload Bot Files to Windows Server
 
+> **This file list was badly out of date and caused a real production
+> outage.** It named only the LEGACY `hybrid_trading_bot.py` and omitted the
+> actual live bots plus every shared module they import. After
+> `risk_limits.py` / `bot_control.py` / `decision_journal.py` were added to the
+> repo, the Lightsail host still had none of them, so the bot died instantly
+> with `ModuleNotFoundError: No module named 'risk_limits'` — visible only in
+> `bot_startup_stderr`. `bot_manager_core.py` now preflight-checks these before
+> spawning anything (`verify_bot_dependencies`), so a missing file gives one
+> clear error naming it instead of a silent crash. **Keep this list and
+> `REQUIRED_BOT_MODULES` in that file in sync.**
+
 **Option A: Direct Copy via RDP**
 1. On your local machine, zip these files:
-   - `bot_wrapper.py`
-   - `hybrid_trading_bot.py`
+
+   **Bot manager (the service that launches bots):**
    - `bot_manager_http_windows.py`
+   - `bot_manager_core.py`
+   - `bot_wrapper.py`
+
+   **Live trading bots (one per tier):**
+   - `hybrid_trading_bot_multiuser.py`  ← free-tier scalping (the main one)
+   - `intraday.py`                      ← pro-tier intraday
+   - `structural_swing_pro.py`          ← swing tier
+   - `hybrid_trading_bot.py`            ← legacy, still allow-listed
+
+   **Shared modules ALL three live bots import at module scope — the bots
+   cannot start without every one of these:**
+   - `market_intelligence.py`
+   - `risk_limits.py`
+   - `bot_control.py`
+   - `decision_journal.py`
+
+   **Setup files:**
    - `requirements.txt`
    - `install_windows.bat`
    - `run_bot_manager.bat`
+
+   To regenerate this list from the code instead of trusting the doc (run in
+   `python_scripts/`):
+
+   ```bash
+   python3 -c "
+   import ast, os, glob
+   local = {os.path.basename(p)[:-3] for p in glob.glob('*.py')}
+   def deps(fn, seen=None):
+       seen = set() if seen is None else seen
+       if fn in seen or not os.path.exists(fn): return seen
+       seen.add(fn)
+       for n in ast.walk(ast.parse(open(fn, encoding='utf-8').read())):
+           mods = ([a.name.split('.')[0] for a in n.names] if isinstance(n, ast.Import)
+                   else [n.module.split('.')[0]] if isinstance(n, ast.ImportFrom) and n.module and n.level == 0
+                   else [])
+           for m in mods:
+               if m in local and m + '.py' != fn: deps(m + '.py', seen)
+       return seen
+   need = set()
+   for e in ['hybrid_trading_bot_multiuser.py','intraday.py','structural_swing_pro.py','bot_manager_http_windows.py','bot_wrapper.py']:
+       need |= deps(e)
+   print('\n'.join(sorted(need)))
+   "
+   ```
 
 2. Copy the zip file through RDP:
    - In RDP session, go to local drives (This PC → Local Disk)
