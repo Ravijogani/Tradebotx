@@ -4408,7 +4408,19 @@ def intraday_trading_session():
     except Exception as e:
         logger.error(f"Failed to get initial account info: {e}")
         state.daily_start_equity = 0.0
-    
+
+    # --- CONFIRM STARTED ---
+    # Claim user_strategies (is_running=true, bot_pid) now that MT5 is up.
+    # start-trading-bot writes is_running=false before launch, meaning "not
+    # confirmed yet"; nothing ever confirmed, so without this the bot's first
+    # in-loop check_remote_stop read that pre-launch false as a dashboard Stop
+    # and shut the process down seconds after boot. See bot_control.py.
+    if bot_control.confirm_bot_started(supabase, USER_ID, STRATEGY_ID, os.getpid()):
+        logger.info(f"[STARTED] Confirmed running in user_strategies (pid {os.getpid()})")
+    else:
+        logger.warning("[STARTED] Could not confirm start in user_strategies "
+                       "(stopped during launch, or write failed)")
+
     while True:
         try:
             iteration += 1

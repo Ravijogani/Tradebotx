@@ -9977,7 +9977,27 @@ def ai_trading_session():
         if _stop is not None:
             logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- not starting.")
             return
-        
+
+        # --- CONFIRM STARTED ---
+        # MT5 is connected and the startup checks passed, so this process is
+        # really trading. Claim user_strategies (is_running=true, bot_pid) --
+        # the confirmation start-trading-bot has always documented but which
+        # nothing performed. Until this ran, the row kept its pre-launch
+        # is_running=false, so the bot's own next poll read that as "stopped
+        # from the dashboard" and shut it down seconds after boot, the
+        # dashboard showed "No bots running" beside a live process, and the
+        # admin's Emergency Stop All (which filters on is_running=true)
+        # matched nothing.
+        if bot_control.confirm_bot_started(supabase, USER_ID, STRATEGY_ID, os.getpid()):
+            logger.info(f"[STARTED] Confirmed running in user_strategies (pid {os.getpid()})")
+        else:
+            # Not fatal: either a Stop landed during launch (the guard refused
+            # to resurrect it -- the next cycle's check will stop us) or the
+            # write failed. Either way the startup grace covers the window.
+            logger.warning("[STARTED] Could not confirm start in user_strategies "
+                           "(stopped during launch, or write failed)")
+
+
         send_telegram_notification(
             f" <b>SCALPING BOT V2.0 Started</b>\n\nUser: {USER_ID}\nStrategy: {STRATEGY_ID}\n"
             f"Account: {config.MT5_LOGIN}\nEquity: ${state.daily_start_equity:.2f}\n"

@@ -61,6 +61,79 @@ class StopSignal(NamedTuple):
 _settings_cache: Dict[str, Any] = {}
 _settings_cache_at: float = 0.0
 
+# Per-(user, strategy) launch state, for the startup race described in
+# check_remote_stop. `_confirmed_running` is a LATCH: once we have seen
+# is_running=true for a pair, any later false is an authoritative stop with no
+# grace whatsoever -- an emergency stop on a live position must never wait.
+_confirmed_running: set = set()
+_first_check_at: Dict[tuple, float] = {}
+
+# How long after this process's FIRST check a not-yet-confirmed launch may sit
+# at is_running=false before we conclude the start genuinely failed. Generous
+# on purpose: trigger-bot's fetch to the bot manager alone has an 8s timeout.
+DEFAULT_STARTUP_GRACE_SECONDS = 120.0
+
+
+def reset_state() -> None:
+    """Clear module caches/latches. For tests and for a bot that re-launches
+    in-process; a fresh subprocess starts clean anyway."""
+    global _settings_cache, _settings_cache_at
+    _settings_cache = {}
+    _settings_cache_at = 0.0
+    _confirmed_running.clear()
+    _first_check_at.clear()
+
+
+def confirm_bot_started(supabase, user_id: str, strategy_id: str,
+                        pid: Optional[int] = None) -> bool:
+    """
+    Announce "this process is really up and trading" -- the write that
+    start-trading-bot's own comment has always promised and that nothing ever
+    performed:
+
+        is_running: false, // Don't set to true until bot confirms it started
+        bot_pid: null,     // Will be set by bot when it starts
+
+    No code ever confirmed, so is_running stayed false and bot_pid stayed
+    null for the platform's entire history. That was invisible while nothing
+    read the column; once the bots began obeying is_running it became a
+    deadlock -- the bot booted, read its own pre-launch false, and shut
+    itself down a few seconds later. It also means the admin's "Emergency
+    Stop All" (which targets `.eq('is_running', true)`) matched zero rows,
+    and the dashboard showed "No bots running" beside a live process.
+
+    Returns True when this call flipped the row to running.
+
+    GUARDED on status='starting' so it cannot resurrect a bot that was
+    stopped during launch: every stop path (stop-trading-bot,
+    admin-stop-bots, the user's Stop button) writes status='stopped'
+    together with is_running=false, so if a stop landed first this update
+    matches no rows, returns False, and the bot then shuts down normally via
+    check_remote_stop. Without that guard, a Stop pressed during the launch
+    window would be silently undone by the starting bot.
+    """
+    try:
+        res = (supabase.table('user_strategies')
+               .update({'is_running': True,
+                        'status': 'running',
+                        'bot_pid': pid,
+                        'stopped_at': None})
+               .eq('user_id', user_id)
+               .eq('strategy_id', strategy_id)
+               .eq('status', 'starting')
+               .execute())
+    except Exception:
+        # Fail OPEN, consistent with the rest of this module: if we cannot
+        # write the confirmation we must NOT refuse to trade. The startup
+        # grace in check_remote_stop covers the window, and a bot that never
+        # manages to confirm stops itself once the grace expires.
+        return False
+
+    if res.data:
+        _confirmed_running.add((user_id, strategy_id))
+        return True
+    return False
+
 
 def _platform_halt(supabase, ttl_seconds: float = 30.0) -> Optional[StopSignal]:
     """
@@ -113,7 +186,9 @@ def _platform_halt(supabase, ttl_seconds: float = 30.0) -> Optional[StopSignal]:
 
 
 def check_remote_stop(supabase, user_id: str, strategy_id: str,
-                      check_platform: bool = True) -> Optional[StopSignal]:
+                      check_platform: bool = True,
+                      startup_grace_seconds: float = DEFAULT_STARTUP_GRACE_SECONDS
+                      ) -> Optional[StopSignal]:
     """
     "Should this bot stop right now?" -- the one call every live bot makes
     each loop iteration.
@@ -137,15 +212,36 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
     A missing row is deliberately NOT treated as a stop: a bot launched
     before its row is written (or with an id mismatch) should keep running
     and be stopped explicitly, not silently killed by a race.
+
+    THE STARTUP RACE (this cost a live bot 10 seconds of life; see
+    confirm_bot_started). is_running=false does not only mean "stop" -- it is
+    also the value start-trading-bot writes BEFORE the process is launched,
+    meaning "not confirmed started yet". A booting bot reads that pre-launch
+    false and, taken literally, kills itself. So false is resolved by
+    context, never blindly:
+
+      * Latched running (we have seen true at least once) -> STOP, instantly.
+        No grace. This is the emergency-stop path and it must not be delayed.
+      * status says 'stopped'/'stopping' -> STOP, instantly, even if we never
+        saw true: somebody really did press Stop during the launch window.
+      * Otherwise (status 'starting', or absent) -> unconfirmed launch. Return
+        None while within startup_grace_seconds of this process's first check,
+        then STOP with reason 'start_never_confirmed' -- which is a real
+        failure worth surfacing, not a stop instruction, and is named
+        distinctly so the log says what actually happened.
     """
     if check_platform:
         halt = _platform_halt(supabase)
         if halt is not None:
             return halt
 
+    key = (user_id, strategy_id)
+    now = time.time()
+    first_seen = _first_check_at.setdefault(key, now)
+
     try:
         res = (supabase.table('user_strategies')
-               .select('is_running')
+               .select('is_running,status')
                .eq('user_id', user_id)
                .eq('strategy_id', strategy_id)
                .limit(1)
@@ -157,11 +253,31 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
     if not rows:
         return None  # no row yet: see docstring, don't infer a stop
 
-    if rows[0].get('is_running') is False:
+    if rows[0].get('is_running') is True:
+        _confirmed_running.add(key)   # latch: later falses are authoritative
+        return None
+
+    if rows[0].get('is_running') is not False:
+        return None  # null/absent -- not an instruction either way
+
+    status = (rows[0].get('status') or '').strip().lower()
+
+    if key in _confirmed_running or status in ('stopped', 'stopping'):
         return StopSignal(
             reason='remote_stop',
             detail=('user_strategies.is_running is false -- stopped from the '
                     'dashboard (user Stop, admin per-bot Stop, admin '
                     'Emergency Stop All, or the stop-trading-bot function)'),
         )
-    return None
+
+    if now - first_seen < startup_grace_seconds:
+        return None  # launch not confirmed yet -- not a stop instruction
+
+    return StopSignal(
+        reason='start_never_confirmed',
+        detail=(f'is_running never became true within '
+                f'{startup_grace_seconds:.0f}s of startup (status={status!r}). '
+                'The bot launched but its start was never confirmed -- check '
+                'that confirm_bot_started() ran and that trigger-bot reached '
+                'the bot manager.'),
+    )

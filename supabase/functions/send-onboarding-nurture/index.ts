@@ -4,6 +4,23 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
 
+// Upper bound on how old a signup may be to receive ANY nurture email.
+//
+// Without this the sequence had a floor (hoursAfterSignup) but no ceiling, so
+// every abandoned signup ever made stayed eligible forever. The cron job
+// driving this function had been failing auth on every run since it shipped,
+// which hid the consequence: the moment auth was repaired the first run would
+// have sent 356 emails to 74 people, 66 of whom signed up more than 90 days
+// earlier and the oldest back in Nov 2025. That is a spam blast -- the
+// complaints and bounces would damage the sending domain's reputation and
+// take the deliverability of the OTP and trial-expiry mail down with it.
+//
+// 14 days is twice the 168h length of the sequence, so a cron outage lasting
+// up to a week still delivers legitimately-owed emails, while long-abandoned
+// accounts are excluded permanently. Nurturing someone 9 months after they
+// walked away is not a reminder, it is unsolicited mail.
+const MAX_HOURS_AFTER_SIGNUP = 336; // 14 days
+
 // Email sequence configuration (hours after signup)
 const EMAIL_SEQUENCE = [
   { sequence: 1, hoursAfterSignup: 24, type: 'reminder', subject: 'Complete Your TradeBotX Setup - Just a Few Steps Away!' },
@@ -369,9 +386,22 @@ serve(async (req) => {
     console.log(`Found ${incompleteUsers?.length || 0} users with incomplete setup`);
 
     let emailsSent = 0;
+    let skippedTooOld = 0;
     const now = new Date();
 
     for (const userSetup of incompleteUsers || []) {
+      const signupTime = new Date(userSetup.created_at);
+      const hoursSinceSignup = (now.getTime() - signupTime.getTime()) / (1000 * 60 * 60);
+
+      // Too old to nurture -- see MAX_HOURS_AFTER_SIGNUP. First statement in
+      // the loop on purpose: it needs nothing but created_at, so skipping a
+      // stale signup costs no queries at all. With 109 incomplete setups on
+      // record and only a handful recent, that is most of the work avoided.
+      if (hoursSinceSignup > MAX_HOURS_AFTER_SIGNUP) {
+        skippedTooOld++;
+        continue;
+      }
+
       // Get user profile
       const { data: profile } = await supabase
         .from('profiles')
@@ -383,9 +413,6 @@ serve(async (req) => {
         console.log(`No email found for user ${userSetup.user_id}`);
         continue;
       }
-
-      const signupTime = new Date(userSetup.created_at);
-      const hoursSinceSignup = (now.getTime() - signupTime.getTime()) / (1000 * 60 * 60);
 
       // Get already sent emails for this user
       const { data: sentEmails } = await supabase
@@ -442,10 +469,11 @@ serve(async (req) => {
 
     await client.close();
 
-    console.log(`Onboarding nurture completed. Sent ${emailsSent} emails.`);
+    console.log(`Onboarding nurture completed. Sent ${emailsSent} emails; skipped ${skippedTooOld} signups older than ${MAX_HOURS_AFTER_SIGNUP}h.`);
 
     return new Response(
-      JSON.stringify({ success: true, emailsSent }),
+      JSON.stringify({ success: true, emailsSent, skippedTooOld,
+                       candidates: incompleteUsers?.length || 0 }),
       { 
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
