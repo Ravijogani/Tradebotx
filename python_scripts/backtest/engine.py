@@ -85,6 +85,64 @@ def simulate_exit(direction: str, stop_loss: float, take_profit: float,
     return last["time"], last["close"], "TIMEOUT"
 
 
+def attribute_exit(direction: str, entry_price: float, stop_loss: float,
+                   take_profit: float, exit_reason: str,
+                   ltf_series: pd.DataFrame, exit_idx: int,
+                   lookahead_bars: int = 24) -> str:
+    """
+    WHY the trade ended that way -- not just the mechanical label.
+
+    "SL" is not a reason. A stop that was swept and then saw price run to
+    the original target is a STOP PLACEMENT problem. A stop hit by price
+    that kept going against us is a THESIS problem. Those need opposite
+    fixes -- tighten the entry vs re-examine the bias -- and the difference
+    is only recoverable if it's attributed at the time.
+
+    Looks forward `lookahead_bars` after the exit and classifies:
+      swept_then_resumed  -- price came back and reached the original TP
+      partial_recovery    -- price recovered past entry but not to TP
+      thesis_invalidated  -- price continued against us
+      clean_target        -- TP hit without ever threatening the stop
+      target_hit          -- TP hit (stop was threatened earlier)
+      timed_out_*         -- closed on max-bars, with which side it favoured
+
+    Deliberately uses only bars AFTER the exit, so this is post-hoc
+    attribution for R&D, never something a live decision could depend on
+    (no lookahead is introduced into any trading decision).
+    """
+    n = len(ltf_series)
+    if exit_idx is None or exit_idx >= n - 1:
+        return f"{exit_reason.lower()}_no_followthrough_data"
+
+    fwd = ltf_series.iloc[exit_idx + 1:min(exit_idx + 1 + lookahead_bars, n)]
+    if len(fwd) == 0:
+        return f"{exit_reason.lower()}_no_followthrough_data"
+
+    if direction == "BUY":
+        reached_tp = bool((fwd["high"] >= take_profit).any())
+        recovered_entry = bool((fwd["high"] >= entry_price).any())
+        went_further = bool((fwd["low"] <= stop_loss).any())
+    else:
+        reached_tp = bool((fwd["low"] <= take_profit).any())
+        recovered_entry = bool((fwd["low"] <= entry_price).any())
+        went_further = bool((fwd["high"] >= stop_loss).any())
+
+    if exit_reason == "SL":
+        if reached_tp:
+            return "swept_then_resumed -- stop was hit but price then reached the original target (stop placement, not thesis)"
+        if recovered_entry:
+            return "partial_recovery -- price came back past entry but never reached target (marginal setup)"
+        return "thesis_invalidated -- price continued against us after the stop (bias/structure was wrong)"
+
+    if exit_reason == "TP":
+        return "target_hit"
+
+    # TIMEOUT
+    if recovered_entry and not went_further:
+        return "timed_out_favourable -- closed on time limit while still onside"
+    return "timed_out_adverse -- closed on time limit while offside"
+
+
 @dataclass
 class SimulatedTrade:
     symbol: str
@@ -109,6 +167,12 @@ class SimulatedTrade:
     # trusted: real per-bar spread should visibly vary trade to trade,
     # unlike the old single static DEFAULT_SPREAD_MODEL number.
     spread_charged: Optional[float] = None
+    # DECISION JOURNAL: the full case the strategy made for this trade, plus
+    # exit attribution. Serialized as JSON in the ledger CSV so R&D can mine
+    # "which confirmations predict a better trade" across a whole run --
+    # see python_scripts/decision_journal.py and analyze_journal.py.
+    journal: Optional[dict] = None
+    exit_attribution: Optional[str] = None
 
 
 @dataclass
@@ -241,6 +305,31 @@ class BacktestEngine:
 
         realized = (trade.exit_price - trade.entry_price) if direction == "BUY" else (trade.entry_price - trade.exit_price)
         trade.r_multiple = realized / sl_dist
+
+        # Locate the exit bar so the attribution can look at what happened
+        # AFTER it (post-hoc only -- never feeds a trading decision).
+        exit_idx = None
+        if trade.exit_time is not None:
+            matches = ltf_series.index[ltf_series["time"] == trade.exit_time]
+            if len(matches):
+                exit_idx = ltf_series.index.get_loc(matches[0])
+        trade.exit_attribution = attribute_exit(
+            direction, trade.entry_price, stop_loss, take_profit,
+            trade.exit_reason or "", ltf_series, exit_idx)
+
+        # Carry the strategy's own decision journal through, and close it out
+        # with the real outcome so summarize_by_confirmation() can correlate
+        # each confirmation against actual R.
+        jrnl = getattr(result, "journal", None)
+        if jrnl:
+            jrnl = dict(jrnl)
+            jrnl["exit"] = {
+                "outcome": trade.exit_reason,
+                "reason": trade.exit_attribution,
+                "r_multiple": trade.r_multiple,
+                "at": str(trade.exit_time),
+            }
+            trade.journal = jrnl
         return trade
 
     def _wait_for_limit_fill(self, result: StrategyResult, ltf_series, signal_idx):

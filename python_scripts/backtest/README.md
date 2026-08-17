@@ -1026,6 +1026,89 @@ carry 250 bars of warm-up history before their first counted trade, so the
 200 EMA / volume-profile / swing-structure reads are real rather than
 cold-start artefacts, while trades are only counted from inside the window.
 
+### Decision journals — and what they found on the first run
+
+Requested directly: the bot should record every reason it identified when
+taking a trade, the way a discretionary trader writes up their case, plus
+why each trade ended the way it did — so that R&D can find out where the bot
+is actually going wrong instead of guessing.
+
+`python_scripts/decision_journal.py` (22 unit tests) records three phases per
+trade: **entry** (every check that ran, with a verdict — `CONFIRMED`, `WEAK`,
+`NEUTRAL`, `AGAINST`, `VETO` — so disagreements are recorded, not just the
+checks that fired), **management** (break-even moves, partials, trailing,
+each with its trigger), and **exit** with an *attributed cause*.
+
+`backtest/engine.py`'s new `attribute_exit()` is the piece that makes losses
+diagnosable. "SL" is not a reason. It looks forward past the exit (post-hoc
+only — never feeds a trading decision) and separates:
+
+- `swept_then_resumed` — the stop was hit, then price reached the original
+  target anyway. **A stop-placement problem.**
+- `partial_recovery` — price came back past entry but never reached target.
+- `thesis_invalidated` — price kept going against us. **A direction problem.**
+
+`backtest/analyze_journal.py` then mines a ledger. Journals are produced by
+the backtest as well as live, which matters enormously: it means the 132
+existing SSM trades became an analyzable dataset immediately instead of
+waiting months for live ones.
+
+**What the first real run found (XAUUSDm, 132 SSM trades):**
+
+| Confirmation | Present | Avg R | Absent | Avg R | Edge |
+|---|---|---|---|---|---|
+| liquidity_confluence | 10 | +1.523 | 122 | +0.696 | **+0.827** |
+| premium_discount | 51 | +0.145 | 81 | +1.146 | **-1.001** |
+| ote_zone | 12 | -0.202 | 120 | +0.855 | **-1.057** |
+
+Premium/discount and OTE — both added earlier in this same session — read as
+strongly **anti-correlated** with trade quality for SSM. Before treating that
+as a verdict, two candidate explanations were tested against the data:
+
+1. *Selection effect from the RR floor?* Partly present but insufficient: the
+   objection trades did face a stricter floor on average (min_rr 1.89 vs 1.50),
+   but the favorable-PD trades had **higher** average RR (15.89 vs 12.56) and
+   still performed far worse. The confound does not explain it away.
+2. *The real mechanism.* SSM's take-profit is a fixed far-away level (the
+   swept candle's extreme), so RR is largely a proxy for **how far the target
+   is** — and win rate collapses with distance:
+
+| RR band | Trades | Win rate | Avg R |
+|---|---|---|---|
+| 0–5x | 18 | 22.2% | **-0.376** |
+| 5–10x | 35 | 25.7% | +0.956 |
+| 10–20x | 54 | 16.7% | +1.260 |
+| 20x+ | 25 | **4.0%** | +0.217 |
+
+A deeper discount sits further from the swept extreme, so "favorable
+premium/discount" for SSM is measuring target distance, not entry quality.
+That is why it reads backwards.
+
+**And the coherent headline finding**, from the loss attribution:
+
+| Attributed cause | Trades | Total R |
+|---|---|---|
+| partial_recovery | 66 | -77.86 |
+| swept_then_resumed | 26 | -31.40 |
+| thesis_invalidated | 17 | -20.18 |
+| target_hit | 23 | +229.61 |
+
+**92 of 109 losses were trades where price moved back in our favour but never
+reached the target. Only 17 were genuinely wrong about direction.** SSM's
+problem is not its bias logic or its entries — it is that its take-profit is
+too far away.
+
+**Deliberately NOT acted on yet, and this is the disciplined part.** The
+obvious move is to cap RR or pull targets nearer. But walk-forward already
+established that 132 trades on one instrument over one window cannot
+distinguish this strategy's edge from luck; slicing that same sample into RR
+bands makes each band weaker still (n=25 for the 20x+ band). Shipping a
+target change fitted to these bands would be textbook curve-fitting to one
+quarter of gold — the exact mistake this harness exists to prevent. The
+finding is recorded as a hypothesis with a clear test: re-run this analysis
+on more instruments and more history, and if the pattern holds there, then
+change the targets.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

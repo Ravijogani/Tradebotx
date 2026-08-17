@@ -93,6 +93,7 @@ import google.generativeai as genai
 
 import market_intelligence as mi
 import bot_control
+import decision_journal as dj
 import risk_limits
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
@@ -7403,6 +7404,11 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                         'htf_sweep': ((local_signal.get('sweep') or {}).get('type')
                                       if isinstance(local_signal.get('sweep'), dict) else None),
                     },
+                    # Full decision journal (decision_journal.py) when the
+                    # strategy produced one. This is the same structure the
+                    # backtest writes, so backtest/analyze_journal.py can mine
+                    # live trades and historical ones with one code path.
+                    'journal': local_signal.get('journal'),
                 }
             })
             state.daily_trades += 1
@@ -8224,9 +8230,20 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
     try:
         atr_m5 = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
 
+        # DECISION JOURNAL: record the case for this trade the way a trader
+        # would state it out loud, including the evidence that argued AGAINST
+        # it. Every value below was already computed here and then discarded
+        # -- see decision_journal.py's docstring for why keeping it is what
+        # makes post-hoc R&D ("which confirmations actually predict a better
+        # trade?") possible at all.
+        _j = dj.DecisionJournal(symbol, direction=None, strategy='SHAAKUNI_SSM')
+
         # Direction: only trade trend-aligned sweeps
         direction = 'BUY' if effective_trend == 'BULLISH' else                     'SELL' if effective_trend == 'BEARISH' else None
         if direction is None: return empty
+        _j.direction = direction
+        _j.note(dj.BIAS, 'htf_trend', dj.CONFIRMED,
+                f'H4/H1 effective trend {effective_trend} -- trading with it')
 
         # Step 1: HTF sweep -- try H4 first, then H1
         sweep = {}
@@ -8236,11 +8253,24 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
                 if sweep:
                     logger.debug(f"[SSM] {symbol}: {sweep['type']} on {tf_name}")
                     break
-        if not sweep: return empty
+        if not sweep:
+            _j.note(dj.LIQUIDITY, 'htf_sweep', dj.VETO, 'no H4/H1 liquidity sweep found')
+            _j.decide(False, 'no HTF sweep -- nothing to trade')
+            return empty
+        _j.note(dj.LIQUIDITY, 'htf_sweep', dj.CONFIRMED,
+                f"{sweep['type']} -- a prior high/low was swept and price closed back inside",
+                value=sweep['type'])
 
         # Step 2: Find extreme OB on M5 within swept leg
         ob = ShaakuniSSM.find_extreme_ob(df_m5, sweep, direction, atr_m5)
-        if not ob: return empty
+        if not ob:
+            _j.note(dj.STRUCTURE, 'extreme_ob', dj.VETO,
+                    'no unmitigated extreme order block inside the swept leg')
+            _j.decide(False, 'sweep confirmed but no valid OB to enter at')
+            return empty
+        _j.note(dj.STRUCTURE, 'extreme_ob', dj.CONFIRMED,
+                f"unmitigated extreme OB at {ob['entry']:.5f} -- limit entry level",
+                value=ob['entry'])
 
         # Step 3: Validate entry level is still reachable
         cur_price = float(df_m5['close'].iloc[-1])
@@ -8300,10 +8330,44 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
         # worth taking without an outright veto that could silently zero
         # out a working strategy the way an earlier hard-veto experiment
         # this session did.
+        # Every one of these is a confirmation a human trader would say out
+        # loud. Recorded whether it agreed or not -- the disagreements are
+        # what make the analysis able to tell us which checks actually earn
+        # their place (see summarize_by_confirmation).
+        _j.note(dj.LIQUIDITY, 'liquidity_confluence',
+                dj.CONFIRMED if confluence['confluent'] else dj.NEUTRAL,
+                (f"entry sits at {confluence['matched_level']}"
+                 if confluence['confluent'] else
+                 'entry is not near any named liquidity level or fresh FVG'),
+                value=confluence.get('matched_level'))
+        if equilibrium is not None:
+            _j.note(dj.LOCATION, 'premium_discount',
+                    dj.CONFIRMED if pd_conf['favorable'] else dj.AGAINST,
+                    pd_conf['reason'], value=equilibrium['zone'])
+        else:
+            _j.note(dj.LOCATION, 'premium_discount', dj.NEUTRAL,
+                    'no dealing range established yet')
+        _j.note(dj.LOCATION, 'ote_zone',
+                dj.CONFIRMED if in_ote else dj.NEUTRAL,
+                ('entry falls inside the 61.8-79% OTE retracement window'
+                 if in_ote else 'entry is outside the OTE window'))
+        if liq_tp is not None and tp != ob['tp']:
+            _j.note(dj.LIQUIDITY, 'tp_upgraded_to_liquidity', dj.CONFIRMED,
+                    f"TP extended to a real liquidity level at {tp:.5f}", value=tp)
+
         min_rr = 1.5 if (confluence['confluent'] or
                           (equilibrium is not None and pd_conf['favorable']) or
                           in_ote) else 2.0
-        if rr < min_rr: return empty
+        _j.measure(rr=round(rr, 2), min_rr_required=min_rr, atr_m5=round(atr_m5, 5),
+                   sl_distance=round(sl_dist, 5))
+        if rr < min_rr:
+            _j.note(dj.RISK, 'rr_floor', dj.VETO,
+                    f'RR {rr:.2f} below the {min_rr:.1f} required for this setup quality')
+            _j.decide(False, f'RR {rr:.2f} < {min_rr:.1f}')
+            return empty
+        _j.note(dj.RISK, 'rr_floor', dj.CONFIRMED,
+                f'RR {rr:.2f} clears the {min_rr:.1f} bar for this setup quality')
+        _j.decide(True, f'sweep + OB confirmed, RR {rr:.2f}')
 
         logger.info(
             f"[SSM] {symbol} {direction}: HTF sweep confirmed. "
@@ -8325,6 +8389,10 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
             'liquidity_confluence': confluence,
             'equilibrium_zone': equilibrium,
             'in_ote_zone': in_ote,
+            # The full decision journal travels WITH the setup, so whoever
+            # places the order (live) or records the trade (backtest) can
+            # persist it without recomputing anything.
+            'journal': _j.to_dict(),
         }
     except Exception as e:
         logger.error(f"[SSM] {symbol}: {e}")

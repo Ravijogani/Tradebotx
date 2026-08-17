@@ -117,6 +117,9 @@ class StrategyResult:
                                           # bar's close.
     edge_score: Optional[float] = None
     edge_state: Optional[str] = None
+    # The strategy's decision journal (see python_scripts/decision_journal.py).
+    # Optional: a strategy that doesn't journal yet simply leaves it None.
+    journal: Optional[dict] = None
 
 
 @dataclass
@@ -242,7 +245,8 @@ def _adapt_shaakuni_ssm(bot, dataset: HistoricalDataset, as_of, symbol):
     return StrategyResult(direction=r["signal"], stop_loss=r["stop_loss"],
                            reason=r.get("reason", "SHAAKUNI_SSM"),
                            order_type="LIMIT", limit_entry=r.get("limit_entry"),
-                           take_profit=r.get("tp"))
+                           take_profit=r.get("tp"),
+                           journal=r.get("journal"))
 
 
 def _adapt_swappy_3c(bot, dataset: HistoricalDataset, as_of, symbol):
