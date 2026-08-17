@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m py_compile python_scripts/*.py python_scripts/backtest/*.py
+      - run: python -m py_compile python_scripts/*.py python_scripts/backtest/*.py python_scripts/tests/*.py
       # Only the real third-party packages hybrid_trading_bot_multiuser.py
       # actually imports at module scope, minus the ones the harness stubs
       # out of sys.modules before import (MetaTrader5, supabase -- see
@@ -49,6 +49,20 @@ jobs:
       - name: Import smoke test (bot module loads with mocked MT5/Supabase)
         working-directory: python_scripts
         run: python -c "from backtest.bot_loader import import_bot_module; import_bot_module(); print('bot module imported cleanly')"
+      # The unit suites. These were written alongside the fixes they cover but
+      # lived outside the repo, so CI could not run them and nothing stopped a
+      # later edit from quietly undoing a safety guarantee. That already
+      # happened once: changing check_remote_stop's contract left a stale
+      # expectation in test_bot_control.py that no automated check caught.
+      #
+      # They cover the things that are expensive to get wrong -- emergency
+      # stop firing instantly on a running bot, fail-open on transport errors,
+      # the startup grace that stops a booting bot killing itself, refusing to
+      # trade on zero equity, currency-exposure netting, the risk ceilings,
+      # and the decision journal's serialisation.
+      - name: Unit tests
+        working-directory: python_scripts
+        run: python tests/run_all.py
 
   edge_functions:
     name: Supabase edge functions (syntax + transpile check)
