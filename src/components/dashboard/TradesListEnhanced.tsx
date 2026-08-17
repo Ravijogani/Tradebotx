@@ -38,6 +38,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { Tables } from "@/integrations/supabase/types";
 
+import { TradeReasoning, type TradeWhy } from "./TradeReasoning";
+
 type Trade = Tables<"trades">;
 
 export const TradesListEnhanced = () => {
@@ -351,6 +353,12 @@ export const TradesListEnhanced = () => {
                         <span className="hidden sm:inline">•</span>
                         <span className="text-xs">{new Date(trade.opened_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
                       </div>
+                      {/* Why the bot took this trade, from metadata.why */}
+                      <TradeReasoning
+                        why={
+                          (trade.metadata as { why?: TradeWhy } | null)?.why ?? null
+                        }
+                      />
                     </div>
                   </div>
 

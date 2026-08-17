@@ -1187,7 +1187,17 @@ class SupabaseTradeDB:
                     'take_profit': trade_data.get('take_profit'),
                     'strategy_name': trade_data.get('strategy_name'),
                     'atr': trade_data.get('atr'),
-                    'ai_confidence': trade_data.get('ai_confidence')
+                    'ai_confidence': trade_data.get('ai_confidence'),
+                    # BUG FIX: this dict used to be built ONLY from the fixed
+                    # keys above, so any 'metadata' the caller assembled was
+                    # silently dropped on the floor. place_ai_trade() has been
+                    # carefully collecting edge_score / rr_ratio /
+                    # spread_at_open / sl_distance per trade and none of it
+                    # ever reached the database. Merged in here (caller keys
+                    # last so they can enrich but never clobber the identity
+                    # fields above), which is also what makes per-trade
+                    # explainability possible in the dashboard at all.
+                    **(trade_data.get('metadata') or {}),
                 }
             }
             
@@ -7366,6 +7376,33 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                     'sl_distance': sl_dist_pts,
                     'spread_pct_of_sl': round(spread_at_open / sl_dist_pts * 100, 2) if sl_dist_pts > 0 else 0,
                     'rr_ratio': round(rr_ratio, 2),
+                    # WHY THIS TRADE WAS TAKEN -- the SMC reasoning, recorded
+                    # so the dashboard can show a user what the bot actually
+                    # saw instead of just a P&L number. Every field here is
+                    # already computed by the strategies (liquidity reference
+                    # levels, premium/discount, OTE, the M5 auction regime,
+                    # the HTF sweep); none of it was ever persisted, so the
+                    # reasoning existed only in the bot's own log file on the
+                    # VPS. .get() throughout: a strategy that doesn't compute
+                    # a given field simply omits it rather than breaking.
+                    'why': {
+                        'setup': local_signal.get('setup_type') or local_signal.get('reason'),
+                        'strategy_type': local_signal.get('strategy_type'),
+                        'regime': (local_signal.get('regime') or {}).get('regime')
+                                   if isinstance(local_signal.get('regime'), dict) else local_signal.get('regime'),
+                        'liquidity_confluence': (
+                            (local_signal.get('liquidity_confluence') or {}).get('matched_level')
+                            if isinstance(local_signal.get('liquidity_confluence'), dict) else None),
+                        'liquidity_confluent': (
+                            (local_signal.get('liquidity_confluence') or {}).get('confluent')
+                            if isinstance(local_signal.get('liquidity_confluence'), dict) else None),
+                        'premium_discount': (
+                            (local_signal.get('equilibrium_zone') or {}).get('zone')
+                            if isinstance(local_signal.get('equilibrium_zone'), dict) else None),
+                        'in_ote_zone': local_signal.get('in_ote_zone'),
+                        'htf_sweep': ((local_signal.get('sweep') or {}).get('type')
+                                      if isinstance(local_signal.get('sweep'), dict) else None),
+                    },
                 }
             })
             state.daily_trades += 1
