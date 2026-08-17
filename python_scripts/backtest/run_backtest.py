@@ -52,6 +52,7 @@ from .engine import BacktestEngine, BacktestConfig
 from .intraday_driver import IntradayDriverConfig, run_intraday_backtest
 from .intraday_loader import import_intraday_module
 from .report import summarize, print_report, write_trade_csv
+from .walk_forward import run_walk_forward, print_walk_forward_report
 from .strategies_registry import ALL_STRATEGIES, STRATEGIES_BY_NAME
 from .swing_driver import SwingDriverConfig, run_swing_backtest
 from .swing_loader import import_swing_bot_module
@@ -93,6 +94,16 @@ def main():
     p.add_argument("--rr", type=float, default=2.0, help="Take-profit distance as a multiple of SL distance, for strategies that don't compute their own TP (default 2.0)")
     p.add_argument("--spread", type=float, default=None, help="Override the default per-symbol spread model (price units)")
     p.add_argument("--out", default=None, help="Write the combined trade ledger to this CSV path")
+    p.add_argument("--walk-forward", type=int, default=None, metavar="N",
+                   help="Instead of one pooled run, split the history into N sequential windows and "
+                        "report each independently -- does the edge persist across time, or did it come "
+                        "from one lucky stretch? See backtest/walk_forward.py for what this does and "
+                        "does not prove. Applies to the M5 strategies (SHAAKUNI_SSM/SWAPPY_3C/"
+                        "EMA_SCALP_CROSS); the separate AOX/SWING/INTRADAY/BALANCE_FADE drivers are "
+                        "skipped in this mode.")
+    p.add_argument("--min-trades", type=int, default=10,
+                   help="Walk-forward only: windows with fewer trades than this are flagged as too thin "
+                        "to interpret rather than being averaged in silently (default 10)")
     p.add_argument("--corr-symbol", default=None,
                     help="AOX only: correlated symbol for the SMT divergence check (e.g. XAGUSDm for XAUUSDm). "
                          "Without this, check_smt_divergence sees no correlated data and passes through with no veto -- "
@@ -133,6 +144,25 @@ def main():
     single_strategy_name = args.strategy not in (AOX_NAME, STRUCTURAL_SWING_NAME, INTRADAY_NAME, BALANCE_FADE_NAME)
     adapters = ([STRATEGIES_BY_NAME[args.strategy]] if args.strategy and single_strategy_name
                 else (ALL_STRATEGIES if not args.strategy else []))
+
+    # WALK-FORWARD MODE: stability across time instead of one pooled number.
+    if args.walk_forward:
+        if args.walk_forward < 2:
+            p.error("--walk-forward needs at least 2 windows to compare anything")
+        for adapter in adapters:
+            if adapter.name == "SHAAKUNI_SSM" and "H4" not in dataset.frames:
+                print(f"\nSkipping {adapter.name}: needs --h4 (not provided)")
+                continue
+            print(f"\nWalk-forward {adapter.name} over {args.walk_forward} windows...")
+            results = run_walk_forward(bot, dataset, config, adapter,
+                                       n_windows=args.walk_forward,
+                                       min_trades=args.min_trades)
+            # Pooled REAL per-trade R across every window, for the t-stat.
+            pooled = []
+            for wr in results:
+                pooled.extend(wr.r_values or [])
+            print_walk_forward_report(adapter.name, results, pooled)
+        return
 
     all_trades = []
     for adapter in adapters:

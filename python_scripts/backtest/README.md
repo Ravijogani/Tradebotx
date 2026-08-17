@@ -957,6 +957,75 @@ removing two genuinely bad trades. A full sidedness sweep across all 5
 strategies' final ledgers (190 trades total) confirmed zero violations
 remaining.
 
+### Walk-forward validation — the finding that matters most
+
+`--walk-forward N` (see `walk_forward.py`) splits the history into N
+sequential windows and runs each independently. It exists because every
+number this project had ever produced came from ONE pooled run over ONE
+instrument over ONE ~90-day window, and "SSM makes +0.759R/trade" is a
+materially different claim from "SSM made +0.759R/trade over 90 days of
+gold in mid-2026." Only the second was ever supported.
+
+Note what this deliberately does NOT claim to be: classic walk-forward
+*optimisation* tests fitted parameters out-of-sample to detect
+curve-fitting. That framing doesn't apply here and pretending otherwise
+would be theatre — these strategies have no fitted parameters, their
+thresholds come from the source methodology, so there is nothing to overfit
+in the usual sense. What this measures is **stability**: does the edge recur
+across windows, or did it come from one lucky stretch?
+
+**The result on the real XAUUSDm data, 4 windows:**
+
+| Window | Period | Trades | Win% | Expectancy | PF | Total R |
+|---|---|---|---|---|---|---|
+| W1 | 05-17 → 06-09 | 31 | 9.7% | **-0.014** | 0.99 | -0.43 |
+| W2 | 06-09 → 07-01 | 34 | 23.5% | +1.189 | 2.30 | +40.43 |
+| W3 | 07-01 → 07-23 | 26 | 15.4% | +0.386 | 1.39 | +10.04 |
+| W4 | 07-23 → 08-14 | 41 | 19.5% | +1.223 | 2.29 | +50.13 |
+
+And at 6 windows, which exposes more:
+
+| Window | Trades | Expectancy | Total R |
+|---|---|---|---|
+| W1 | 21 | -0.257 | -5.39 |
+| W2 | 24 | +0.359 | +8.61 |
+| W3 | 20 | +1.839 | +36.77 |
+| W4 | 16 | **-0.911** | **-14.57** |
+| W5 | 19 | +1.368 | +26.00 |
+| W6 | 32 | +1.523 | +48.75 |
+
+**What this establishes, stated plainly:**
+
+1. **The pooled +100.17R was concentrated, not steady.** At 4 windows,
+   ~90R of it came from two windows and W1 was flat. At 6 windows there is a
+   **-14.57R window** that the single pooled number hid completely. Per-window
+   expectancy ranges from -0.911R to +1.839R (stdev 1.099R) — that is not the
+   profile of a stable edge, it's the profile of a strategy whose result
+   depends heavily on which stretch of market you happened to measure.
+2. **It is not yet statistically distinguishable from luck.** Pooled
+   t-statistic on per-trade R is **+1.70 at n=132** — below the |t| ≥ 2 rule
+   of thumb, and identical at both window counts (as it should be; it's a
+   trade-level statistic). Indicative only, since trade returns are neither
+   normal nor fully independent, but the direction of the answer is clear.
+3. **Swappy 3C (t=+0.51, n=18) and EMA Scalp Cross (t=+1.07, n=5) are
+   nowhere near interpretable.** Swappy was profitable in 2 of 4 windows with
+   expectancy swinging -1.017R to +1.383R. EMA Scalp Cross produced 5 trades
+   in 90 days total, including a window with none at all. `--min-trades`
+   flags these as "(thin)" rather than averaging them in silently.
+
+**The honest conclusion**: the strategies are not broken — expectancy is
+positive overall and the mechanics are verified — but this data does not yet
+support a claim of consistent profitability, and nobody should present it as
+if it does. What's needed is more data (multiple instruments, multiple years,
+a bear/crisis regime), not more strategies or more filters. This tool is what
+to run on that data when it exists, and in the meantime it states honestly
+how little can be concluded.
+
+`--min-trades N` (default 10) flags windows too thin to interpret. Windows
+carry 250 bars of warm-up history before their first counted trade, so the
+200 EMA / volume-profile / swing-structure reads are real rather than
+cold-start artefacts, while trades are only counted from inside the window.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses
