@@ -102,6 +102,7 @@ import requests
 from supabase import create_client, Client
 
 import market_intelligence as mi
+import bot_control
 
 # =============================================================================
 # CLI ARGUMENTS -- identical contract to hybrid_trading_bot_multiuser.py /
@@ -1127,13 +1128,17 @@ def swing_trading_session() -> None:
                 send_telegram_message("\U0001F6A8 Structural Swing Pro: EMERGENCY STOP triggered.")
                 break
 
-            try:
-                ks = supabase.table('bot_commands').select('kill_switch').eq('user_id', USER_ID).execute()
-                if ks.data and ks.data[0].get('kill_switch', False):
-                    logger.critical("[KILL SWITCH] Remote kill switch activated. Stopping.")
-                    break
-            except Exception:
-                pass  # table may not exist for every deployment -- non-fatal
+            # Was: a poll of bot_commands.kill_switch -- a column that has
+            # never existed, so the `except: pass` silently swallowed a
+            # failure every single cycle and this "kill switch" could never
+            # fire. See bot_control.py's module docstring for the full
+            # story and why user_strategies.is_running is the right
+            # authority (it is what the dashboard actually writes).
+            _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+            if _stop is not None:
+                logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- stopping.")
+                send_telegram_message(f"\U0001F6D1 Structural Swing Pro stopped: {_stop.detail}")
+                break
 
             if now - last_manage >= config.POSITION_MANAGE_INTERVAL_SECONDS:
                 last_manage = now

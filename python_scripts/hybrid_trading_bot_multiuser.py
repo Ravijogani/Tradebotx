@@ -92,6 +92,7 @@ import requests
 import google.generativeai as genai
 
 import market_intelligence as mi
+import bot_control
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
@@ -9449,14 +9450,16 @@ def ai_trading_session():
         else:
             state.daily_start_equity = 0.0
 
-        # --- GLOBAL KILL SWITCH CHECK (Founder's Safety) ---
-        # Check Supabase for a global 'kill_switch' flag
-        try:
-            kill_check = supabase.table('bot_commands').select('kill_switch').eq('user_id', USER_ID).execute()
-            if kill_check.data and kill_check.data[0].get('kill_switch', False):
-                logger.critical(" [KILL SWITCH] Global Kill Switch Activated. STOPPING.")
-                return 
-        except: pass 
+        # --- REMOTE STOP CHECK (startup) ---
+        # Was: a poll of bot_commands.kill_switch -- a column that has never
+        # existed in that table, so this check could never fire and the
+        # bare `except: pass` hid that fact completely. See bot_control.py's
+        # module docstring for the full story. Now asks the one authority
+        # that the dashboard actually writes to.
+        _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+        if _stop is not None:
+            logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- not starting.")
+            return
         
         send_telegram_notification(
             f" <b>SCALPING BOT V2.0 Started</b>\n\nUser: {USER_ID}\nStrategy: {STRATEGY_ID}\n"
@@ -9474,7 +9477,22 @@ def ai_trading_session():
                 _rs = getattr(state,'_rej',{})
                 if _rs: logger.info(f'[REJECT STATS] {_rs}')
             cycle_start = time.time()
-            
+
+            # --- REMOTE STOP CHECK (every cycle) ---
+            # This bot previously checked for a remote stop ONLY at startup,
+            # so once running there was no way to stop it from the platform
+            # at all -- the dashboard's Stop / admin Emergency Stop All wrote
+            # user_strategies.is_running=false and this process never looked
+            # at it again. Checked every cycle now, before any market work.
+            _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+            if _stop is not None:
+                logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- shutting down.")
+                send_heartbeat(status='stopped', error_message=f"remote stop: {_stop.reason}")
+                send_telegram_notification(
+                    f"\U0001F6D1 <b>Scalping bot stopped</b>\n\n{_stop.detail}"
+                )
+                break
+
             account_info = mt5.account_info()
             if not account_info:
                 logger.error("Lost MT5 connection")

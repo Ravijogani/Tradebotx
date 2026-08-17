@@ -27,6 +27,7 @@ import requests
 import google.generativeai as genai
 
 import market_intelligence as mi
+import bot_control
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import argparse
@@ -4233,17 +4234,16 @@ def intraday_trading_session():
                 _t1.Thread(target=db_manager.send_heartbeat, daemon=True).start()
                 _t1.Thread(target=update_heartbeat, daemon=True).start()
             
-            # 3. Kill switch + Emergency Stop
-            try:
-                _ks = supabase.table('bot_commands').select('kill_switch').eq('user_id', USER_ID).execute()
-                if _ks.data and _ks.data[0].get('kill_switch', False):
-                    logger.critical("[KILL SWITCH] Remote kill switch activated. Stopping.")
-                    break
-            except Exception as _kse:
-                # Suppress 400 spam (table may not exist) -- log once per hour
-                if not hasattr(state, '_ks_err_logged') or (time.time() - state._ks_err_logged) > 3600:
-                    logger.debug(f"[KILL SWITCH] bot_commands check failed (table may not exist): {_kse}")
-                    state._ks_err_logged = time.time()
+            # 3. Remote stop + Emergency Stop
+            # Was: a poll of bot_commands.kill_switch, a column that has
+            # never existed -- so this raised every cycle, got swallowed,
+            # and the "remote kill switch" could never actually fire. The
+            # once-an-hour DEBUG line about the table "maybe not existing"
+            # was the only trace. See bot_control.py's module docstring.
+            _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+            if _stop is not None:
+                logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- stopping.")
+                break
 
             if check_emergency_conditions(account_info):
                 logger.critical("[ALERT] EMERGENCY STOP TRIGGERED")

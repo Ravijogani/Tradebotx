@@ -162,21 +162,27 @@ export const BotMonitoringDashboard = () => {
     }
   };
 
+  // Stops via the admin-stop-bots edge function rather than writing
+  // is_running straight from the browser. The direct write only relabelled
+  // the dashboard -- the Python process never read that column and kept
+  // trading. The function flips the flag the bots now poll AND signals the
+  // bot manager so the process dies immediately instead of on its next
+  // cycle. (stop-trading-bot can't be reused here: it scopes its lookup to
+  // the calling user's own rows, so it finds nothing for another user's bot.)
   const handleEmergencyStop = async (botId: string) => {
     try {
-      const { error } = await supabase
-        .from("user_strategies")
-        .update({
-          is_running: false,
-          stopped_at: new Date().toISOString(),
-        })
-        .eq("id", botId);
+      const { data, error } = await supabase.functions.invoke("admin-stop-bots", {
+        body: { userStrategyId: botId },
+      });
 
       if (error) throw error;
 
       toast({
         title: "Bot Stopped",
-        description: "Trading bot has been stopped successfully",
+        description: data?.warnings?.length
+          ? "Flagged as stopped; the bot manager did not confirm, so it will stop on its next check."
+          : "Trading bot has been stopped successfully",
+        variant: data?.warnings?.length ? "destructive" : undefined,
       });
 
       loadData();
@@ -190,21 +196,23 @@ export const BotMonitoringDashboard = () => {
     }
   };
 
+  // Platform-wide emergency stop. See handleEmergencyStop above for why
+  // this goes through the edge function instead of a direct table write.
   const handleEmergencyStopAll = async () => {
     try {
-      const { error } = await supabase
-        .from("user_strategies")
-        .update({
-          is_running: false,
-          stopped_at: new Date().toISOString(),
-        })
-        .eq("is_running", true);
+      const { data, error } = await supabase.functions.invoke("admin-stop-bots", {
+        body: { all: true },
+      });
 
       if (error) throw error;
 
+      const stopped = data?.stopped ?? 0;
       toast({
-        title: "All Bots Stopped",
-        description: "All trading bots have been stopped",
+        title: stopped > 0 ? `Stopped ${stopped} bot(s)` : "No running bots",
+        description: data?.warnings?.length
+          ? `${data?.signalled ?? 0} of ${stopped} confirmed by the bot manager. The rest are flagged stopped and will halt on their next check.`
+          : "All trading bots have been stopped",
+        variant: data?.warnings?.length ? "destructive" : undefined,
       });
 
       loadData();
