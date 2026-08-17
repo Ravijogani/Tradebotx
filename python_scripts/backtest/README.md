@@ -908,11 +908,29 @@ a generic design preference:
   — same non-blocking pattern, disclosed the same way (`strength` only
   feeds the live-only `EdgeEngine`, not backtest-visible on trade count).
   Confirmed 18→18 trades, no change, as expected for a bonus-only addition.
-- **EMA Scalp Cross and intraday.py were deliberately left untouched** in
-  this pass — the audit gave no reason to add anything to the strategy
-  already found to be correctly, verifiably selective, and intraday.py's
-  own frequency looked healthy for its holding-period purpose without
-  needing a new pass.
+- **structural_swing_pro.py** (the swing bot, checked next): it already
+  had its own OTE equivalent (`fib_zone`, a native D1/H4 Fibonacci
+  retracement-zone entry) but no premium/discount directional read, so
+  `compute_equilibrium_zone`/`premium_discount_confluence` were wired in
+  there — same loosen-only pattern as SSM: a favorable read relaxes
+  `MIN_RR` by 0.3 (floored at 1.0), deliberately modest given this
+  strategy's own real-data trade count (3 on the 90-day sample) is too
+  small for the removed-vs-kept rigor used elsewhere. Real-data result:
+  3→3 trades, identical numbers — a genuine null result on this sample
+  (no candidate that failed the RR floor happened to fall inside the 0.3
+  loosening window), not a bug; zero tracebacks, sidedness confirmed clean
+  on all 3 trades.
+- **intraday.py checked and deliberately left alone**: it already
+  implements both concepts natively and independently — its own
+  premium/discount entry filter (`intraday.py` around the H1 pullback
+  check) and its own equilibrium/Fibonacci sniper-zone logic
+  (`compute_aox_fibonacci`, which literally computes `'equilibrium':
+  start + span * 0.5`) — so wiring the generic `market_intelligence.py`
+  versions in here would have been redundant with existing, already-
+  working logic, not a genuine addition.
+- **EMA Scalp Cross was deliberately left untouched** — the audit gave no
+  reason to add anything to a strategy already found to be correctly,
+  verifiably selective.
 
 **Real bug found and fixed while verifying the above** (present before
 this session's changes too — confirmed identical on two separate

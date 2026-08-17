@@ -490,7 +490,29 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
     if target is None:
         return None
     reward_dist = abs(target - entry_price)
-    if reward_dist / sl_dist < rr_min:
+
+    # PREMIUM/DISCOUNT (Raja Banks research, market_intelligence.py section
+    # 8): this strategy already has its own Fibonacci retracement-zone
+    # entry (fib_zone above) -- the OTE equivalent -- but no directional
+    # premium/discount read, on the same D1 series already used for
+    # structure/leg detection above. A favorable read is one more
+    # independent reason this setup deserves the trade, not a new
+    # requirement -- loosens the RR floor slightly (never tightens it),
+    # same discipline as the change made to Shaakuni SSM this session (see
+    # backtest/README.md). Deliberately modest (rr_min - 0.3, floored at
+    # 1.0): this strategy's own MIN_RR has previously been found, on real
+    # data, to reject nearly every real setup (see the stop-loss comment
+    # above) -- and its current real-data trade count is small enough (3
+    # trades on the 90-day XAUUSDm sample) that a bold loosening here
+    # can't be verified with the same removed-vs-kept rigor used
+    # elsewhere; a small, cautious change is the honest match for that.
+    equilibrium = mi.compute_equilibrium_zone(df_d1, lookback=lookback)
+    pd_conf = mi.premium_discount_confluence(direction, equilibrium)
+    effective_rr_min = rr_min
+    if equilibrium is not None and pd_conf['favorable']:
+        effective_rr_min = max(1.0, rr_min - 0.3)
+
+    if reward_dist / sl_dist < effective_rr_min:
         return None
 
     return {
@@ -499,6 +521,7 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
         'stop_loss': stop_loss,
         'take_profit': float(target),
         'reason': f"STRUCTURAL_SWING_{structure}_RR{reward_dist / sl_dist:.1f}",
+        'equilibrium_zone': equilibrium,
     }
 
 
