@@ -38,7 +38,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { Tables } from "@/integrations/supabase/types";
 
-import { TradeReasoning, type TradeWhy } from "./TradeReasoning";
+import { TradeReasoning, TradeOutcomeReasoning, type TradeWhy, type TradeOutcome } from "./TradeReasoning";
 
 type Trade = Tables<"trades">;
 
@@ -358,6 +358,10 @@ export const TradesListEnhanced = () => {
                         why={
                           (trade.metadata as { why?: TradeWhy } | null)?.why ?? null
                         }
+                      />
+                      {/* Why it ENDED that way -- the diagnosis, not just "SL" */}
+                      <TradeOutcomeReasoning
+                        outcome={(trade.metadata as TradeOutcome | null) ?? null}
                       />
                     </div>
                   </div>

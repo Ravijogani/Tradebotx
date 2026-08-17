@@ -1235,6 +1235,66 @@ bot wants frequency or selectivity, not an obvious bug fix, and it rests on
 22 new trades from one instrument in one window. **Left reverted**, recorded
 here with the numbers, for a deliberate decision rather than a silent one.
 
+### Live exit attribution — closing the loop the LIVE bot was missing
+
+The entry reasoning and the exit attribution built above had one asymmetry
+worth naming: `engine.attribute_exit()` lives in the backtest, and works by
+looking at bars *after* the exit. **Live had no equivalent at all.** A real
+trade closed and the bot recorded `SL` — which is a label, not a diagnosis —
+and the break-even/partial logic recorded nothing whatsoever. So the exact
+question this instrumentation exists to answer ("SL hit — what went wrong?")
+was unanswerable on real trades.
+
+Three pieces close it:
+
+**1. MFE/MAE tracking.** Nothing measured how far a trade went *in our
+favour* before closing. Without that, `SL` cannot distinguish a trade that
+reached +2R and gave it back (an **exit/management** failure) from one that
+never went our way at all (an **entry** failure) — and those need opposite
+fixes. `params['mfe_r'] / ['mae_r']` are now updated in
+`manage_all_positions()`, the one place already running every cycle with a
+correct initial-SL-based `r_multiple`.
+
+**2. Management actions.** `_record_management()` logs every break-even move
+(4 sites), partial close (2 sites) and their trigger R onto the position, so a
+post-mortem can see what the bot did while the trade was open rather than
+inferring it.
+
+**3. `decision_journal.attribute_live_exit()`** — pure, unit-tested, and
+turns the label into a diagnosis using only what live genuinely knows:
+
+| Attribution | What it means | Where the fix belongs |
+|---|---|---|
+| `gave_back_a_winner` | reached ≥1R then closed flat/negative | exit rules / trail |
+| `never_went_our_way` | MFE stayed under 0.25R | entry timing, bias |
+| `partial_recovery` | moved our way but missed target | target distance |
+| `stopped_at_breakeven` | BE was moved, price returned to it | BE trigger too eager? |
+| `spread_spike_sl` | stopped within ~30s | broker/execution, **not** strategy |
+| `partial_then_stopped` | partial banked, remainder stopped | often net-positive; a naive "SL" scores it as a pure loss |
+| `target_hit` | reached the planned target | — |
+
+Precedence is deliberate: the execution check runs first, because a
+12-second stop-out invalidates any strategy reading of the same trade.
+
+Each close now logs a `[WHY CLOSED]` line and persists
+`exit_attribution`, `mfe_r`, `mae_r`, `held_seconds`, `be_moved`,
+`partial_taken` and the full `management` list into `trades.metadata`. The
+dashboard surfaces it as hoverable chips (`TradeOutcomeReasoning`) in
+plain language — "Was winning, gave it back", "peak +2.10R", "partial
+banked" — so a user reads a diagnosis, not jargon.
+
+Everything is exception-wrapped: **analytics must never break trade
+bookkeeping or position management.** Verified with a simulated
+BE → partial → stop sequence end to end, and all five strategies remain
+byte-identical in the backtest (39/39 journal unit tests pass).
+
+**Known asymmetry, stated rather than glossed:** live attribution uses MFE
+while the backtest looks forward past the exit, so the two label the same
+economic event slightly differently (`swept_then_resumed` is backtest-only;
+`gave_back_a_winner` is live-only). They are complementary diagnoses of the
+same trade, not the same metric computed twice — don't pool them without
+accounting for that.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

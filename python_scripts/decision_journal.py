@@ -238,6 +238,86 @@ class DecisionJournal:
         }
 
 
+def attribute_live_exit(direction: str, entry_price: float, initial_sl: float,
+                        take_profit: Optional[float], exit_price: float,
+                        exit_reason: str, mfe_r: Optional[float] = None,
+                        mae_r: Optional[float] = None,
+                        held_seconds: Optional[float] = None,
+                        be_moved: bool = False,
+                        partial_taken: bool = False) -> str:
+    """
+    WHY a LIVE trade ended this way. "SL" is a label, not a diagnosis.
+
+    The backtest can attribute an exit by looking at bars AFTER it
+    (engine.attribute_exit -- "was the stop swept and then the target
+    reached?"). Live has no future to look at, so this uses what a live bot
+    genuinely knows by the time the position closes:
+
+      * mfe_r -- how far the trade went IN our favour, in R, before closing
+      * mae_r -- how far it went against us
+      * held_seconds, and whether break-even / a partial had been taken
+
+    Those distinguish the failure modes that need different fixes:
+
+      gave_back_a_winner   -- reached >=1R in profit, then closed at/below
+                              breakeven. A MANAGEMENT problem: the exit rules
+                              let a won trade go, not a bad entry.
+      stopped_at_breakeven -- BE had been moved and price came back to it.
+                              Often correct behaviour, but if it dominates,
+                              the BE trigger is too eager.
+      never_went_our_way   -- MFE stayed near zero and it stopped out. An
+                              ENTRY/TIMING problem: the setup was wrong from
+                              the first bar, not managed badly.
+      spread_spike_sl      -- stopped within ~30s. Execution/broker problem,
+                              not strategy at all.
+      partial_then_stopped -- a partial was banked, then the remainder
+                              stopped. Usually a net-positive outcome that a
+                              naive "SL" label would score as a pure loss.
+
+    Pure and side-effect free, so it is unit-testable and identical for every
+    bot that calls it.
+    """
+    sl_dist = abs(entry_price - initial_sl)
+    realized_r = None
+    if sl_dist > 0:
+        realized = (exit_price - entry_price) if direction == "BUY" else (entry_price - exit_price)
+        realized_r = realized / sl_dist
+
+    if exit_reason == "TP":
+        if mfe_r is not None and take_profit is not None:
+            return "target_hit -- reached the planned target"
+        return "target_hit"
+
+    # Execution problem, checked first: it invalidates any strategy reading.
+    if held_seconds is not None and held_seconds < 30 and (realized_r or 0) < 0:
+        return ("spread_spike_sl -- stopped within %.0fs of entry, almost certainly "
+                "spread/execution rather than the setup being wrong" % held_seconds)
+
+    if partial_taken and (realized_r or 0) <= 0:
+        return ("partial_then_stopped -- a partial was banked before the remainder "
+                "stopped; the trade overall may still be positive")
+
+    if be_moved and abs(realized_r or 0) < 0.25:
+        return ("stopped_at_breakeven -- break-even had been moved and price returned "
+                "to it; check whether the BE trigger fires too early")
+
+    if mfe_r is not None:
+        if mfe_r >= 1.0 and (realized_r or 0) <= 0.1:
+            return ("gave_back_a_winner -- reached %.2fR in profit and still closed flat "
+                    "or negative; this is an EXIT/management failure, not a bad entry"
+                    % mfe_r)
+        if mfe_r < 0.25:
+            return ("never_went_our_way -- best case was only %.2fR before stopping; the "
+                    "setup was wrong from the start, so look at entry timing/bias"
+                    % mfe_r)
+        return ("partial_recovery -- got %.2fR in our favour but never reached target; "
+                "marginal setup or target too far" % mfe_r)
+
+    if exit_reason == "SL":
+        return "stop_loss_hit -- no favourable-excursion data recorded"
+    return f"{exit_reason.lower()} -- closed by the bot's own exit logic"
+
+
 # ---------------------------------------------------------------------------
 # REJECTION SINK -- capturing the setups we DIDN'T take
 # ---------------------------------------------------------------------------

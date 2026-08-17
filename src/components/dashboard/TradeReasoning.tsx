@@ -15,6 +15,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 // before this shipped, or by a strategy that doesn't compute a given field.
 // Deliberately no invented defaults: an absent reason is shown as absent.
 
+export interface TradeOutcome {
+  exit_attribution?: string | null;
+  mfe_r?: number | null;
+  mae_r?: number | null;
+  be_moved?: boolean | null;
+  partial_taken?: boolean | null;
+  management?: Array<{ what?: string; why?: string; trigger_r?: number }> | null;
+}
+
 export interface TradeWhy {
   setup?: string | null;
   strategy_type?: string | null;
@@ -56,6 +65,56 @@ function Chip({ label, hint }: { label: string; hint: string }) {
     </TooltipProvider>
   );
 }
+
+// Plain-language headline for each attributed exit cause. The raw strings are
+// written by the bot for analysis; these are what a user should read.
+const EXIT_HEADLINES: Array<[string, string]> = [
+  ["gave_back_a_winner", "Was winning, gave it back"],
+  ["never_went_our_way", "Never moved in our favour"],
+  ["stopped_at_breakeven", "Closed at breakeven"],
+  ["spread_spike_sl", "Stopped by a spread spike"],
+  ["partial_then_stopped", "Partial banked, rest stopped"],
+  ["partial_recovery", "Moved our way, missed target"],
+  ["target_hit", "Target reached"],
+  ["swept_then_resumed", "Stop swept, then price resumed"],
+  ["thesis_invalidated", "Direction was wrong"],
+];
+
+export const TradeOutcomeReasoning = ({ outcome }: { outcome?: TradeOutcome | null }) => {
+  if (!outcome) return null;
+  const attr = outcome.exit_attribution || "";
+  const matched = EXIT_HEADLINES.find(([k]) => attr.startsWith(k));
+  const chips: Array<{ label: string; hint: string }> = [];
+
+  if (matched) {
+    chips.push({ label: matched[1], hint: attr.replace(/^[a-z_]+\s*--\s*/, "") || attr });
+  }
+  if (typeof outcome.mfe_r === "number" && outcome.mfe_r > 0) {
+    chips.push({
+      label: `peak +${outcome.mfe_r.toFixed(2)}R`,
+      hint: `Best the trade ever got, in multiples of the risk taken. Compare with the final result to see whether profit was given back.`,
+    });
+  }
+  if (outcome.be_moved) {
+    chips.push({ label: "moved to breakeven", hint: "The stop was moved to entry once the trade was far enough ahead." });
+  }
+  if (outcome.partial_taken) {
+    chips.push({ label: "partial banked", hint: "Part of the position was closed in profit before the rest exited." });
+  }
+  (outcome.management || []).forEach((m) => {
+    if (!m?.what || m.what === "moved_to_breakeven" || m.what === "partial_close") return;
+    chips.push({ label: m.what.replace(/_/g, " "), hint: m.why || m.what });
+  });
+
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-1">
+      {chips.map((c) => (
+        <Chip key={c.label} label={c.label} hint={c.hint} />
+      ))}
+    </div>
+  );
+};
 
 export const TradeReasoning = ({ why }: { why?: TradeWhy | null }) => {
   if (!why) return null;

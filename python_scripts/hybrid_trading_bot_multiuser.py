@@ -5852,6 +5852,30 @@ def get_trend_confirmation(symbol, timeframe=mt5.TIMEFRAME_M15):
         logger.error(f"Error in trend confirmation: {e}")
         return "NEUTRAL"
 
+def _record_management(params: Dict[str, Any], what: str, why: str, **extra) -> None:
+    """
+    Append a management action to this position's live decision journal.
+
+    Break-even moves, partial closes and stop trails were previously invisible
+    after the fact -- the bot logged a line to a file on the VPS and moved on,
+    so a post-mortem could never see WHY a trade ended at breakeven or what
+    the bot did while it was open. This accumulates them on the position's own
+    params dict, and update_closed_trades() persists the whole journal with
+    the trade.
+
+    Exception-safe and returns nothing: instrumentation must never be able to
+    interfere with position management.
+    """
+    try:
+        params.setdefault('management', []).append({
+            'what': what, 'why': why,
+            'at': datetime.now(timezone.utc).isoformat(),
+            **{k: dj._plain(v) for k, v in extra.items()},
+        })
+    except Exception:
+        pass
+
+
 def manage_all_positions():
     """
     [OK] FIXED: Enhanced position management with PARTIAL TP + Config-based BE/Trail
@@ -5959,6 +5983,17 @@ def manage_all_positions():
             if _initial_sl_dist == 0:
                 _initial_sl_dist = abs(entry_price - sl) if abs(entry_price - sl) > 0 else 1.0
             r_multiple = current_dist / _initial_sl_dist
+
+            # MAXIMUM FAVOURABLE / ADVERSE EXCURSION, in R.
+            # Nothing tracked these before, which is why a live SL could never
+            # be diagnosed: "SL" alone cannot distinguish a trade that reached
+            # +2R and was given back (an EXIT/management failure) from one that
+            # never went our way at all (an ENTRY failure). They need opposite
+            # fixes. Updated here because this is the one place that already
+            # runs every cycle with a correct initial-SL-based r_multiple.
+            # Consumed by decision_journal.attribute_live_exit() on close.
+            params['mfe_r'] = max(params.get('mfe_r', 0.0) or 0.0, r_multiple)
+            params['mae_r'] = min(params.get('mae_r', 0.0) or 0.0, r_multiple)
 
             # =========================================================
             # STEP 1: RE-SCORE EDGE (Antigravity Enforcement Layer)
@@ -6088,6 +6123,10 @@ def manage_all_positions():
                         redu_vol = round((current_volume * _partial_frac) / lot_step_e) * lot_step_e
                         if redu_vol >= lot_step_e:
                             if close_partial_position(ticket, redu_vol):
+                                _record_management(params, 'partial_close',
+                                                   f'banked {_partial_frac:.0%} of the position at {r_multiple:.2f}R',
+                                                   trigger_r=round(r_multiple, 2),
+                                                   volume_closed=redu_vol)
                                 # Persist to Supabase IMMEDIATELY so restart knows partial was done
                                 try:
                                     trade_db.update_metadata(ticket, {'partial_tp_executed': True})
@@ -6132,6 +6171,10 @@ def manage_all_positions():
                     redu_vol = round((current_volume * _reduce_frac) / lot_step_d) * lot_step_d
                     if redu_vol >= lot_step_d:
                         if close_partial_position(ticket, redu_vol):
+                            _record_management(params, 'partial_close',
+                                               f'decision engine banked {_reduce_frac:.0%} at {r_multiple:.2f}R',
+                                               trigger_r=round(r_multiple, 2),
+                                               volume_closed=redu_vol)
                             try:
                                 trade_db.update_metadata(ticket, {'partial_tp_executed': True})
                                 state.partial_closed.add(ticket)
@@ -6273,6 +6316,9 @@ def manage_all_positions():
                         logger.info(f"[AOX TRAIL] {symbol} #{ticket}: BE only -- SD TPs handle profit target (r={r_multiple:.2f}R)")
                         if modify_position(ticket, _be_aox, tp):
                             state.be_moved.add(ticket)
+                            _record_management(params, 'moved_to_breakeven',
+                                               f'reached {r_multiple:.2f}R -- AOX protects at 1R, SD levels handle the target',
+                                               trigger_r=round(r_multiple, 2), new_sl=_be_aox)
                             try: trade_db.update_metadata(ticket, {'be_moved': True})
                             except Exception: pass
                     else:
@@ -6298,6 +6344,9 @@ def manage_all_positions():
                         logger.info(f"[SWAPPY TRAIL] {symbol} #{ticket}: BE at 2R -- holding to 3R+ min (r={r_multiple:.2f}R)")
                         if modify_position(ticket, _be_sw, tp):
                             state.be_moved.add(ticket)
+                            _record_management(params, 'moved_to_breakeven',
+                                               f'reached {r_multiple:.2f}R -- stop moved to protect the position',
+                                               trigger_r=round(r_multiple, 2))
                             try: trade_db.update_metadata(ticket, {'be_moved': True})
                             except Exception: pass
                     else:
@@ -6351,6 +6400,9 @@ def manage_all_positions():
                     )
                     if modify_position(ticket, be_price_rounded, tp):
                         state.be_moved.add(ticket)
+                        _record_management(params, 'moved_to_breakeven',
+                                           f'reached {r_multiple:.2f}R -- stop moved to protect the position',
+                                           trigger_r=round(r_multiple, 2))
                         params['initial_sl'] = params.get('initial_sl', sl)
                         state.open_positions[ticket]['params'] = params
                         try:
@@ -6374,6 +6426,9 @@ def manage_all_positions():
                     # SL already at or past BE (restored without flag, or tiny float diff)
                     logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: SL already past BE ({sl_rounded}), marking done silently")
                     state.be_moved.add(ticket)
+                    _record_management(params, 'moved_to_breakeven',
+                                       f'reached {r_multiple:.2f}R -- stop moved to protect the position',
+                                       trigger_r=round(r_multiple, 2))
                     try:
                         trade_db.update_metadata(ticket, {'be_moved': True})
                     except Exception:
@@ -6543,6 +6598,45 @@ def update_closed_trades():
                 state.symbol_cooldowns[symbol] = cooldown_expiry
                 logger.info(f" [COOLDOWN] {symbol} locked. Next trade allowed after {cooldown_expiry.strftime('%H:%M')} UTC")
                 
+                # DECISION JOURNAL -- CLOSE OUT.
+                # This is the half the live bot never had: the reasoning at
+                # entry was recorded, but nothing explained WHY a trade ended.
+                # attribute_live_exit() turns the mechanical label ('SL') into
+                # a diagnosis, using the MFE/MAE tracked during the trade --
+                # so a stop that gave back +2R (an exit/management failure) is
+                # distinguishable from one that never went our way at all (an
+                # entry failure), and a 12-second stop is correctly called a
+                # spread spike rather than a bad setup. Exception-wrapped:
+                # analytics must never break trade bookkeeping.
+                try:
+                    _prm = pos_data.get('params', {})
+                    _held = (time.time() - _prm.get('open_time', 0)) if _prm.get('open_time') else None
+                    _attr = dj.attribute_live_exit(
+                        direction=direction,
+                        entry_price=_prm.get('entry_price', 0) or 0,
+                        initial_sl=_prm.get('initial_sl', _prm.get('sl', 0)) or 0,
+                        take_profit=_prm.get('tp'),
+                        exit_price=deal.price,
+                        exit_reason=exit_reason,
+                        mfe_r=_prm.get('mfe_r'),
+                        mae_r=_prm.get('mae_r'),
+                        held_seconds=_held,
+                        be_moved=(ticket in state.be_moved),
+                        partial_taken=(ticket in state.partial_closed),
+                    )
+                    logger.info(f"[WHY CLOSED] {symbol} #{ticket} {exit_reason}: {_attr}")
+                    trade_db.update_metadata(ticket, {
+                        'exit_attribution': _attr,
+                        'mfe_r': round(_prm.get('mfe_r') or 0.0, 3),
+                        'mae_r': round(_prm.get('mae_r') or 0.0, 3),
+                        'held_seconds': round(_held, 1) if _held else None,
+                        'be_moved': ticket in state.be_moved,
+                        'partial_taken': ticket in state.partial_closed,
+                        'management': _prm.get('management', []),
+                    })
+                except Exception as _je:
+                    logger.debug(f"[WHY CLOSED] journal close-out failed for #{ticket}: {_je}")
+
                 # SCALPING OPTIMIZATION: Async update (non-blocking)
                 async_logger.update_trade_async(ticket, deal.price, profit, exit_reason)
                 success = True  # Assume success since async
