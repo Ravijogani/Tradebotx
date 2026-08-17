@@ -802,6 +802,143 @@ filter, and "the numbers changed in the direction I expected" still needs
 checking against "did it change them for the right reason" before it
 ships.
 
+### Two more named traders (Raja Banks, Guardeer) + a frequency audit + a real bug found while verifying it
+
+Requested directly: research two more traders (Raja Banks, and "Guardeer"
+once disambiguated from a voice-transcribed name that didn't initially
+match anything searchable) the same way TOPG/Shakuni Trap/Swappy were
+researched earlier, and — the user's own explicit second half of the same
+ask — audit whether this engagement's own additions have made trades
+*harder* to find, not just smarter to take, since hybrid_trading_bot_
+multiuser.py exists specifically to scalp and intraday.py to hold
+multi-day swings.
+
+**Research finding, stated plainly rather than silently padding the
+codebase**: both traders teach standard ICT/SMC vocabulary (liquidity,
+order blocks, FVG, BOS/CHoCH, HTF structure) that substantially overlaps
+with what earlier phases of this exact session already built. Only two
+pieces were genuinely new:
+
+- **Premium/Discount (equilibrium zones)** — Raja Banks' primary
+  directional filter: is price in the cheap half of its current dealing
+  range (DISCOUNT — favor buys) or the expensive half (PREMIUM — favor
+  sells)? `compute_equilibrium_zone()` / `premium_discount_confluence()`
+  in `market_intelligence.py`, built off the swing-point range bounded by
+  `find_swing_points()` (reused, not reimplemented).
+- **Optimal Trade Entry (OTE)** — Guardeer/ICT's Fibonacci refinement of
+  *where* inside an already-valid setup to enter: the classic 61.8%-79%
+  retracement of the most recent impulse leg in the trade's direction.
+  `compute_ote_zone()` / `in_ote_zone()`, layered on top of an existing
+  order-block/FVG entry, never a replacement for one. 30 unit tests cover
+  both (dealing-range/leg construction, PREMIUM/DISCOUNT/EQUILIBRIUM
+  classification, BUY/SELL OTE zones off up-legs and down-legs, the
+  None-safe "no leg yet" cases, and boundary-inclusive `in_ote_zone`).
+
+**Frequency audit, done before wiring anything new in** — real numbers
+from the last full real-data backtest of hybrid_trading_bot_multiuser.py's
+three backtestable strategies:
+
+| Strategy | Trades | Span | Trades/day |
+|---|---|---|---|
+| SHAAKUNI_SSM | 133 | 87d | 1.53 |
+| SWAPPY_3C | 18 | 78d | 0.23 |
+| EMA_SCALP_CROSS | 5 | 65d | 0.08 |
+
+EMA Scalp Cross and Swappy 3C are thin. Tracing why, rather than assuming
+either needed loosening or needed nothing:
+
+- **EMA Scalp Cross** has 6 internal gates (200 EMA trend, EMA-bunching
+  distance rule, W/M/H&S pattern pre-filter, cross validity, unswept-trap
+  avoidance, this-session's liquidity-confluence veto) plus 2 call-site
+  gates (enable flag, this-session's regime gate) plus 4 shared upstream
+  gates before it's even tried (H4/H1 conflict, M30 CHoCH veto,
+  EMA-momentum-flat, overextension). Both of THIS session's own additions
+  were already independently verified with real removed-vs-kept R-multiple
+  evidence to cut worse trades, not better ones (liquidity confluence:
+  74→15 trades, expectancy +0.068R→+0.182R; regime gate: removed -0.123R
+  avg, kept +0.790R avg — see the regime-router section above). The
+  thinness reflects genuine selectivity working as intended on an
+  already-narrow, low-edge legacy strategy, not reckless stacking.
+- **Swappy 3C**'s thinness is intrinsic to its own pattern definition (two
+  candles at 70-80% body with a higher-low/lower-high plus a failed
+  pullback, all in the same 3-bar window) — a rare shape by construction,
+  predating this session. Its liquidity-confluence and (new, this pass)
+  premium/discount/OTE additions are pure strength bonuses that never gate
+  `confirmed` — the regime gate was tried here too and reverted specifically
+  because it hurt Swappy (see the regime-router section). No evidence this
+  session's work made Swappy any thinner than its base pattern already was.
+- **Real caveat found in this audit, worth stating plainly**: the backtest
+  harness doesn't replicate every live-only gate for either strategy — the
+  overextension filter, the EMA-momentum-flat check, and (per
+  `_adapt_swappy_3c`'s own docstring) Swappy's near-support/resistance
+  location filter and stateful 3rd-time re-entry rule all exist live but
+  aren't exercised in the backtest adapters at all. So live frequency for
+  these two is likely *lower* than the backtest numbers above, not higher
+  — the backtest is, if anything, an optimistic frequency estimate for
+  them, not a pessimistic one.
+- **Bot-level total**: SSM + Swappy + EMA alone sum to ~1.84 trades/day,
+  dominated by SSM (PF 1.71-1.77 across runs) — a healthy scalping cadence
+  at the bot level even though EMA Scalp Cross specifically has become a
+  rare, high-conviction add-on rather than a primary generator.
+- **intraday.py** (the swing bot) was checked the same way: its aggregate
+  `INTRADAY` backtest (H4 Trend Pullback + H1 OB Retest + Balance Fade
+  sub-strategies) produced 18 trades over 76 days, 1.66/week, PF 1.71,
+  expectancy +0.446R — a reasonable cadence for a strategy meant to hold
+  positions 2-5 days (daily new entries while still holding a multi-day
+  position isn't actually the goal). Not touched further this pass.
+
+**Conclusion drawn from the audit, before writing any wiring code**: no
+evidence this session's own gates have over-filtered anything to the point
+of harm — every one of them was verified with real removed-vs-kept
+evidence. So Premium/Discount and OTE were wired as **soft, loosening-only
+modifiers, never new hard vetoes** — directly informed by this audit, not
+a generic design preference:
+
+- **Shaakuni SSM**: `strategy_shaakuni_ssm`'s existing RR-floor logic
+  (`min_rr = 1.5 if confluence['confluent'] else 2.0`) was extended to
+  `min_rr = 1.5 if (confluence['confluent'] or (equilibrium is not None and
+  pd_conf['favorable']) or in_ote) else 2.0` — three independent reasons,
+  ORed together, any one of which is enough to earn the looser bar. Purely
+  additive: nothing that passed before can now fail. Real-data result:
+  133→134 trades, +0.713R→+0.717R, PF 1.71→1.72, equity +94.78R→+96.09R —
+  a small, genuine improvement in the expected direction of a
+  loosening-only change.
+- **Swappy 3C**: a further +0.05 strength bonus (premium/discount) and
+  +0.05 (OTE match), stacking on top of the existing +0.10 liquidity bonus
+  — same non-blocking pattern, disclosed the same way (`strength` only
+  feeds the live-only `EdgeEngine`, not backtest-visible on trade count).
+  Confirmed 18→18 trades, no change, as expected for a bonus-only addition.
+- **EMA Scalp Cross and intraday.py were deliberately left untouched** in
+  this pass — the audit gave no reason to add anything to the strategy
+  already found to be correctly, verifiably selective, and intraday.py's
+  own frequency looked healthy for its holding-period purpose without
+  needing a new pass.
+
+**Real bug found and fixed while verifying the above** (present before
+this session's changes too — confirmed identical on two separate
+real-data runs, so not something the premium/discount/OTE work itself
+introduced): `ShaakuniSSM.find_extreme_ob()`'s OB search range
+(`leg_low`/`leg_high`) is an ATR-based approximation of the swept leg, not
+clamped to the sweep's own `tp_target` (the swept HTF candle's actual
+high/low). On 2 of 133 real XAUUSDm trades, this let it pick an "extreme
+OB" entry that was already on the wrong side of `tp_target` — a SELL
+where `tp` ended up *above* entry, the same side as `sl`. The RR check
+downstream (`abs(entry - tp) / sl_dist`) can't catch this because `abs()`
+erases the sign, so both malformed trades passed every existing gate and
+were logged as normal SL/TP exits — with a *negative* `r_multiple`
+regardless of which label the backtest engine assigned, quietly corrupting
+win-rate/expectancy stats for those two trades. Fixed with a direct
+geometric check at the one place the real entry/sl/tp values are in hand
+(`if not (sl < entry < tp): return empty` for BUY, mirrored for SELL) —
+rejecting the setup outright rather than letting a backwards TP reach a
+live order. Confirmed with a before/after real-data re-run: 134→132
+trades (exactly the 2 flagged rows removed, nothing else touched), and
+expectancy *improved* despite fewer trades (+0.717R→+0.759R, PF
+1.72→1.77, equity +96.09R→+100.17R) — the direct, expected signature of
+removing two genuinely bad trades. A full sidedness sweep across all 5
+strategies' final ledgers (190 trades total) confirmed zero violations
+remaining.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

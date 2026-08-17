@@ -3852,6 +3852,18 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else [],
                     mi.detect_fvg_zones(df, 'BUY'), atr=_sw_atr)
                 if _sw_conf['confluent']: strength += 0.10
+                # PREMIUM/DISCOUNT + OTE bonus (Raja Banks/Guardeer research,
+                # market_intelligence.py section 8) -- same non-blocking
+                # strength-bonus pattern as the liquidity-confluence bonus
+                # just above, not a gate: this session's frequency audit
+                # (backtest/README.md) found no evidence Swappy needs (or
+                # would survive) another hard filter on top of its already
+                # narrow 3-candle pattern match.
+                _sw_eq = mi.compute_equilibrium_zone(df)
+                _sw_pd = mi.premium_discount_confluence('BUY', _sw_eq)
+                if _sw_eq is not None and _sw_pd['favorable']: strength += 0.05
+                _sw_ote = mi.compute_ote_zone(df, 'BUY')
+                if mi.in_ote_zone(entry_level, _sw_ote): strength += 0.05
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BULL",
                     "strength": min(1.0, strength),
@@ -3887,6 +3899,13 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else [],
                     mi.detect_fvg_zones(df, 'SELL'), atr=_sw_atr)
                 if _sw_conf['confluent']: strength += 0.10
+                # PREMIUM/DISCOUNT + OTE bonus -- mirror of the BUY branch
+                # above, see its comment for why this is a bonus, not a gate.
+                _sw_eq = mi.compute_equilibrium_zone(df)
+                _sw_pd = mi.premium_discount_confluence('SELL', _sw_eq)
+                if _sw_eq is not None and _sw_pd['favorable']: strength += 0.05
+                _sw_ote = mi.compute_ote_zone(df, 'SELL')
+                if mi.in_ote_zone(entry_level, _sw_ote): strength += 0.05
                 return {
                     "confirmed": True, "pattern": "SWAPPY_BEAR",
                     "strength": min(1.0, strength),
@@ -8030,12 +8049,39 @@ class ShaakuniSSM:
                 # manipulation signature this strategy is built to trade, not
                 # noise to pad around -- the existing flat atr*0.3 is correct here,
                 # left unchanged on purpose.
+                _tp = sweep.get('tp_target', extreme['ob_high'] + atr * 5)
+                _sl = extreme['ob_low'] - atr * 0.3
+                _entry = extreme['ob_low']
+                # GEOMETRIC SANITY CHECK (real bug found verifying the
+                # premium/discount/OTE change, present before it too --
+                # confirmed identical on two separate real-data runs, not
+                # something this session introduced): leg_low/leg_high
+                # above are ATR-based approximations of the swept leg, not
+                # clamped to the sweep's own tp_target (the swept HTF
+                # candle's actual high/low). That let find_extreme_ob pick
+                # an OB whose entry sits on the WRONG side of tp_target --
+                # e.g. a SELL where the "extreme OB" entry is already
+                # below the swept candle's low, so tp ends up ABOVE entry,
+                # same side as sl. The RR check downstream in
+                # strategy_shaakuni_ssm uses abs(entry-tp), which can't
+                # detect this (a backwards TP still produces a positive-
+                # looking RR number) -- 2 of 133 real trades on the
+                # XAUUSDm 90-day sample had this shape, both logged as SL/
+                # TP exits with a NEGATIVE r_multiple regardless of which
+                # label the backtest engine picked, corrupting win-rate/
+                # expectancy stats for those trades either way. Reject
+                # here instead, at the one place with the real ob/tp
+                # values in hand, rather than downstream where only the
+                # already-computed (and by then unrecoverable) numbers
+                # are visible.
+                if not (_sl < _entry < _tp):
+                    return empty
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
-                    'entry':     extreme['ob_low'],   # limit BUY at OB low
-                    'sl':        extreme['ob_low'] - atr * 0.3,
-                    'tp':        sweep.get('tp_target', extreme['ob_high'] + atr * 5),
+                    'entry':     _entry,   # limit BUY at OB low
+                    'sl':        _sl,
+                    'tp':        _tp,
                     'direction': 'BUY',
                 }
 
@@ -8062,12 +8108,21 @@ class ShaakuniSSM:
                 extreme = max(candidate_obs, key=lambda x: x['ob_high'])
                 # See the BUY branch above for why adaptive_sl_buffer is
                 # deliberately NOT used here -- same real-data regression finding.
+                _tp = sweep.get('tp_target', extreme['ob_low'] - atr * 5)
+                _sl = extreme['ob_high'] + atr * 0.3
+                _entry = extreme['ob_high']
+                # GEOMETRIC SANITY CHECK -- mirror of the BUY branch above,
+                # see its comment for the full "why" (real bug, pre-dates
+                # this session, found while verifying the premium/discount/
+                # OTE change).
+                if not (_tp < _entry < _sl):
+                    return empty
                 return {
                     'ob_low':    extreme['ob_low'],
                     'ob_high':   extreme['ob_high'],
-                    'entry':     extreme['ob_high'],  # limit SELL at OB high
-                    'sl':        extreme['ob_high'] + atr * 0.3,
-                    'tp':        sweep.get('tp_target', extreme['ob_low'] - atr * 5),
+                    'entry':     _entry,  # limit SELL at OB high
+                    'sl':        _sl,
+                    'tp':        _tp,
                     'direction': 'SELL',
                 }
 
@@ -8159,19 +8214,42 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
                 tp = liq_tp
 
         rr = abs(ob['entry'] - tp) / sl_dist if sl_dist > 0 else 0
-        # Confluent entries keep the original 1.5:1 bar; an entry with no
-        # real liquidity reason behind it (not near any named reference
-        # level or fresh FVG) needs to clear a stricter 2.0:1 instead --
-        # refines which sweep+OB setups are worth taking without an
-        # outright veto that could silently zero out a working strategy
-        # the way an earlier hard-veto experiment this session did.
-        min_rr = 1.5 if confluence['confluent'] else 2.0
+
+        # PREMIUM/DISCOUNT + OTE (Raja Banks / Guardeer research, see
+        # market_intelligence.py's module docstring section 8): two more
+        # independent, real-data-shaped reasons this OB entry might be a
+        # genuinely good one, on top of the existing named-liquidity
+        # confluence check above. Deliberately wired the same "loosen,
+        # never tighten" way that check already is -- a same-session
+        # frequency audit (backtest/README.md) found EMA Scalp Cross/
+        # Swappy 3C already firing under 0.25 trades/day after this
+        # engagement's earlier gates, so a THIRD independent hard
+        # requirement here would repeat exactly the over-filtering risk
+        # that audit was checking for. Instead: any ONE of confluence,
+        # a favorable premium/discount read, or an entry sitting in the
+        # classic OTE retracement zone is enough to earn the looser 1.5:1
+        # RR bar -- OR, not AND, across all three.
+        equilibrium = mi.compute_equilibrium_zone(df_m5)
+        pd_conf = mi.premium_discount_confluence(direction, equilibrium)
+        ote = mi.compute_ote_zone(df_m5, direction)
+        in_ote = mi.in_ote_zone(ob['entry'], ote)
+
+        # Confluent/favorable entries keep the original 1.5:1 bar; an
+        # entry with none of these three reasons behind it needs to clear
+        # a stricter 2.0:1 instead -- refines which sweep+OB setups are
+        # worth taking without an outright veto that could silently zero
+        # out a working strategy the way an earlier hard-veto experiment
+        # this session did.
+        min_rr = 1.5 if (confluence['confluent'] or
+                          (equilibrium is not None and pd_conf['favorable']) or
+                          in_ote) else 2.0
         if rr < min_rr: return empty
 
         logger.info(
             f"[SSM] {symbol} {direction}: HTF sweep confirmed. "
             f"Extreme OB={ob['entry']:.4f} SL={ob['sl']:.4f} TP={tp:.4f} RR={rr:.1f}x "
-            f"Liquidity={'YES(' + str(confluence['matched_level']) + ')' if confluence['confluent'] else 'no'}"
+            f"Liquidity={'YES(' + str(confluence['matched_level']) + ')' if confluence['confluent'] else 'no'} "
+            f"PD={equilibrium['zone'] if equilibrium else 'n/a'} OTE={'YES' if in_ote else 'no'}"
         )
         return {
             'signal':        direction,
@@ -8185,6 +8263,8 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
             'sweep':         sweep,
             'rr':            rr,
             'liquidity_confluence': confluence,
+            'equilibrium_zone': equilibrium,
+            'in_ote_zone': in_ote,
         }
     except Exception as e:
         logger.error(f"[SSM] {symbol}: {e}")

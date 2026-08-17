@@ -105,6 +105,26 @@ FRAMEWORK
    both resolve to an explicit, first-class STAND-ASIDE state -- no
    strategy fires -- which nothing in this codebase modeled before this.
 
+8. Premium/Discount (equilibrium) zones + Optimal Trade Entry (OTE).
+   Researched directly off two more named traders (Raja Banks' "Smart Raja
+   Concepts" and Guardeer's ICT/SMC mentorship material) -- both teach
+   standard ICT vocabulary that substantially overlaps with what's already
+   above (liquidity, order blocks, FVG, BOS/CHoCH, HTF structure), but two
+   pieces were genuinely new here: compute_equilibrium_zone() classifies
+   current price as PREMIUM (expensive half of the most recent dealing
+   range -- favor selling the reaction) or DISCOUNT (cheap half -- favor
+   buying it), the 50%-midpoint directional filter both traders teach as a
+   primary bias check. compute_ote_zone() refines WHERE inside an
+   already-valid setup to actually enter: the classic 61.8%-79% Fibonacci
+   retracement of the most recent impulse leg in the trade's direction --
+   layered ON TOP of an order-block/FVG entry, not a replacement for one.
+   Deliberately built and wired as SOFT modifiers only (confidence/RR
+   nudges, never a hard veto) -- a same-session frequency audit found two
+   of the three hybrid_trading_bot_multiuser.py strategies already firing
+   under 0.25 trades/day after the regime-router and liquidity-confluence
+   work, so adding another hard gate on top would have directly repeated
+   the over-filtering risk being audited for, not fixed it.
+
 WHAT THIS FILE DELIBERATELY DOES NOT DO
 ----------------------------------------
 No real order-book depth, no dark-pool prints, no true institutional order
@@ -1048,3 +1068,154 @@ def classify_market_regime(auction: Dict, m30_char: Optional[Dict] = None) -> Di
     }[regime]
 
     return {"regime": regime, "allowed_directions": allowed, "reason": reason}
+
+
+# =============================================================================
+# PREMIUM/DISCOUNT (EQUILIBRIUM) ZONES + OPTIMAL TRADE ENTRY (OTE)
+# =============================================================================
+
+def compute_equilibrium_zone(df: pd.DataFrame, lookback: int = 3) -> Optional[Dict]:
+    """
+    ICT/SMC "Premium & Discount": the current dealing range's most recent
+    swing high and swing low (from find_swing_points() -- reused, not
+    reimplemented, since it already lives in this module) bound a range.
+    The 50% midpoint is "equilibrium." Price trading above it is PREMIUM
+    (expensive relative to the range -- Raja Banks/Guardeer both teach
+    favoring sells here), below it is DISCOUNT (cheap -- favor buys).
+
+    Uses whichever of the most recent swing high / swing low is more
+    recent as one bound, and the highest high / lowest low from a short
+    trailing window around it as the other -- in practice, the simplest
+    robust version of "the current dealing range" is just the most recent
+    swing high and most recent swing low regardless of which came first;
+    that's what's used here.
+
+    Returns {zone: 'PREMIUM'|'DISCOUNT'|'EQUILIBRIUM', equilibrium, high,
+    low, pct} where pct is current price's position in [0, 1] across
+    [low, high] (0.5 = exactly at equilibrium). Returns None if there
+    aren't at least one swing high and one swing low yet, or if they
+    don't bound a real range.
+    """
+    if df is None or len(df) < lookback * 2 + 1:
+        return None
+    swing_highs, swing_lows = find_swing_points(df, lookback)
+    if not swing_highs or not swing_lows:
+        return None
+
+    high_price = float(df["high"].iloc[swing_highs[-1]])
+    low_price = float(df["low"].iloc[swing_lows[-1]])
+    if high_price <= low_price:
+        return None
+
+    current_price = float(df["close"].iloc[-1])
+    equilibrium = (high_price + low_price) / 2.0
+    rng = high_price - low_price
+    pct = (current_price - low_price) / rng
+
+    if current_price > equilibrium:
+        zone = "PREMIUM"
+    elif current_price < equilibrium:
+        zone = "DISCOUNT"
+    else:
+        zone = "EQUILIBRIUM"
+
+    return {"zone": zone, "equilibrium": equilibrium, "high": high_price,
+            "low": low_price, "pct": pct}
+
+
+def premium_discount_confluence(direction: str, equilibrium_info: Optional[Dict]) -> Dict:
+    """
+    Directional read on an equilibrium zone: a BUY is "favorable" in
+    DISCOUNT or right at EQUILIBRIUM, a SELL is "favorable" in PREMIUM or
+    at EQUILIBRIUM. Deliberately returns a soft `favorable` flag, not a
+    verdict a caller is forced to veto on -- see this module's docstring
+    (section 8) for why: real-data trade-frequency evidence this session
+    showed some of these strategies already fire under 0.25 trades/day,
+    so this is meant to nudge a confidence/RR score, not gate entries
+    outright, unless a specific strategy's own real-data check justifies
+    a harder use (same pattern liquidity_confluence_check() established).
+
+    Returns {favorable: bool, zone: str|None, reason: str}. No dealing
+    range available (equilibrium_info is None) returns favorable=True --
+    absence of information should never itself block a trade.
+    """
+    if not equilibrium_info:
+        return {"favorable": True, "zone": None, "reason": "no dealing range available yet"}
+
+    zone = equilibrium_info["zone"]
+    if direction == "BUY":
+        favorable = zone in ("DISCOUNT", "EQUILIBRIUM")
+    elif direction == "SELL":
+        favorable = zone in ("PREMIUM", "EQUILIBRIUM")
+    else:
+        favorable = True
+
+    reason = (f"price in {zone} zone ({equilibrium_info['pct']:.0%} of the "
+              f"{equilibrium_info['low']:.5f}-{equilibrium_info['high']:.5f} "
+              f"dealing range) for a {direction}")
+    return {"favorable": favorable, "zone": zone, "reason": reason}
+
+
+def compute_ote_zone(df: pd.DataFrame, direction: str, lookback: int = 3,
+                      fib_low: float = 0.618, fib_high: float = 0.79) -> Optional[Dict]:
+    """
+    ICT "Optimal Trade Entry" -- refines WHERE inside an already-valid
+    setup to actually enter, layered on top of an order-block/FVG entry,
+    not a replacement for one. For a BUY, finds the most recent up-leg
+    (a swing low followed by a later swing high) and returns the
+    `fib_low`-`fib_high` (61.8%-79% by default) retracement zone measured
+    back down from the high -- the classic "let it come back and get you"
+    pullback zone. Mirrors this for a SELL off the most recent down-leg
+    (swing high followed by a later swing low).
+
+    Returns {low, high, direction}, or None if no qualifying leg exists
+    yet (e.g. the most recent swing high formed before the most recent
+    swing low, for a BUY -- there's no completed up-leg to measure) or the
+    leg has zero range.
+    """
+    if df is None or len(df) < lookback * 2 + 1 or direction not in ("BUY", "SELL"):
+        return None
+    swing_highs, swing_lows = find_swing_points(df, lookback)
+    if not swing_highs or not swing_lows:
+        return None
+
+    highs_arr = df["high"].to_numpy()
+    lows_arr = df["low"].to_numpy()
+
+    if direction == "BUY":
+        low_idx = swing_lows[-1]
+        highs_after = [i for i in swing_highs if i > low_idx]
+        if not highs_after:
+            return None
+        high_idx = highs_after[-1]
+        low_p = float(lows_arr[low_idx])
+        high_p = float(highs_arr[high_idx])
+        if high_p <= low_p:
+            return None
+        leg = high_p - low_p
+        zone_high = high_p - fib_low * leg
+        zone_low = high_p - fib_high * leg
+    else:
+        high_idx = swing_highs[-1]
+        lows_after = [i for i in swing_lows if i > high_idx]
+        if not lows_after:
+            return None
+        low_idx = lows_after[-1]
+        high_p = float(highs_arr[high_idx])
+        low_p = float(lows_arr[low_idx])
+        if high_p <= low_p:
+            return None
+        leg = high_p - low_p
+        zone_low = low_p + fib_low * leg
+        zone_high = low_p + fib_high * leg
+
+    return {"low": zone_low, "high": zone_high, "direction": direction}
+
+
+def in_ote_zone(price: float, ote: Optional[Dict]) -> bool:
+    """True if `price` sits inside the OTE zone. None-safe (no zone yet ->
+    False -- absence of a computable leg should never itself confirm an
+    entry, only a real one should)."""
+    if not ote:
+        return False
+    return ote["low"] <= price <= ote["high"]
