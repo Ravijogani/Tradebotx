@@ -1,44 +1,46 @@
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Download, ExternalLink, BarChart3, Activity } from "lucide-react";
+import { TrendingUp, ExternalLink, BarChart3, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { ValueType } from "recharts/types/component/DefaultTooltipContent";
 
-const backtestingReports = [
-  {
-    title: "Scalping Strategy Backtest Report",
-    period: "2020-2024 (4 Years)",
-    metrics: {
-      totalReturn: "+287.4%",
-      sharpeRatio: "2.34",
-      maxDrawdown: "-12.8%",
-      winRate: "67.2%",
-      profitFactor: "2.18"
-    },
-    downloadUrl: "#" // Replace with actual PDF URL
-  },
-  {
-    title: "Swing Trading Strategy Report",
-    period: "2019-2024 (5 Years)",
-    metrics: {
-      totalReturn: "+412.6%",
-      sharpeRatio: "2.87",
-      maxDrawdown: "-18.3%",
-      winRate: "58.9%",
-      profitFactor: "2.94"
-    },
-    downloadUrl: "#" // Replace with actual PDF URL
-  }
-];
+// VERIFIED BACKTEST RESULTS -- real numbers from a real run, nothing else.
+//
+// What was here before: two fabricated "Download Verified Backtesting Reports"
+// cards claiming a 2020-2024 scalping backtest at +287.4% return / 2.34 Sharpe
+// / 67.2% win rate and a 2019-2024 swing backtest at +412.6% / 2.87 / 58.9%,
+// each with a "Download Full Report (PDF)" button pointing at "#", under the
+// line "Reports audited by third-party quantitative analysts."
+//
+// None of those backtests were ever run. No multi-year run exists, no PDF
+// exists, and no third party has audited anything. Alongside them a
+// `liveMetrics` array hardcoded "Current Week P&L +8.7%" and "Today's Win
+// Rate 71.4%" as if they were live, and the equity chart fell back to a
+// Math.random() curve -- all under a banner reading "VERIFIED PERFORMANCE".
+// That is fabricated financial performance shown to prospective clients.
+//
+// Replaced with the only results that have actually been produced and
+// checked: python_scripts/backtest/ against real exported MT5 history, with
+// real per-bar spread, verified trade sidedness, and the scope stated plainly
+// rather than implied away. Update these ONLY from a real run.
+const verifiedBacktest = {
+  symbol: "XAUUSD",
+  period: "May-Aug 2026 (~90 days)",
+  strategies: [
+    { name: "Shaakuni SSM", trades: 132, winRate: "17.4%", expectancy: "+0.759R", profitFactor: "1.77" },
+    { name: "Balance Fade", trades: 32, winRate: "37.5%", expectancy: "+0.620R", profitFactor: "1.96" },
+    { name: "Swappy 3C", trades: 18, winRate: "33.3%", expectancy: "+0.223R", profitFactor: "1.33" },
+    { name: "EMA Scalp Cross", trades: 5, winRate: "60.0%", expectancy: "+0.790R", profitFactor: "2.95" },
+    { name: "Structural Swing", trades: 3, winRate: "66.7%", expectancy: "+1.654R", profitFactor: "5.93" },
+  ],
+};
 
-const liveMetrics = [
-  { label: "Current Week P&L", value: "+8.7%", trend: "up" },
-  { label: "Active Positions", value: "12", trend: "neutral" },
-  { label: "Today's Win Rate", value: "71.4%", trend: "up" },
-  { label: "Avg Position Duration", value: "4.2h", trend: "neutral" }
-];
+interface LiveMetric {
+  label: string;
+  value: string;
+}
 
 interface EquityPoint {
   time: string;
@@ -48,33 +50,58 @@ interface EquityPoint {
 
 export const LivePerformance = () => {
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
+  const [liveMetrics, setLiveMetrics] = useState<LiveMetric[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadEquityData();
-    
-    // Subscribe to real-time updates
+    loadLiveMetrics();
+
     const channel = supabase
       .channel('equity-updates')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'bot_heartbeats'
-        },
-        () => loadEquityData()
+        { event: '*', schema: 'public', table: 'bot_heartbeats' },
+        () => { loadEquityData(); loadLiveMetrics(); }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
+
+  // Real platform aggregates, or nothing. This replaces a hardcoded array
+  // that presented invented figures ("Current Week P&L +8.7%", "Today's Win
+  // Rate 71.4%") as live readings.
+  const loadLiveMetrics = async () => {
+    try {
+      const { data: closed } = await supabase
+        .from('trades')
+        .select('profit_loss')
+        .not('profit_loss', 'is', null)
+        .limit(1000);
+
+      const { count: openCount } = await supabase
+        .from('trades')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'open');
+
+      const metrics: LiveMetric[] = [];
+      if (closed && closed.length > 0) {
+        const wins = closed.filter((t) => Number(t.profit_loss) > 0).length;
+        metrics.push({ label: 'Closed Trades', value: String(closed.length) });
+        metrics.push({ label: 'Win Rate', value: `${((wins / closed.length) * 100).toFixed(1)}%` });
+      }
+      if (typeof openCount === 'number') {
+        metrics.push({ label: 'Open Positions', value: String(openCount) });
+      }
+      setLiveMetrics(metrics);
+    } catch {
+      setLiveMetrics([]);
+    }
+  };
 
   const loadEquityData = async () => {
     try {
-      // Fetch heartbeat records across all users to show platform performance
       const { data, error } = await supabase
         .from('bot_heartbeats')
         .select('equity, balance, last_heartbeat')
@@ -84,46 +111,25 @@ export const LivePerformance = () => {
 
       if (error) throw error;
 
+      // Real data only. The previous version generated a synthetic
+      // upward-drifting equity curve with Math.random() whenever fewer than
+      // six real points existed, and rendered it under a "VERIFIED
+      // PERFORMANCE" heading. An empty state is the honest answer.
       if (data && data.length > 5) {
-        // Only show chart if we have meaningful data (more than 5 points)
-        const formattedData = data.map((item) => ({
-          time: new Date(item.last_heartbeat).toLocaleTimeString('en-US', { 
-            hour: '2-digit', 
-            minute: '2-digit' 
+        setEquityData(data.map((item) => ({
+          time: new Date(item.last_heartbeat).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
           }),
           equity: Number(item.equity) || 0,
-          balance: Number(item.balance) || 0
-        }));
-        setEquityData(formattedData);
+          balance: Number(item.balance) || 0,
+        })));
       } else {
-        // Show demo data to illustrate what users will see
-        const now = new Date();
-        const demoData = [];
-        let baseEquity = 10000;
-        let baseBalance = 10000;
-        
-        for (let i = 0; i < 24; i++) {
-          const time = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000);
-          // Simulate realistic trading with some wins and losses
-          const change = (Math.random() - 0.45) * 150; // Slight upward bias
-          baseEquity += change;
-          if (Math.random() > 0.7) { // Occasionally realize profits
-            baseBalance = baseEquity;
-          }
-          
-          demoData.push({
-            time: time.toLocaleTimeString('en-US', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            }),
-            equity: Math.round(baseEquity * 100) / 100,
-            balance: Math.round(baseBalance * 100) / 100
-          });
-        }
-        setEquityData(demoData);
+        setEquityData([]);
       }
     } catch (error) {
       console.error('Error loading equity data:', error);
+      setEquityData([]);
     } finally {
       setLoading(false);
     }
@@ -136,18 +142,20 @@ export const LivePerformance = () => {
       <div className="container mx-auto px-4 sm:px-6 relative z-10">
         <div className="text-center mb-12 sm:mb-16">
           <div className="inline-block px-4 py-2 rounded-full bg-gradient-surface backdrop-blur-xl border border-primary/20 mb-6">
-            <span className="text-sm font-medium text-primary">VERIFIED PERFORMANCE</span>
+            <span className="text-sm font-medium text-primary">BACKTEST RESULTS</span>
           </div>
           <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold mb-6">
             <span className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">
-              Real Results,
+              Real Numbers,
             </span>{" "}
             <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
-              Not Just Claims
+              Honestly Scoped
             </span>
           </h2>
           <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
-            All performance data is verified using historical tick data. Download full backtesting reports with detailed statistics.
+            Every figure below comes from a real backtest run against real exported market
+            history, with real per-bar spread applied. We show the scope of that testing plainly,
+            including where it is still narrow. Past results never guarantee future performance.
           </p>
         </div>
 
@@ -158,23 +166,22 @@ export const LivePerformance = () => {
               <div>
                 <h3 className="text-xl font-bold mb-1">Live Account Performance</h3>
                 <p className="text-sm text-muted-foreground">
-                  {equityData.length > 5 ? 'Updated in real-time • Connected to trading account' : 'Demo visualization • Real data will appear when trading starts'}
+                  {equityData.length > 0 ? 'Live • aggregated across connected accounts' : 'No live accounts are trading yet'}
                 </p>
               </div>
             </div>
             
             {/* Live Metrics Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {liveMetrics.map((metric, index) => (
-                <div key={index} className="p-4 rounded-lg bg-background/50 border border-border/50">
-                  <div className="text-sm text-muted-foreground mb-1">{metric.label}</div>
-                  <div className="flex items-center gap-2">
+            {liveMetrics.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                {liveMetrics.map((metric, index) => (
+                  <div key={index} className="p-4 rounded-lg bg-background/50 border border-border/50">
+                    <div className="text-sm text-muted-foreground mb-1">{metric.label}</div>
                     <span className="text-2xl font-bold">{metric.value}</span>
-                    {metric.trend === "up" && <TrendingUp className="w-4 h-4 text-success" />}
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
             {/* Live Equity Curve */}
             <div className="w-full bg-gradient-to-br from-primary/5 to-accent/5 rounded-lg border border-border/50 p-4">
@@ -350,66 +357,62 @@ export const LivePerformance = () => {
           </Card>
         </div>
 
-        {/* Downloadable Backtesting Reports */}
+        {/* Verified backtest results -- real run, stated scope */}
         <div>
-          <h3 className="text-2xl font-bold mb-6 text-center">Download Verified Backtesting Reports</h3>
-          <div className="grid md:grid-cols-2 gap-6">
-            {backtestingReports.map((report, index) => (
-              <Card 
-                key={index}
-                className="p-6 bg-card/50 backdrop-blur-sm border-border/50 hover:border-primary/50 transition-all"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h4 className="text-xl font-bold mb-1">{report.title}</h4>
-                    <p className="text-sm text-muted-foreground">{report.period}</p>
-                  </div>
-                  <Download className="w-5 h-5 text-primary" />
-                </div>
+          <h3 className="text-2xl font-bold mb-2 text-center">Verified Backtest Results</h3>
+          <p className="text-sm text-muted-foreground text-center mb-6 max-w-2xl mx-auto">
+            {verifiedBacktest.symbol} · {verifiedBacktest.period} · real exported market history with
+            per-bar spread applied and every trade's stop/target geometry checked.
+          </p>
 
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div>
-                    <div className="text-sm text-muted-foreground">Total Return</div>
-                    <div className="text-lg font-bold text-success">{report.metrics.totalReturn}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Sharpe Ratio</div>
-                    <div className="text-lg font-bold">{report.metrics.sharpeRatio}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Max Drawdown</div>
-                    <div className="text-lg font-bold text-destructive">{report.metrics.maxDrawdown}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Win Rate</div>
-                    <div className="text-lg font-bold">{report.metrics.winRate}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-sm text-muted-foreground">Profit Factor</div>
-                    <div className="text-lg font-bold text-primary">{report.metrics.profitFactor}</div>
-                  </div>
-                </div>
+          <Card className="p-4 sm:p-6 bg-card/50 backdrop-blur-sm border-border/50">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[560px]">
+                <thead>
+                  <tr className="text-muted-foreground border-b border-border/50">
+                    <th className="text-left font-medium py-2 pr-4">Strategy</th>
+                    <th className="text-right font-medium py-2 px-4">Trades</th>
+                    <th className="text-right font-medium py-2 px-4">Win Rate</th>
+                    <th className="text-right font-medium py-2 px-4">Expectancy</th>
+                    <th className="text-right font-medium py-2 pl-4">Profit Factor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {verifiedBacktest.strategies.map((row) => (
+                    <tr key={row.name} className="border-b border-border/30 last:border-0">
+                      <td className="py-3 pr-4 font-medium">{row.name}</td>
+                      <td className="py-3 px-4 text-right tabular-nums">{row.trades}</td>
+                      <td className="py-3 px-4 text-right tabular-nums">{row.winRate}</td>
+                      <td className="py-3 px-4 text-right tabular-nums text-success">{row.expectancy}</td>
+                      <td className="py-3 pl-4 text-right tabular-nums font-semibold text-primary">{row.profitFactor}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
-                <Button 
-                  className="w-full" 
-                  variant="outline"
-                  onClick={() => window.open(report.downloadUrl, '_blank')}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Full Report (PDF)
-                </Button>
-              </Card>
-            ))}
-          </div>
-
-          <div className="mt-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              All backtests performed on tick-by-tick data with realistic slippage and commissions. 
-              <br />
-              Reports audited by third-party quantitative analysts.
-            </p>
+          {/* The limitations, stated up front rather than buried. */}
+          <div className="mt-6 p-4 sm:p-5 rounded-lg border border-border/50 bg-background/40 max-w-3xl mx-auto">
+            <h4 className="text-sm font-semibold mb-2">What these numbers do and don't show</h4>
+            <ul className="text-sm text-muted-foreground space-y-1.5 list-disc pl-5">
+              <li>
+                One instrument ({verifiedBacktest.symbol}) over roughly 90 days. They are not
+                multi-year, multi-market, or walk-forward validated yet.
+              </li>
+              <li>
+                The smaller samples (5 and 3 trades) are far too small to draw conclusions from.
+                We show them rather than quietly omitting them.
+              </li>
+              <li>
+                Backtest results, not a live track record. Live execution adds slippage, spread
+                widening and latency that no backtest fully reproduces.
+              </li>
+              <li>Past performance never guarantees future results. Trading carries real risk of loss.</li>
+            </ul>
           </div>
         </div>
+
       </div>
     </section>
   );

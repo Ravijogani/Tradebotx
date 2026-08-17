@@ -103,6 +103,7 @@ from supabase import create_client, Client
 
 import market_intelligence as mi
 import bot_control
+import risk_limits
 
 # =============================================================================
 # CLI ARGUMENTS -- identical contract to hybrid_trading_bot_multiuser.py /
@@ -226,8 +227,12 @@ class SwingTradingConfig:
     # per unit of price movement than a tight intraday stop would.
     BASE_RISK_PERCENT: float = 1.0
     MAX_RISK_PER_TRADE_PERCENT: float = 2.0
-    MAX_DAILY_LOSS_PERCENT: float = 8.0
-    MAX_DRAWDOWN_PERCENT: float = 15.0
+    # Sourced from risk_limits.py -- the ceilings the public site promises
+    # clients (5% daily / 10% weekly). Were 8.0 / 15.0 here: tighter than
+    # the other two bots, still looser than what was advertised.
+    MAX_DAILY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_DAILY_LOSS_PERCENT
+    MAX_DRAWDOWN_PERCENT: float = risk_limits.PLATFORM_MAX_DRAWDOWN_PERCENT
+    MAX_WEEKLY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_WEEKLY_LOSS_PERCENT
     MAX_CONCURRENT_TRADES: int = 3
     MAX_DAILY_TRADES: int = 3        # a backstop, not expected to bind -- this strategy fires
                                       # rarely by construction (D1 structure changes slowly)
@@ -652,14 +657,25 @@ def check_emergency_conditions(account_info) -> bool:
     daily_loss_amount = -_eq_drop if _eq_drop > 0 else (state.daily_pnl if state.daily_pnl < 0 else 0)
     daily_loss_percent = abs(daily_loss_amount / state.daily_start_equity) * 100
 
-    if daily_loss_percent >= config.MAX_DAILY_LOSS_PERCENT:
-        logger.critical(f"[EMERGENCY] Daily loss limit hit: {daily_loss_percent:.2f}% (Limit: {config.MAX_DAILY_LOSS_PERCENT}%)")
+    # Daily / weekly / drawdown ceilings via risk_limits.py -- one shared
+    # definition so these can't drift from what the public site promises
+    # (this file previously enforced 8%/15% against an advertised 5%/10%,
+    # and no weekly limit existed anywhere).
+    state.peak_equity = max(getattr(state, 'peak_equity', 0.0) or 0.0,
+                            state.daily_start_equity, account_info.equity)
+    _verdict = risk_limits.evaluate_risk_limits(
+        current_equity=account_info.equity,
+        daily_start_equity=state.daily_start_equity,
+        weekly_start_equity=getattr(state, 'weekly_start_equity', None),
+        peak_equity=state.peak_equity,
+        limits=risk_limits.resolve_user_limits(getattr(state, 'user_risk_settings', None)),
+    )
+    if _verdict.breached:
+        logger.critical(f"[EMERGENCY] {_verdict.reason}: {_verdict.detail}")
+        send_telegram_message(f"\U0001F6D1 Structural Swing Pro halted: {_verdict.detail}")
         return True
 
     current_drawdown_pct = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
-    if current_drawdown_pct >= config.MAX_DRAWDOWN_PERCENT:
-        logger.critical(f"[EMERGENCY] Max drawdown exceeded: {current_drawdown_pct:.2f}% (Limit: {config.MAX_DRAWDOWN_PERCENT}%)")
-        return True
 
     if daily_loss_percent >= config.MAX_DAILY_LOSS_PERCENT * 0.7:
         logger.warning(f"[WARNING] Approaching daily loss limit: {daily_loss_percent:.2f}% / {config.MAX_DAILY_LOSS_PERCENT}%")
@@ -1122,6 +1138,16 @@ def swing_trading_session() -> None:
                 state.daily_trades = 0
                 state.daily_start_equity = account_info.equity
                 state.last_reset_day = current_day
+
+            # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
+            # The weekly loss limit the public site advertises had no
+            # implementation anywhere before this. See risk_limits.py.
+            if account_info:
+                _wk = risk_limits.iso_week_key()
+                if getattr(state, 'weekly_key', None) != _wk:
+                    state.weekly_start_equity, state.weekly_key = risk_limits.load_or_init_weekly_baseline(
+                        DATA_DIR, account_info.equity, _wk)
+                    logger.info(f"[BASELINE] Weekly start equity ${state.weekly_start_equity:,.2f} for {_wk}")
 
             if check_emergency_conditions(account_info):
                 logger.critical("[ALERT] EMERGENCY STOP TRIGGERED -- shutting down")

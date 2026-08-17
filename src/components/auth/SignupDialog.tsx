@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -16,6 +17,13 @@ const signupSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
   confirmPassword: z.string(),
   referralCode: z.string().optional(),
+  // Risk acceptance was previously asserted only as passive prose ("by using
+  // TradeBotX you confirm..."). For a platform that trades real client
+  // capital, consent needs to be an affirmative act that fails validation
+  // when absent -- not a sentence nobody has to read.
+  acceptedRisk: z.literal(true, {
+    message: "You must accept the Risk Disclaimer and Terms to continue",
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -38,6 +46,7 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
     password: "",
     confirmPassword: "",
     referralCode: "",
+    acceptedRisk: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -88,6 +97,9 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
             full_name: validated.fullName,
             phone: validated.phone,
             referral_code: validated.referralCode || null,
+            // Recorded so there is an actual audit trail of who accepted
+            // the risk disclosure and when, rather than an assumption.
+            accepted_risk_disclaimer_at: new Date().toISOString(),
             selected_plan: selectedPlanType, // Pass selected plan to trigger
           },
           emailRedirectTo: `${window.location.origin}/auth/login`,
@@ -264,7 +276,34 @@ export const SignupDialog = ({ open, onOpenChange, planName }: SignupDialogProps
             {errors.confirmPassword && <p className="text-sm text-destructive">{errors.confirmPassword}</p>}
           </div>
 
-          <Button type="submit" className="w-full bg-gradient-hero shadow-glow" disabled={loading}>
+          <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="acceptedRisk"
+                checked={formData.acceptedRisk}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, acceptedRisk: checked === true })
+                }
+                className="mt-0.5"
+                aria-describedby="acceptedRisk-desc"
+              />
+              <Label htmlFor="acceptedRisk" id="acceptedRisk-desc" className="text-sm font-normal leading-snug cursor-pointer">
+                I understand that automated trading carries a real risk of financial
+                loss, that past performance does not guarantee future results, and
+                that I may lose money. I accept the{" "}
+                <a href="/disclaimer" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  Risk Disclaimer
+                </a>{" "}
+                and{" "}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  Terms of Service
+                </a>.
+              </Label>
+            </div>
+            {errors.acceptedRisk && <p className="text-sm text-destructive">{errors.acceptedRisk}</p>}
+          </div>
+
+          <Button type="submit" className="w-full bg-gradient-hero shadow-glow" disabled={loading || !formData.acceptedRisk}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

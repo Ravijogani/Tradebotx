@@ -28,6 +28,7 @@ import google.generativeai as genai
 
 import market_intelligence as mi
 import bot_control
+import risk_limits
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import argparse
@@ -167,8 +168,13 @@ class IntradayTradingConfig:
     MAX_DAILY_TRADES: int = 10  # CRITICAL: Intraday (vs 20 in scalping)
     
     # INTRADAY EMERGENCY STOPS (Higher limits due to wider stops)
-    MAX_DAILY_LOSS_PERCENT: float = 25.0  # Increased from 4.0 for intraday
-    MAX_DRAWDOWN_PERCENT: float = 30.0  # Configurable max drawdown
+    # Sourced from risk_limits.py -- the ceilings the public site promises
+    # clients. Were 25.0 / 30.0 ("Increased from 4.0 for intraday"), which
+    # is what let this bot lose ~a third of an account in one day while the
+    # landing page advertised a 5% daily cap. See risk_limits.py.
+    MAX_DAILY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_DAILY_LOSS_PERCENT
+    MAX_DRAWDOWN_PERCENT: float = risk_limits.PLATFORM_MAX_DRAWDOWN_PERCENT
+    MAX_WEEKLY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_WEEKLY_LOSS_PERCENT
   # Single trade risk cap
     ENABLE_DYNAMIC_EMERGENCY_STOPS: bool = True  # Adjust based on volatility
     
@@ -3991,41 +3997,35 @@ def check_emergency_conditions(account_info) -> bool:
 
     daily_loss_percent = 0.0
 
-    # Check 1: Daily loss limit
-    # Track actual equity drop -- catches pre-existing position losses
+    # Checks 1-3: daily / weekly / drawdown ceilings, via risk_limits.py.
+    #
+    # This replaces a block that computed
+    #     effective_limit = MAX_DAILY_LOSS_PERCENT + (potential_additional_loss * 0.5)
+    # i.e. the more open risk was on the book, the MORE the bot was willing
+    # to lose before halting. A ceiling that widens under stress is not a
+    # ceiling, and under the advertised 5% cap it would make the promise
+    # untrue. Removed deliberately -- see risk_limits.evaluate_risk_limits.
     _eq_drop = state.daily_start_equity - account_info.equity
     daily_loss_amount = -_eq_drop if _eq_drop > 0 else (state.daily_pnl if state.daily_pnl < 0 else 0)
-    daily_loss_percent = abs(daily_loss_amount / state.daily_start_equity) * 100
+    daily_loss_percent = abs(daily_loss_amount / state.daily_start_equity) * 100 if state.daily_start_equity else 0.0
 
-    # Dynamic adjustment based on number of open positions
-    open_positions = mt5.positions_get()
-    effective_limit = config.MAX_DAILY_LOSS_PERCENT
+    state.peak_equity = max(getattr(state, 'peak_equity', 0.0) or 0.0,
+                            state.daily_start_equity, account_info.equity)
 
-    if config.ENABLE_DYNAMIC_EMERGENCY_STOPS and open_positions:
-        # If we have open positions, add buffer for their potential loss
-        potential_additional_loss = 0
-        for pos in open_positions:
-            # Calculate potential loss if stop is hit
-            pip_distance = abs(pos.price_open - pos.sl)
-            potential_loss_pct = (pip_distance / pos.price_open) * 100
-            potential_additional_loss += potential_loss_pct
-
-        # Adjust effective limit to account for open position risk
-        effective_limit = config.MAX_DAILY_LOSS_PERCENT + (potential_additional_loss * 0.5)
-
-    if daily_loss_percent >= effective_limit:
-        logger.critical(f"[EMERGENCY] Daily loss limit hit: {daily_loss_percent:.2f}% (Limit: {effective_limit:.2f}%)")
-        logger.critical(f"[EMERGENCY] Loss Amount: ${abs(daily_loss_amount):.2f} / Starting Equity: ${state.daily_start_equity:.2f}")
+    _limits = risk_limits.resolve_user_limits(getattr(state, 'user_risk_settings', None))
+    _verdict = risk_limits.evaluate_risk_limits(
+        current_equity=account_info.equity,
+        daily_start_equity=state.daily_start_equity,
+        weekly_start_equity=getattr(state, 'weekly_start_equity', None),
+        peak_equity=state.peak_equity,
+        limits=_limits,
+    )
+    if _verdict.breached:
+        logger.critical(f"[EMERGENCY] {_verdict.reason}: {_verdict.detail}")
         return True
 
-    # Check 2: Maximum drawdown from daily start
-    current_drawdown_pct = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
-    
-    if current_drawdown_pct >= config.MAX_DRAWDOWN_PERCENT:
-        logger.critical(f"[EMERGENCY] Max drawdown exceeded: {current_drawdown_pct:.2f}% (Limit: {config.MAX_DRAWDOWN_PERCENT}%)")
-        logger.critical(f"[EMERGENCY] Current Equity: ${account_info.equity:.2f} / Starting: ${state.daily_start_equity:.2f}")
-        return True
-    
+    current_drawdown_pct = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100 if state.daily_start_equity else 0.0
+
     # Check 3: Warn if approaching limits (70% of limit)
     if daily_loss_percent >= config.MAX_DAILY_LOSS_PERCENT * 0.7:
         logger.warning(f"[WARNING] Approaching daily loss limit: {daily_loss_percent:.2f}% / {config.MAX_DAILY_LOSS_PERCENT}%")
@@ -4216,6 +4216,16 @@ def intraday_trading_session():
                 state.daily_trades = 0
                 state.daily_start_equity = account_info.equity if account_info else state.daily_start_equity
                 state.last_reset_day = current_day
+
+            # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
+            # The weekly loss limit the public site advertises had no
+            # implementation anywhere before this. See risk_limits.py.
+            if account_info:
+                _wk = risk_limits.iso_week_key()
+                if getattr(state, 'weekly_key', None) != _wk:
+                    state.weekly_start_equity, state.weekly_key = risk_limits.load_or_init_weekly_baseline(
+                        DATA_DIR, account_info.equity, _wk)
+                    logger.info(f"[BASELINE] Weekly start equity ${state.weekly_start_equity:,.2f} for {_wk}")
 
             # 1. Connection Check
             account_info = mt5.account_info()

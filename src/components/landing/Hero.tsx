@@ -135,30 +135,36 @@ export const Hero = () => {
             </Button>
           </div>
 
-          {/* Trust indicators */}
-          <div className="pt-8 sm:pt-12 border-t border-border/50 animate-fade-in" style={{ animationDelay: '0.5s' }}>
-            <p className="text-xs sm:text-sm text-muted-foreground/80 mb-4">Trusted by traders worldwide • No credit card required</p>
-            <div className="grid grid-cols-3 gap-4 sm:gap-6 md:gap-8 text-center">
-              <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
-                  {stats.userCount > 0 ? formatNumber(stats.userCount) : "500+"}
+          {/* Trust indicators -- real platform numbers, or none at all.
+              These fell back to invented figures ("500+" users, "$100K+"
+              volume, "1K+" trades) whenever the real query returned zero,
+              so a brand-new deployment advertised traction it did not have.
+              A quieter section is better than a fabricated one. */}
+          {(stats.userCount > 0 || stats.tradingVolume > 0 || stats.tradesExecuted > 0) && (
+            <div className="pt-8 sm:pt-12 border-t border-border/50 animate-fade-in" style={{ animationDelay: '0.5s' }}>
+              <p className="text-xs sm:text-sm text-muted-foreground/80 mb-4">No credit card required</p>
+              <div className="grid grid-cols-3 gap-4 sm:gap-6 md:gap-8 text-center">
+                <div>
+                  <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                    {formatNumber(stats.userCount)}
+                  </div>
+                  <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Registered Users</div>
                 </div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Registered Users</div>
-              </div>
-              <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
-                  {stats.tradingVolume > 0 ? formatCurrency(stats.tradingVolume) : "$100K+"}
+                <div>
+                  <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                    {formatCurrency(stats.tradingVolume)}
+                  </div>
+                  <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trading Volume</div>
                 </div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trading Volume</div>
-              </div>
-              <div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
-                  {stats.tradesExecuted > 0 ? formatNumber(stats.tradesExecuted) : "1K+"}
+                <div>
+                  <div className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">
+                    {formatNumber(stats.tradesExecuted)}
+                  </div>
+                  <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trades Executed</div>
                 </div>
-                <div className="text-muted-foreground/80 text-[10px] sm:text-xs mt-1">Trades Executed</div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </section>

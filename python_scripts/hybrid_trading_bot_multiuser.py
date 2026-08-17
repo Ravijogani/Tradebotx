@@ -93,6 +93,7 @@ import google.generativeai as genai
 
 import market_intelligence as mi
 import bot_control
+import risk_limits
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
@@ -798,8 +799,14 @@ class AITradingConfig:
     })
     MAX_CONCURRENT_TRADES: int = 2   # Max 2 open trades -- protects small account equity
     MAX_DAILY_TRADES: int = 50
-    MAX_DAILY_LOSS_PERCENT: float = 25.0
-    MAX_DAILY_DRAWDOWN_PERCENT: float = 30.0  # 3 x 10% trades before halt
+    # Sourced from risk_limits.py -- the numbers the public site promises
+    # clients (5% daily / 10% weekly). Were 25.0 / 30.0 here, i.e. this bot
+    # would let a client lose ~a third of their account in a day while the
+    # landing page advertised a 5% cap. Do not hardcode a looser value here
+    # again; risk_limits.resolve_user_limits() is the one place to change.
+    MAX_DAILY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_DAILY_LOSS_PERCENT
+    MAX_DAILY_DRAWDOWN_PERCENT: float = risk_limits.PLATFORM_MAX_DRAWDOWN_PERCENT
+    MAX_WEEKLY_LOSS_PERCENT: float = risk_limits.PLATFORM_MAX_WEEKLY_LOSS_PERCENT
     ROLLOVER_WINDOW_START: int = 22
     ROLLOVER_WINDOW_END: int = 23
     TRADE_COOLDOWN_MINUTES: int = 5          # FAST RE-ENTRY for scalping
@@ -6863,28 +6870,43 @@ def check_emergency_conditions(account_info) -> bool:
     _session_trade_count = getattr(state, 'daily_trades', 0)
     # session_trades removed -- using in-memory state counters only
 
-    # 1. DYNAMIC EMERGENCY STOP
-    dynamic_limit = config.MAX_DAILY_LOSS_PERCENT
+    # 1. CAPITAL-PRESERVATION CEILINGS (daily / weekly / drawdown)
+    # Delegated to risk_limits.py so the enforced numbers and the ones the
+    # public site promises clients cannot drift apart again -- see that
+    # module's docstring for what the gap was (advertised 5% daily / 10%
+    # weekly; this file enforced 25% and had no weekly limit at all).
+    _limits = risk_limits.resolve_user_limits(getattr(state, 'user_risk_settings', None))
 
-    # Tighten if 3+ consecutive losses this session (tracked in-memory)
+    # Session-adaptive tightening is preserved, but it may only ever make
+    # the ceiling STRICTER -- min(), never max().
     if _session_loss_count >= 3:
-        dynamic_limit = 12.0
-        logger.warning(f"[WARN] Limit tightened to {dynamic_limit}% ({_session_loss_count} session losses)")
-
-    # Tighten further if margin is low
+        _limits = dict(_limits, daily=min(_limits['daily'], 3.0))
+        logger.warning(f"[WARN] Daily limit tightened to {_limits['daily']}% ({_session_loss_count} session losses)")
     if account_info.margin_level > 0 and account_info.margin_level < 300:
-        dynamic_limit = min(dynamic_limit, 10.0)
+        _limits = dict(_limits, daily=min(_limits['daily'], 2.5))
 
-    if daily_loss_percent <= -dynamic_limit:
-        logger.critical(f"[EMERGENCY STOP] Loss limit {dynamic_limit}% reached. Actual: {daily_loss_percent:.2f}%")
+    # High-water mark for the drawdown check -- tracked in-memory from the
+    # highest equity this session has seen, seeded from the daily baseline.
+    state.peak_equity = max(getattr(state, 'peak_equity', 0.0) or 0.0,
+                            state.daily_start_equity, account_info.equity)
+
+    _verdict = risk_limits.evaluate_risk_limits(
+        current_equity=account_info.equity,
+        daily_start_equity=state.daily_start_equity,
+        weekly_start_equity=getattr(state, 'weekly_start_equity', None),
+        peak_equity=state.peak_equity,
+        limits=_limits,
+    )
+    if _verdict.breached:
+        logger.critical(f"[EMERGENCY STOP] {_verdict.reason}: {_verdict.detail}")
         send_telegram_notification(
             f"<b>EMERGENCY STOP</b>\n\n"
-            f"Loss limit: {dynamic_limit}%\n"
-            f"Actual loss: {daily_loss_percent:.2f}%\n"
+            f"{_verdict.detail}\n"
             f"Equity: ${account_info.equity:.2f}\n"
             f"Bot halting for safety."
         )
         return True
+    dynamic_limit = _limits['daily']  # used by the early-warning block below
 
     # 2. CONSECUTIVE LOSSES -- tracked in-memory (no DB needed)
     if _session_trade_count >= 10 and _session_loss_count >= 10:
@@ -9513,6 +9535,15 @@ def ai_trading_session():
                 state.daily_start_equity = account_info.equity
                 state.last_reset_day = current_day
                 persist_daily_baseline(DATA_DIR, datetime.now(timezone.utc).strftime('%Y-%m-%d'), account_info.equity)
+
+            # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
+            # The weekly loss limit the site advertises had no implementation
+            # at all before this -- no baseline, no check. See risk_limits.py.
+            _wk = risk_limits.iso_week_key()
+            if getattr(state, 'weekly_key', None) != _wk:
+                state.weekly_start_equity, state.weekly_key = risk_limits.load_or_init_weekly_baseline(
+                    DATA_DIR, account_info.equity, _wk)
+                logger.info(f"[BASELINE] Weekly start equity ${state.weekly_start_equity:,.2f} for {_wk}")
 
             # --- 0. EQUITY PROTECTOR (The "Stop Loss" for the Account) ---
             current_dd_percent = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
