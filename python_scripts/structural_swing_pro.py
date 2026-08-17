@@ -698,6 +698,20 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         if open_count >= config.MAX_CONCURRENT_TRADES:
             return False, f"Max concurrent trades reached ({open_count}/{config.MAX_CONCURRENT_TRADES})"
 
+        # --- CURRENCY CONCENTRATION ---
+        # Counting positions does not see that long EURUSD + long GBPUSD +
+        # long AUDUSD is one short-USD trade at triple size: three tickets,
+        # one macro bet, and one USD rally takes all three stops together.
+        # This bot holds for days and had no correlation control of any kind,
+        # which mattered little at 6 symbols and matters a great deal at 13
+        # (seven of them USD pairs). Nets exposure per currency instead, so a
+        # genuine hedge like long EURUSD + long USDCHF still passes.
+        _ok, _why = risk_limits.check_currency_exposure(
+            symbol, signal.get('direction', 'BUY'), state.open_positions.values()
+        )
+        if not _ok:
+            return False, _why
+
         if state.daily_trades >= config.MAX_DAILY_TRADES:
             return False, f"Max daily trades reached ({state.daily_trades}/{config.MAX_DAILY_TRADES})"
 

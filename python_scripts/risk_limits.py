@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from typing import Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Iterable, NamedTuple, Optional, Tuple
 
 # The advertised ceilings. These are the numbers on the public pricing/
 # landing page; they are the contract with the client, so they live here as
@@ -206,3 +206,120 @@ def persist_weekly_baseline(data_dir: str, week_key: str, baseline: float) -> No
             json.dump({'week': week_key, 'baseline': baseline}, f)
     except OSError as e:
         print(f"[BASELINE] WARNING: could not persist weekly equity baseline: {e}")
+
+
+# =============================================================================
+# CURRENCY EXPOSURE NETTING
+# =============================================================================
+# Counting positions, or grouping them by "GOLD"/"EUR_MAJOR"-style buckets,
+# both miss what actually hurts a multi-symbol account: several positions that
+# are the SAME macro bet wearing different tickers.
+#
+# Long EURUSD + long GBPUSD + long AUDUSD is three symbols, three different
+# correlation groups, and three separate rows in any position count -- but it
+# is one short-USD trade at triple size. A single USD rally takes all three
+# stops together. Expanding the bots from 4-6 symbols to the full 13 (7 of
+# which are USD pairs) makes that the dominant risk rather than a corner case.
+#
+# Netting also gets the opposite case right, which a group cap cannot: long
+# EURUSD + long USDCHF nets USD to zero and is genuinely two independent bets
+# (long EUR, short CHF). A naive "max 2 USD positions" rule would refuse the
+# second trade for no reason.
+#
+# intraday.py already tracks risk_per_currency in its PortfolioManager. This
+# is the same idea as a small pure function so the other two bots can share it
+# and it can be unit-tested without MT5.
+
+DEFAULT_MAX_CURRENCY_EXPOSURE = 2.0
+
+
+def decompose_symbol(symbol: str) -> Tuple[str, Optional[str]]:
+    """
+    Split a broker symbol into (base, quote).
+
+      'EURUSDm' -> ('EUR', 'USD')      'XAUUSDm' -> ('XAU', 'USD')
+      'BTCUSDm' -> ('BTC', 'USD')      'USOILm'  -> ('USOIL', 'USD')
+
+    Trailing broker suffixes ('m', '.raw', '_i', ...) are stripped by taking
+    the leading run of A-Z, so this does not need a hardcoded suffix list.
+    """
+    core = ''
+    for ch in symbol.upper():
+        if ch.isalpha() and ch == ch.upper() and ch.isascii():
+            core += ch
+        else:
+            break
+    # Non-pair instruments FIRST. 'USOILm' uppercases to 'USOILM', which is six
+    # letters and would otherwise be split as ('USO', 'ILM') by the pair rule
+    # below -- inventing two currencies that do not exist and silently
+    # excluding oil from USD netting. Caught by the unit tests.
+    for known in ('USOIL', 'UKOIL', 'XBRUSD', 'XNGUSD'):
+        if core.startswith(known):
+            return known, 'USD'
+    # 'EURUSDM' -> the trailing broker letter is not part of a 6-char pair
+    if len(core) == 7:
+        core = core[:6]
+    if len(core) == 6:
+        return core[:3], core[3:]
+    return core or symbol.upper(), None
+
+
+def position_exposure(symbol: str, direction: str, risk: float = 1.0) -> Dict[str, float]:
+    """
+    Signed currency exposure of one position.
+
+    A BUY is long the base and short the quote; a SELL is the reverse. `risk`
+    lets callers weight by actual risk taken rather than counting positions.
+    """
+    base, quote = decompose_symbol(symbol)
+    sign = 1.0 if str(direction).upper().startswith('B') else -1.0
+    exposure: Dict[str, float] = {base: sign * risk}
+    if quote:
+        exposure[quote] = exposure.get(quote, 0.0) - sign * risk
+    return exposure
+
+
+def net_currency_exposure(positions: Iterable[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Net signed exposure per currency across open positions.
+
+    Each position needs 'symbol' and 'direction'; 'risk' is optional and
+    defaults to 1.0 (i.e. plain position counting).
+    """
+    net: Dict[str, float] = {}
+    for p in positions:
+        for cur, amt in position_exposure(
+            p.get('symbol', ''), p.get('direction', 'BUY'), float(p.get('risk', 1.0) or 1.0)
+        ).items():
+            net[cur] = net.get(cur, 0.0) + amt
+    return net
+
+
+def check_currency_exposure(symbol: str, direction: str,
+                            open_positions: Iterable[Dict[str, Any]],
+                            risk: float = 1.0,
+                            max_exposure: float = DEFAULT_MAX_CURRENCY_EXPOSURE
+                            ) -> Tuple[bool, str]:
+    """
+    "Would this trade concentrate too much on one currency?"
+
+    Returns (allowed, reason). Only blocks when the NEW trade pushes a
+    currency's net exposure further from zero past `max_exposure` -- a trade
+    that reduces an existing concentration is always allowed, even while over
+    the cap, so the bot can always hedge or scale out of a lopsided book.
+    """
+    current = net_currency_exposure(open_positions)
+    incoming = position_exposure(symbol, direction, risk)
+
+    for cur, amt in incoming.items():
+        before = current.get(cur, 0.0)
+        after = before + amt
+        if abs(after) <= max_exposure + 1e-9:
+            continue
+        if abs(after) <= abs(before) + 1e-9:
+            continue  # moving toward flat -- never block de-risking
+        return False, (
+            f"{cur} exposure would reach {after:+.1f} (cap {max_exposure:.1f}); "
+            f"{symbol} {direction} is the same macro bet as positions already open"
+        )
+    return True, "currency exposure within limits"

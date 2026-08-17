@@ -410,7 +410,8 @@ class CapitalController:
         return recent_edge_quality_low
 
 
-def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple[bool, str]:
+def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float,
+                               direction: str = None) -> Tuple[bool, str]:
     """
     Portfolio-level risk gates the shared setup pipeline already enforces for
     Shaakuni SSM / EMA Scalp Cross -- SymbolCorrelationTracker exposure
@@ -432,6 +433,43 @@ def portfolio_risk_gates_allow(symbol: str, this_trade_risk_pct: float) -> Tuple
     corr_allowed, corr_reason = correlation_tracker.should_allow_trade(symbol)
     if not corr_allowed:
         return False, f"correlation ({corr_reason})"
+
+    # --- CURRENCY CONCENTRATION ---
+    # The group tracker above buckets by instrument family, which cannot see
+    # the concentration that matters most across 13 symbols: long EURUSD +
+    # long GBPUSD + long AUDUSD sits in THREE different groups (EUR_MAJOR,
+    # GBP_MAJOR, AUD_MAJOR) and passes every one of them, while being a single
+    # short-USD trade at triple size. Netting per currency catches that, and
+    # unlike a blunt "max N USD positions" rule it still permits a real hedge
+    # such as long EURUSD + long USDCHF, where USD nets to flat.
+    #
+    # direction is optional so existing callers keep working; skipped when not
+    # supplied rather than guessed, since the wrong direction would net
+    # exposure backwards and block the opposite of what it should.
+    #
+    # Open positions come from MT5, NOT from state.open_positions: that dict
+    # is shaped {ticket: {'params': {...}}} with the symbol nested inside
+    # params and no direction recorded anywhere, so reading it here would
+    # silently produce empty symbols and a gate that never fires. MT5 is also
+    # the truthful source after a restart, when state has been rebuilt.
+    # Filtered by MAGIC_NUMBER so another strategy's positions on the same
+    # account are not counted against this bot.
+    if direction:
+        try:
+            _live = mt5.positions_get() or []
+            _mine = [
+                {'symbol': p.symbol,
+                 'direction': 'BUY' if p.type == mt5.POSITION_TYPE_BUY else 'SELL'}
+                for p in _live if getattr(p, 'magic', None) == MAGIC_NUMBER
+            ]
+            _cur_ok, _cur_why = risk_limits.check_currency_exposure(symbol, direction, _mine)
+            if not _cur_ok:
+                return False, f"currency exposure ({_cur_why})"
+        except Exception as e:
+            # Fail OPEN, as everywhere else in this file: a broker read error
+            # must not silently halt trading. The concurrent-trade and
+            # portfolio-risk caps below still apply.
+            logger.debug(f"[GATE] currency exposure check skipped for {symbol}: {e}")
 
     open_count = len(state.open_positions) if hasattr(state, 'open_positions') else 0
     if open_count >= config.MAX_CONCURRENT_TRADES:
@@ -7880,7 +7918,7 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
         # -- all three only ever checked in the shared setup pipeline
         # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
         # sizing fixes; see portfolio_risk_gates_allow's docstring.
-        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct, direction)
         if not _gate_ok:
             logger.info(f"[AOX {layer_name}] {symbol}: blocked by {_gate_reason}")
             return 0
@@ -9704,7 +9742,7 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
         # -- all three only ever checked in the shared setup pipeline
         # (Shaakuni/EMA scalp). Same architectural gap as the ban/unban and
         # sizing fixes; see portfolio_risk_gates_allow's docstring.
-        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct)
+        _gate_ok, _gate_reason = portfolio_risk_gates_allow(symbol, _final_risk_pct, direction)
         if not _gate_ok:
             logger.info(f"[SWAPPY 3C] {symbol}: blocked by {_gate_reason}")
             return False
