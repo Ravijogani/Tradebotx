@@ -113,3 +113,6 @@ verify_jwt = true
 
 [functions.admin-stop-bots]
 verify_jwt = true
+
+[functions.monitor-bot-health]
+verify_jwt = false  # cron-secret or admin JWT, checked in-function

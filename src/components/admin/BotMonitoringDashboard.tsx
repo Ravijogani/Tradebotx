@@ -196,6 +196,30 @@ export const BotMonitoringDashboard = () => {
     }
   };
 
+  // Manual trigger for the scheduled health sweep. The same function runs on
+  // a cron; this button exists so an operator investigating right now doesn't
+  // have to wait for the next tick.
+  const handleHealthCheck = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("monitor-bot-health", { body: {} });
+      if (error) throw error;
+      toast({
+        title: data?.stale ? `${data.stale} unhealthy bot(s) found` : "All bots healthy",
+        description: data?.stale
+          ? `Checked ${data.checked}. Stale bots were marked stopped and their owners notified.`
+          : `Checked ${data?.checked ?? 0} running bot(s); all heartbeats current.`,
+        variant: data?.stale ? "destructive" : undefined,
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Health check failed",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    }
+  };
+
   // Platform-wide emergency stop. See handleEmergencyStop above for why
   // this goes through the edge function instead of a direct table write.
   const handleEmergencyStopAll = async () => {
@@ -253,6 +277,16 @@ export const BotMonitoringDashboard = () => {
             <span className="text-sm">
               <strong>{runningBots.length}</strong> bot{runningBots.length > 1 ? 's' : ''} currently running
             </span>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleHealthCheck}
+              className="w-full sm:w-auto"
+            >
+              <Activity className="w-4 h-4 mr-2" />
+              Run Health Check
+            </Button>
             <Button
               variant="destructive"
               size="sm"
@@ -262,6 +296,7 @@ export const BotMonitoringDashboard = () => {
               <Power className="w-4 h-4 mr-2" />
               Emergency Stop All
             </Button>
+            </div>
           </AlertDescription>
         </Alert>
       )}

@@ -49,3 +49,50 @@ jobs:
       - name: Import smoke test (bot module loads with mocked MT5/Supabase)
         working-directory: python_scripts
         run: python -c "from backtest.bot_loader import import_bot_module; import_bot_module(); print('bot module imported cleanly')"
+
+  edge_functions:
+    name: Supabase edge functions (syntax + transpile check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Edge functions had NO automated check of any kind before this -- the
+      # audit found zero test/lint coverage for supabase/functions, so a
+      # syntax error or a bad edit only surfaced on deploy. tsc can't
+      # type-resolve Deno's npm:/https: specifiers, so this parses and
+      # transpiles every function instead: it catches syntax errors, broken
+      # edits and malformed TS without needing the Deno toolchain.
+      - name: Parse and transpile every edge function
+        run: |
+          node -e "
+          const ts = require('typescript'), fs = require('fs'), path = require('path');
+          const root = 'supabase/functions';
+          let failed = 0, checked = 0;
+          const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+            const p = path.join(d, e.name);
+            return e.isDirectory() ? walk(p) : (p.endsWith('.ts') ? [p] : []);
+          });
+          for (const f of walk(root)) {
+            checked++;
+            const src = fs.readFileSync(f, 'utf8');
+            const sf = ts.createSourceFile(f, src, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+            const diags = sf.parseDiagnostics || [];
+            if (diags.length) {
+              failed++;
+              console.error('PARSE ERROR ' + f + ': ' + diags.map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' ')).join('; '));
+              continue;
+            }
+            try {
+              ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } });
+            } catch (e) {
+              failed++;
+              console.error('TRANSPILE FAIL ' + f + ': ' + e.message);
+            }
+          }
+          console.log('checked ' + checked + ' edge function file(s), ' + failed + ' failed');
+          process.exit(failed ? 1 : 0);
+          "
