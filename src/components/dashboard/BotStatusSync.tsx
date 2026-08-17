@@ -38,6 +38,40 @@ export const BotStatusSync = () => {
           .eq("strategy_id", strategy.strategy_id)
           .maybeSingle();
 
+        // Is this a launch that simply hasn't reported in yet?
+        //
+        // This grace used to live ONLY inside the `if (!heartbeat)` branch
+        // below, which made it useless in practice: bot_heartbeats keeps one
+        // row per (user, strategy) forever, so after a strategy's very first
+        // run a heartbeat row always exists and the grace was skipped every
+        // time. Control fell through to the stale-heartbeat branch, which had
+        // no grace at all -- it saw status 'starting' plus an old heartbeat
+        // and wrote is_running=false/status='stopped' on the very next poll.
+        //
+        // With a 61-day-old heartbeat row on this account, pressing Start
+        // marked the bot stopped ~7 seconds later, before the Python process
+        // had even finished importing. The bot then read that as a genuine
+        // dashboard Stop and shut itself down. Harmless while nothing obeyed
+        // is_running; fatal once the bots did.
+        //
+        // Hoisted here so it guards BOTH branches: while a strategy is
+        // 'starting' and inside the window, this tab reports nothing and
+        // writes nothing. The bot's own confirm_bot_started() flips the row
+        // to 'running', which is what should end the wait -- not a stale row
+        // written by a process that died two months ago.
+        const STARTUP_GRACE_SECONDS = 120;
+        if (strategy.status === 'starting' && strategy.started_at) {
+          const secondsSinceStart =
+            (Date.now() - new Date(strategy.started_at).getTime()) / 1000;
+          if (secondsSinceStart < STARTUP_GRACE_SECONDS) {
+            console.log(
+              `Strategy ${strategy.strategy_id} is starting ` +
+              `(${secondsSinceStart.toFixed(0)}s) - waiting for it to confirm, not touching its row`
+            );
+            continue;
+          }
+        }
+
         // ONLY sync initial equity from MT5 on FIRST run ever (when no trades have been made)
         // This prevents resetting initial balance on bot restarts
         if (heartbeat && heartbeat.equity && heartbeat.equity > 0) {
@@ -90,19 +124,11 @@ export const BotStatusSync = () => {
         }
 
         if (!heartbeat) {
-          // No heartbeat exists - check if it's a recent start
-          if (strategy.status === 'starting' && strategy.started_at) {
-            const startedAt = new Date(strategy.started_at).getTime();
-            const now = Date.now();
-            const secondsSinceStart = (now - startedAt) / 1000;
-            
-            // Give 2 minutes for bot to spin up and send first heartbeat
-            if (secondsSinceStart < 120) {
-              console.log(`Strategy ${strategy.strategy_id} is starting, waiting for first heartbeat (${secondsSinceStart.toFixed(0)}s since start)`);
-              continue; // Don't mark as stopped yet
-            }
-          }
-          
+          // The startup grace that used to be duplicated here now runs above,
+          // before the heartbeat is even considered, so it covers this branch
+          // and the stale-heartbeat branch alike. Reaching this point means
+          // the strategy is either not 'starting' or is past the window.
+
           // If running or starting for too long without heartbeat, mark as stopped
           if (strategy.is_running || strategy.status === 'running' || strategy.status === 'starting') {
             console.log(`No heartbeat for strategy ${strategy.strategy_id}, marking as stopped`);
