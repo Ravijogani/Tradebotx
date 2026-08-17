@@ -7379,7 +7379,11 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             actual_risk_dollars = lot_size * (sl_dist_price / tick_size) * tick_value
         else:
             actual_risk_dollars = risk_money * (lot_size / max(lot_raw, 0.0001))
-        actual_risk_pct = actual_risk_dollars / account_equity * 100
+        # Guarded: this runs inside position sizing, where a zero equity would
+        # otherwise raise ZeroDivisionError mid-order rather than at a clean
+        # checkpoint. 0.0 makes the risk check below fail safe (no position
+        # looks affordable) instead of throwing.
+        actual_risk_pct = (actual_risk_dollars / account_equity * 100) if account_equity > 0 else 0.0
 
         # Smart risk decision
         hard_cap_pct = 10.0   # Never exceed 3% on any single trade
@@ -10036,7 +10040,46 @@ def ai_trading_session():
                 send_heartbeat(status='error', mt5_connected=False, error_message="Lost MT5 connection")
                 time.sleep(30)
                 continue
-            
+
+            # --- EQUITY SANITY GATE ---
+            # mt5.account_info() succeeds the moment the terminal is up, which
+            # is BEFORE it has finished authenticating with the broker -- it
+            # reports the account number with balance/equity 0.00 in the gap.
+            # That is what "MT5 Connected | Account: 414178000 | Balance: $0.00"
+            # followed by "[INIT] Equity $0" means in the logs.
+            #
+            # Zero equity must never be treated as real. Every risk figure
+            # divides by it (daily drawdown, weekly drawdown, position sizing),
+            # so trading on it produces either a crash or a meaningless lot
+            # size on live client capital. Waiting is the only safe response:
+            # if the account really is empty there is nothing to trade with
+            # either, so there is no case where proceeding is correct.
+            #
+            # Heartbeats continue throughout, otherwise the 90s staleness
+            # checks in monitor-bot-health and BotStatusSync would mark a bot
+            # that is merely waiting as crashed.
+            if account_info.equity <= 0:
+                _waits = getattr(state, '_zero_equity_waits', 0) + 1
+                state._zero_equity_waits = _waits
+                # Noisy for the first minute, then every ~5 minutes, so a
+                # genuinely unfunded account leaves a trail without flooding.
+                if _waits <= 4 or _waits % 20 == 0:
+                    logger.warning(
+                        f"[EQUITY] MT5 reports equity ${account_info.equity:.2f} on account "
+                        f"{getattr(account_info, 'login', '?')} -- not trading. Waiting for the "
+                        f"terminal to finish logging in (check {_waits}). If this persists the "
+                        f"account is unfunded or the MT5 login failed."
+                    )
+                send_heartbeat(status='starting', mt5_connected=True,
+                               error_message='Waiting for MT5 to report non-zero equity')
+                time.sleep(15)
+                continue
+
+            if getattr(state, '_zero_equity_waits', 0):
+                logger.info(f"[EQUITY] MT5 now reports equity ${account_info.equity:,.2f} "
+                            f"after {state._zero_equity_waits} check(s) -- resuming.")
+                state._zero_equity_waits = 0
+
             # --- 0. DAILY RESET LOGIC ---
             # Reset baseline at 00:00 UTC so "Daily Drawdown" is truly DAILY
             current_day = datetime.now(timezone.utc).day
@@ -10061,7 +10104,16 @@ def ai_trading_session():
                 logger.info(f"[BASELINE] Weekly start equity ${state.weekly_start_equity:,.2f} for {_wk}")
 
             # --- 0. EQUITY PROTECTOR (The "Stop Loss" for the Account) ---
-            current_dd_percent = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
+            # The `state.daily_start_equity > 0` guard below was written one
+            # line too late: the division had already run, so a zero baseline
+            # raised ZeroDivisionError and killed the session (seen live at
+            # 23:34:56 after the equity gate above did not yet exist). Divide
+            # only when the baseline is usable; every other drawdown site in
+            # this file already orders it this way.
+            if state.daily_start_equity > 0:
+                current_dd_percent = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100
+            else:
+                current_dd_percent = 0.0
             if state.daily_start_equity > 0 and current_dd_percent >= config.MAX_DAILY_DRAWDOWN_PERCENT:
                 logger.critical(f" [EQUITY PROTECTOR] Max Drawdown Hit ({current_dd_percent:.2f}%). HALTING TRADING.")
                 send_telegram_notification(f"[!!] <b>EQUITY PROTECT TRIGGERED</b>\n\nDrawdown: {current_dd_percent:.2f}%\nBot Halted.")

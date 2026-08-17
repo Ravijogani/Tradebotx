@@ -4483,6 +4483,30 @@ def intraday_trading_session():
             if check_emergency_conditions(account_info):
                 logger.critical("[ALERT] EMERGENCY STOP TRIGGERED")
                 break
+
+            # --- EQUITY SANITY GATE (see hybrid_trading_bot_multiuser.py) ---
+            # mt5.account_info() succeeds before the terminal finishes
+            # authenticating and reports equity 0.00 in that window. Every risk
+            # figure divides by equity, so trading on a zero is either a crash
+            # or a meaningless lot size. Placed after the heartbeat and remote
+            # stop above, so a waiting bot still reports in and can still be
+            # stopped from the dashboard.
+            if account_info.equity <= 0:
+                _waits = getattr(state, '_zero_equity_waits', 0) + 1
+                state._zero_equity_waits = _waits
+                if _waits <= 4 or _waits % 20 == 0:
+                    logger.warning(
+                        f"[EQUITY] MT5 reports equity ${account_info.equity:.2f} -- not trading. "
+                        f"Waiting for the terminal to finish logging in (check {_waits}). If this "
+                        f"persists the account is unfunded or the MT5 login failed."
+                    )
+                time.sleep(15)
+                continue
+
+            if getattr(state, '_zero_equity_waits', 0):
+                logger.info(f"[EQUITY] MT5 now reports equity ${account_info.equity:,.2f} "
+                            f"after {state._zero_equity_waits} check(s) -- resuming.")
+                state._zero_equity_waits = 0
             
             # 4. Update Context & News (non-blocking)
             import threading as _t2
