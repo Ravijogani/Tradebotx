@@ -29,6 +29,7 @@ import google.generativeai as genai
 import market_intelligence as mi
 import bot_control
 import risk_limits
+import decision_journal as dj
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import argparse
@@ -329,6 +330,24 @@ class SupabaseManager:
             logger.error(f"[DB ERROR] Failed to fetch open tickets: {e}")
             return []
     
+    def update_trade_metadata(self, ticket: int, updates: Dict) -> None:
+        """
+        Merge keys into a trade's metadata JSONB without clobbering existing
+        content (read-modify-write). Added for the decision-journal close-out.
+        Best-effort: analytics must never break close bookkeeping.
+        """
+        try:
+            res = self.client.table('trades').select('metadata') \
+                .eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
+            if not res.data:
+                return
+            merged = dict(res.data[0].get('metadata') or {})
+            merged.update({k: dj._plain(v) for k, v in updates.items()})
+            self.client.table('trades').update({'metadata': merged}) \
+                .eq('ticket', int(ticket)).eq('user_id', USER_ID).execute()
+        except Exception as e:
+            logger.debug(f"[DB] metadata update failed for #{ticket}: {e}")
+
     def update_trade_close(self, ticket: int, close_price: float, profit: float, status: str) -> None:
         """Corrected Column Mapping for closing trades"""
         try:
@@ -1711,8 +1730,22 @@ def strategy_h4_trend_pullback(symbol: str, df_h4: pd.DataFrame,
         bull_stack = ema20_h4 > ema50_h4 > ema200_h4
         bear_stack = ema20_h4 < ema50_h4 < ema200_h4
 
-        if trend == "BULLISH" and not bull_stack: return None
-        if trend == "BEARISH" and not bear_stack: return None
+        # DECISION JOURNAL -- see python_scripts/decision_journal.py. Same
+        # instrumentation the scalping bot carries: record every confirmation
+        # (and every disagreement) so post-hoc R&D can ask which of them
+        # actually predicts a better trade, instead of guessing.
+        _dir = 'BUY' if trend == 'BULLISH' else 'SELL'
+        _j = dj.DecisionJournal(symbol, direction=_dir, strategy='H4_TREND_PULLBACK')
+        _j.note(dj.BIAS, 'htf_trend', dj.CONFIRMED, f'H4/H1 trend read {trend}', value=trend)
+        _stack_ok = (bull_stack if trend == "BULLISH" else bear_stack)
+        _j.note(dj.BIAS, 'h4_ema_stack',
+                dj.CONFIRMED if _stack_ok else dj.VETO,
+                ('H4 EMA20/50/200 fully stacked in trend direction' if _stack_ok
+                 else 'H4 EMA stack not aligned with the trend'))
+        if trend == "BULLISH" and not bull_stack:
+            _j.decide(False, 'H4 EMA stack not bullish'); dj.record_rejection(_j); return None
+        if trend == "BEARISH" and not bear_stack:
+            _j.decide(False, 'H4 EMA stack not bearish'); dj.record_rejection(_j); return None
 
         # Step 2: H1 price inside H4 EMA20-50 zone (the pullback zone)
         h1_price = float(df_h1['close'].iloc[-1])
@@ -1720,7 +1753,14 @@ def strategy_h4_trend_pullback(symbol: str, df_h4: pd.DataFrame,
         zone_low  = min(ema20_h4, ema50_h4) - atr_h4 * 0.3
         in_pullback_zone = zone_low <= h1_price <= zone_high
 
+        _j.note(dj.LOCATION, 'h1_in_pullback_zone',
+                dj.CONFIRMED if in_pullback_zone else dj.VETO,
+                (f'H1 price {h1_price:.5f} pulled back into the H4 EMA20-50 zone' if in_pullback_zone
+                 else f'H1 price {h1_price:.5f} outside the H4 EMA20-50 pullback zone'),
+                value=round(h1_price, 5))
         if not in_pullback_zone:
+            _j.decide(False, 'H1 not in the H4 EMA pullback zone')
+            dj.record_rejection(_j)
             return None
 
         # Step 3: M15 rejection candle (pinbar or engulfing)
@@ -1737,7 +1777,16 @@ def strategy_h4_trend_pullback(symbol: str, df_h4: pd.DataFrame,
             is_pinbar  = lower_wick > c_rng * 0.55
             # Bullish engulfing: closes above previous candle high
             is_engulf  = float(c['close']) > float(p['high']) and float(c['close']) > float(c['open'])
-            if not (is_pinbar or is_engulf): return None
+            _j.note(dj.TRIGGER, 'm15_rejection',
+                    dj.CONFIRMED if (is_pinbar or is_engulf) else dj.VETO,
+                    ('M15 bullish pinbar at the zone' if is_pinbar
+                     else 'M15 bullish engulfing at the zone' if is_engulf
+                     else 'no M15 rejection candle at the zone'),
+                    value='pinbar' if is_pinbar else 'engulfing' if is_engulf else None)
+            if not (is_pinbar or is_engulf):
+                _j.decide(False, 'no M15 rejection candle')
+                dj.record_rejection(_j)
+                return None
 
             sl = float(c['low']) - atr_m15 * 0.3   # below rejection wick
             # TP: nearest H1 swing high above entry
@@ -1745,22 +1794,49 @@ def strategy_h4_trend_pullback(symbol: str, df_h4: pd.DataFrame,
                         if float(df_h1['high'].iloc[i]) > h1_price + abs(h1_price - sl) * 1.5]
             tp = min(h1_highs) if h1_highs else h1_price + abs(h1_price - sl) * 2.5
 
+            _j.note(dj.LIQUIDITY, 'tp_at_h1_liquidity',
+                    dj.CONFIRMED if h1_highs else dj.NEUTRAL,
+                    ('TP set at the nearest H1 swing high (a real liquidity pool)' if h1_highs
+                     else 'no qualifying H1 swing high -- TP fell back to a 2.5x multiple'),
+                    value=round(tp, 5))
+            _j.measure(rr=round(abs(tp - h1_price) / max(abs(h1_price - sl), 1e-9), 2),
+                       atr_h4=round(atr_h4, 5), atr_m15=round(atr_m15, 5))
+            _j.decide(True, 'H4 stack + H1 pullback + M15 rejection all confirmed')
             return {'direction': 'BUY',  'stop_loss': sl, 'tp': tp,
-                    'strategy_name': 'H4_TREND_PULLBACK', 'confidence': 0.82}
+                    'strategy_name': 'H4_TREND_PULLBACK', 'confidence': 0.82,
+                    'journal': _j.to_dict()}
 
         else:  # BEARISH
             upper_wick = float(c['high']) - max(float(c['open']), float(c['close']))
             is_pinbar  = upper_wick > c_rng * 0.55
             is_engulf  = float(c['close']) < float(p['low']) and float(c['close']) < float(c['open'])
-            if not (is_pinbar or is_engulf): return None
+            _j.note(dj.TRIGGER, 'm15_rejection',
+                    dj.CONFIRMED if (is_pinbar or is_engulf) else dj.VETO,
+                    ('M15 bearish pinbar at the zone' if is_pinbar
+                     else 'M15 bearish engulfing at the zone' if is_engulf
+                     else 'no M15 rejection candle at the zone'),
+                    value='pinbar' if is_pinbar else 'engulfing' if is_engulf else None)
+            if not (is_pinbar or is_engulf):
+                _j.decide(False, 'no M15 rejection candle')
+                dj.record_rejection(_j)
+                return None
 
             sl = float(c['high']) + atr_m15 * 0.3
             h1_lows = [float(df_h1['low'].iloc[i]) for i in range(-30, -1)
                        if float(df_h1['low'].iloc[i]) < h1_price - abs(sl - h1_price) * 1.5]
             tp = max(h1_lows) if h1_lows else h1_price - abs(sl - h1_price) * 2.5
 
+            _j.note(dj.LIQUIDITY, 'tp_at_h1_liquidity',
+                    dj.CONFIRMED if h1_lows else dj.NEUTRAL,
+                    ('TP set at the nearest H1 swing low (a real liquidity pool)' if h1_lows
+                     else 'no qualifying H1 swing low -- TP fell back to a 2.5x multiple'),
+                    value=round(tp, 5))
+            _j.measure(rr=round(abs(tp - h1_price) / max(abs(h1_price - sl), 1e-9), 2),
+                       atr_h4=round(atr_h4, 5), atr_m15=round(atr_m15, 5))
+            _j.decide(True, 'H4 stack + H1 pullback + M15 rejection all confirmed')
             return {'direction': 'SELL', 'stop_loss': sl, 'tp': tp,
-                    'strategy_name': 'H4_TREND_PULLBACK', 'confidence': 0.82}
+                    'strategy_name': 'H4_TREND_PULLBACK', 'confidence': 0.82,
+                    'journal': _j.to_dict()}
 
     except Exception as e:
         logger.error(f"[STRAT A] {symbol}: {e}")
@@ -1827,19 +1903,49 @@ def strategy_h1_orderblock_retest(symbol: str, df_h1: pd.DataFrame,
                     ob = {'high': ob_zone_high, 'low': ob_zone_low, 'type': 'BEAR_OB'}
                     break
 
-        if not ob: return None
+        # DECISION JOURNAL -- same instrumentation as the scalping bot's SSM,
+        # which this strategy is the intraday analogue of.
+        _dir = 'BUY' if trend == 'BULLISH' else 'SELL'
+        _j = dj.DecisionJournal(symbol, direction=_dir, strategy='H1_OB_RETEST')
+        _j.note(dj.BIAS, 'htf_trend', dj.CONFIRMED, f'H1/H4 trend read {trend}', value=trend)
+        _j.note(dj.STRUCTURE, 'h1_order_block',
+                dj.CONFIRMED if ob else dj.VETO,
+                (f"price retraced into an unviolated {ob['type']} at "
+                 f"{ob['low']:.5f}-{ob['high']:.5f}" if ob
+                 else 'no unviolated H1 order block with price inside it'),
+                value=ob['type'] if ob else None)
+        if not ob:
+            _j.decide(False, 'no valid H1 order block')
+            dj.record_rejection(_j)
+            return None
 
         # M15 confirmation: last M15 candle body closes inside the OB
         m15_close = float(df_m15['close'].iloc[-1])
         m15_open  = float(df_m15['open'].iloc[-1])
         m15_body  = abs(m15_close - m15_open)
         atr_m15   = float(calculate_atr(df_m15['high'], df_m15['low'], df_m15['close'], 14).iloc[-1])
+        _body_ok = m15_body >= atr_m15 * 0.2
+        _j.note(dj.TRIGGER, 'm15_body_not_doji',
+                dj.CONFIRMED if _body_ok else dj.VETO,
+                ('M15 candle has a real body -- genuine confirmation' if _body_ok
+                 else 'M15 candle is a doji -- no confirmation'),
+                value=round(m15_body / max(atr_m15, 1e-9), 3))
         if m15_body < atr_m15 * 0.2:  # doji -- no confirmation
+            _j.decide(False, 'M15 confirmation candle is a doji')
+            dj.record_rejection(_j)
             return None
 
         if trend == "BULLISH":
             # M15 close bullish (green candle) inside the OB
-            if m15_close <= m15_open: return None  # must be green
+            _m15_dir_ok = m15_close > m15_open
+            _j.note(dj.TRIGGER, 'm15_closes_in_direction',
+                    dj.CONFIRMED if _m15_dir_ok else dj.VETO,
+                    ('M15 closed green inside the OB -- institutional side confirmed'
+                     if _m15_dir_ok else 'M15 did not close in the trade direction'))
+            if m15_close <= m15_open:
+                _j.decide(False, 'M15 did not close green inside the OB')
+                dj.record_rejection(_j)
+                return None
             sl = ob['low'] - spread_buf
             # TP: nearest H4 swing high (pre-fetched via get_market_data)
             df_h4_tp = get_market_data(symbol, mt5.TIMEFRAME_H4, 100)
@@ -1849,11 +1955,28 @@ def strategy_h1_orderblock_retest(symbol: str, df_h1: pd.DataFrame,
                 tp = min(h4_highs) if h4_highs else cur_price + abs(cur_price - sl) * 3.0
             else:
                 tp = cur_price + abs(cur_price - sl) * 3.0
+            _j.note(dj.LIQUIDITY, 'tp_at_h4_liquidity',
+                    dj.CONFIRMED if (df_h4_tp is not None and h4_highs) else dj.NEUTRAL,
+                    ('TP set at the nearest H4 swing high (structural liquidity pool)'
+                     if (df_h4_tp is not None and h4_highs)
+                     else 'no qualifying H4 swing high -- TP fell back to a 3x multiple'),
+                    value=round(tp, 5))
+            _j.measure(rr=round(abs(tp - cur_price) / max(abs(cur_price - sl), 1e-9), 2),
+                       atr_h1=round(atr_h1, 5))
+            _j.decide(True, 'H1 OB retest confirmed by an M15 close in direction')
             return {'direction': 'BUY',  'stop_loss': sl, 'tp': tp,
                     'strategy_name': 'H1_OB_RETEST', 'confidence': 0.88,
-                    'ob_zone': ob}
+                    'ob_zone': ob, 'journal': _j.to_dict()}
         else:
-            if m15_close >= m15_open: return None  # must be red
+            _m15_dir_ok = m15_close < m15_open
+            _j.note(dj.TRIGGER, 'm15_closes_in_direction',
+                    dj.CONFIRMED if _m15_dir_ok else dj.VETO,
+                    ('M15 closed red inside the OB -- institutional side confirmed'
+                     if _m15_dir_ok else 'M15 did not close in the trade direction'))
+            if m15_close >= m15_open:
+                _j.decide(False, 'M15 did not close red inside the OB')
+                dj.record_rejection(_j)
+                return None
             sl = ob['high'] + spread_buf
             df_h4_tp = get_market_data(symbol, mt5.TIMEFRAME_H4, 100)
             if df_h4_tp is not None:
@@ -1862,9 +1985,18 @@ def strategy_h1_orderblock_retest(symbol: str, df_h1: pd.DataFrame,
                 tp = max(h4_lows) if h4_lows else cur_price - abs(sl - cur_price) * 3.0
             else:
                 tp = cur_price - abs(sl - cur_price) * 3.0
+            _j.note(dj.LIQUIDITY, 'tp_at_h4_liquidity',
+                    dj.CONFIRMED if (df_h4_tp is not None and h4_lows) else dj.NEUTRAL,
+                    ('TP set at the nearest H4 swing low (structural liquidity pool)'
+                     if (df_h4_tp is not None and h4_lows)
+                     else 'no qualifying H4 swing low -- TP fell back to a 3x multiple'),
+                    value=round(tp, 5))
+            _j.measure(rr=round(abs(tp - cur_price) / max(abs(cur_price - sl), 1e-9), 2),
+                       atr_h1=round(atr_h1, 5))
+            _j.decide(True, 'H1 OB retest confirmed by an M15 close in direction')
             return {'direction': 'SELL', 'stop_loss': sl, 'tp': tp,
                     'strategy_name': 'H1_OB_RETEST', 'confidence': 0.88,
-                    'ob_zone': ob}
+                    'ob_zone': ob, 'journal': _j.to_dict()}
 
     except Exception as e:
         logger.error(f"[STRAT B] {symbol}: {e}")
@@ -2622,6 +2754,11 @@ def context_decision_engine(symbol: str, ai_bias: str = "NEUTRAL", stacking_mode
                     'direction': bf_signal['direction'], 'stop_loss': bf_signal['stop_loss'],
                     'tp': bf_signal['take_profit'], 'strategy_name': 'BALANCE_FADE',
                     'confidence': 0.75,
+                    # Carry the journal through: this dict is rebuilt from
+                    # bf_signal rather than passed along, so without this the
+                    # reasoning detect_balance_fade_signal() produced would be
+                    # dropped on the floor for every intraday Balance Fade trade.
+                    'journal': bf_signal.get('journal'),
                 }
                 logger.info(f"[STRAT F] {symbol}: Balance Fade (auction state) setup found")
 
@@ -3367,7 +3504,11 @@ def place_intraday_trade(signal: Dict, account_equity: float):
                 'opened_at': datetime.now(timezone.utc),
                 'breakeven_done': False,
                 'trailing_done': False,
-                'trailing_active': False
+                'trailing_active': False,
+                'take_profit': tp1,
+                # Entry reasoning carried on the position so the close-out can
+                # persist the complete case (entry + management + exit) together.
+                'journal': signal.get('journal'),
             }
             
             portfolio_manager.add_exposure(symbol, risk_percent)
@@ -3403,6 +3544,61 @@ def place_intraday_trade(signal: Dict, account_equity: float):
 # =============================================================================
 # POSITION MANAGEMENT (Simplified)
 # =============================================================================
+
+def _record_management(pos_info: Dict, what: str, why: str, **extra) -> None:
+    """Append a management action to this position's live journal. Exception-safe
+    and return-value-free: instrumentation must never interfere with position
+    management. Persisted by the close path via _attribute_and_log_exit()."""
+    try:
+        pos_info.setdefault('management', []).append({
+            'what': what, 'why': why,
+            'at': datetime.now(timezone.utc).isoformat(),
+            **{k: dj._plain(v) for k, v in extra.items()},
+        })
+    except Exception:
+        pass
+
+
+def _attribute_and_log_exit(ticket: int, pos_info: Dict, close_price: float,
+                            profit: float, exit_reason: Optional[str] = None) -> None:
+    """
+    WHY this intraday trade ended -- the diagnosis, not just the P&L, using the
+    MFE/MAE accumulated while the position was open. Same attribution the
+    scalping and swing bots produce, so all three feed one analysis path
+    (backtest/analyze_journal.py). Wrapped so analytics can never break close
+    bookkeeping.
+    """
+    try:
+        entry = pos_info.get('entry_price', 0) or 0
+        init_sl = pos_info.get('initial_sl', pos_info.get('stop_loss', 0)) or 0
+        if exit_reason is None:
+            exit_reason = 'TP' if profit > 0 else ('BE' if abs(profit) < 1e-9 else 'SL')
+        opened = pos_info.get('opened_at') or state.position_open_times.get(ticket)
+        held = ((datetime.now(timezone.utc) - opened).total_seconds()
+                if isinstance(opened, datetime) else None)
+        attr = dj.attribute_live_exit(
+            direction=pos_info.get('direction', 'BUY'),
+            entry_price=entry, initial_sl=init_sl,
+            take_profit=pos_info.get('take_profit'),
+            exit_price=close_price, exit_reason=exit_reason,
+            mfe_r=pos_info.get('mfe_r'), mae_r=pos_info.get('mae_r'),
+            held_seconds=held,
+            be_moved=bool(pos_info.get('breakeven_done')),
+            partial_taken=bool(pos_info.get('partial_done') or pos_info.get('partial_closed')),
+        )
+        logger.info(f"[WHY CLOSED] {pos_info.get('symbol')} #{ticket} {exit_reason}: {attr}")
+        db_manager.update_trade_metadata(ticket, {
+            'exit_attribution': attr,
+            'mfe_r': round(pos_info.get('mfe_r') or 0.0, 3),
+            'mae_r': round(pos_info.get('mae_r') or 0.0, 3),
+            'held_seconds': round(held, 1) if held else None,
+            'be_moved': bool(pos_info.get('breakeven_done')),
+            'management': pos_info.get('management', []),
+            'journal': pos_info.get('journal'),
+        })
+    except Exception as e:
+        logger.debug(f"[WHY CLOSED] attribution failed for #{ticket}: {e}")
+
 
 def manage_intraday_positions():
     """
@@ -3469,6 +3665,14 @@ def manage_intraday_positions():
             risk_dist = point * 100 # Fallback 10 pips default
             
         r_multiple = current_profit_dist / risk_dist
+
+        # MAXIMUM FAVOURABLE / ADVERSE EXCURSION, in R -- consumed by
+        # decision_journal.attribute_live_exit() at close. Without it, "SL"
+        # cannot distinguish a trade that reached +2R and gave it back (an
+        # exit/management failure) from one that never went our way at all
+        # (an entry failure); those need opposite fixes.
+        pos_info['mfe_r'] = max(pos_info.get('mfe_r', 0.0) or 0.0, r_multiple)
+        pos_info['mae_r'] = min(pos_info.get('mae_r', 0.0) or 0.0, r_multiple)
         
         # === UPDATE RUNNING P&L IN DATABASE ===
         try:
@@ -3508,6 +3712,9 @@ def manage_intraday_positions():
                     if modify_position_sl(pos, new_sl):
                         pos_info['stop_loss'] = new_sl
                         pos_info['breakeven_done'] = True
+                        _record_management(pos_info, 'moved_to_breakeven',
+                                           f'reached {r_multiple:.2f}R -- stop moved to protect the position',
+                                           trigger_r=round(r_multiple, 2))
                         logger.info(f"[OK] Breakeven Set: {symbol} @ {new_sl:.5f} (Locking fees)")
                         send_telegram_message(f" Breakeven Secure: {symbol} (+{r_multiple:.1f}R)")
                     else:
@@ -3598,6 +3805,9 @@ def manage_intraday_positions():
                                 if modify_position_sl(pos, entry_price):
                                     pos_info['stop_loss'] = entry_price
                                     pos_info['breakeven_done'] = True
+                                    _record_management(pos_info, 'moved_to_breakeven',
+                                                       'stop moved to breakeven after a partial close',
+                                                       trigger_r=round(r_multiple, 2))
                         else:
                             logger.warning(f"[PARTIAL TP] {symbol}: partial close failed retcode={res_p.retcode if res_p else 'None'}")
 
@@ -3773,6 +3983,9 @@ def close_position(position):
             except Exception as e:
                 logger.error(f"Error fetching close profit: {e}")
             
+            _pi = state.open_positions.get(ticket)
+            if _pi:
+                _attribute_and_log_exit(int(ticket), _pi, result.price, profit)
             db_manager.update_trade_close(int(ticket), result.price, profit, "Intraday_Close")
 
             if ticket in state.open_positions:

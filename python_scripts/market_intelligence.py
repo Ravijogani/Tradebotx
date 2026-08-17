@@ -470,7 +470,22 @@ def detect_balance_fade_signal(df: pd.DataFrame, symbol: str, num_bins: int = 24
         return None
 
     auction = classify_auction_state(df, num_bins=num_bins, value_area_pct=value_area_pct)
+
+    # DECISION JOURNAL -- imported lazily so this module keeps its zero
+    # import-time dependencies (decision_journal is pure too, so there is no
+    # cycle; the local import just keeps market_intelligence importable on its
+    # own exactly as before).
+    import decision_journal as _dj
+    _j = _dj.DecisionJournal(symbol, strategy='BALANCE_FADE')
+    _j.note(_dj.REGIME, 'auction_balance',
+            _dj.CONFIRMED if auction["state"] == "BALANCE" else _dj.VETO,
+            (f'auction state BALANCE -- rotating inside value, which is the only '
+             f'regime this fade is designed for' if auction["state"] == "BALANCE"
+             else f'auction state {auction["state"]} -- not a rotation, no fade here'),
+            value=auction["state"])
     if auction["state"] != "BALANCE":
+        _j.decide(False, f'auction state {auction["state"]} is not BALANCE')
+        _dj.record_rejection(_j)
         return None
 
     vah, val, poc, vwap = auction["vah"], auction["val"], auction["poc"], auction["vwap"]
@@ -502,7 +517,34 @@ def detect_balance_fade_signal(df: pd.DataFrame, symbol: str, num_bins: int = 24
         if not guard_hit:
             direction = "BUY"
 
+    # Record which edge was touched and whether the liquidity guard fired --
+    # the guard is this strategy's single most important discipline (see the
+    # docstring), so whether it vetoed is exactly what R&D needs to see.
+    _at_vah = high >= vah
+    _at_val = low <= val
+    _j.note(_dj.LOCATION, 'at_value_area_edge',
+            _dj.CONFIRMED if (_at_vah or _at_val) else _dj.VETO,
+            ('price reached the value-area high (VAH) -- fade candidate' if _at_vah
+             else 'price reached the value-area low (VAL) -- fade candidate' if _at_val
+             else 'price is mid-value, not at either edge'),
+            value='VAH' if _at_vah else 'VAL' if _at_val else None)
+    if (_at_vah or _at_val) and direction is None:
+        _j.note(_dj.LIQUIDITY, 'liquidity_guard',
+                _dj.VETO,
+                'an untested liquidity pool sits just beyond the edge -- price is '
+                'more likely to sweep those stops than respect the edge on first touch')
+    elif direction is not None:
+        _j.direction = direction
+        _j.note(_dj.LIQUIDITY, 'liquidity_guard', _dj.CONFIRMED,
+                'no untested liquidity pool just beyond the edge -- the fade is not '
+                'standing in front of an obvious stop-hunt target')
+        _j.note(_dj.TRIGGER, 'rejection_candle', _dj.CONFIRMED,
+                f'bar closed as a {direction} rejection at the edge -- price actually '
+                f'turned here rather than only touching')
+
     if direction is None:
+        _j.decide(False, 'no valid fade at a value-area edge')
+        _dj.record_rejection(_j)
         return None
 
     entry_price = float(bar["close"])
@@ -525,14 +567,29 @@ def detect_balance_fade_signal(df: pd.DataFrame, symbol: str, num_bins: int = 24
     if sl_dist <= 0:
         return None
     reward_dist = abs(take_profit - entry_price)
+    _rr = (reward_dist / sl_dist) if sl_dist > 0 else 0.0
+    _j.note(_dj.LIQUIDITY, 'target_inside_value',
+            _dj.CONFIRMED,
+            (f'target {take_profit:.5f} is the POC/VWAP -- mean reversion to where '
+             f'volume actually transacted, not an arbitrary multiple'),
+            value=round(float(take_profit), 5))
+    _j.measure(rr=round(_rr, 2), min_rr_required=min_rr, atr=round(float(atr), 5),
+               vah=round(float(vah), 5), val=round(float(val), 5), poc=round(float(poc), 5))
     if reward_dist <= 0 or reward_dist / sl_dist < min_rr:
+        _j.note(_dj.RISK, 'rr_floor', _dj.VETO,
+                f'RR {_rr:.2f} below the {min_rr:.1f} required')
+        _j.decide(False, f'RR {_rr:.2f} < {min_rr:.1f}')
+        _dj.record_rejection(_j)
         return None
+    _j.note(_dj.RISK, 'rr_floor', _dj.CONFIRMED, f'RR {_rr:.2f} clears the {min_rr:.1f} bar')
+    _j.decide(True, f'BALANCE fade at the value-area edge, RR {_rr:.2f}')
 
     return {
         "direction": direction, "entry_price": entry_price, "stop_loss": stop_loss,
         "take_profit": take_profit,
         "reason": f"BALANCE_FADE_{direction}_RR{reward_dist / sl_dist:.1f}",
         "poc": poc, "vah": vah, "val": val, "vwap": vwap,
+        "journal": _j.to_dict(),
     }
 
 

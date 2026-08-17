@@ -104,6 +104,7 @@ from supabase import create_client, Client
 import market_intelligence as mi
 import bot_control
 import risk_limits
+import decision_journal as dj
 
 # =============================================================================
 # CLI ARGUMENTS -- identical contract to hybrid_trading_bot_multiuser.py /
@@ -427,9 +428,23 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
 
     swing_highs, swing_lows = find_swing_points(df_d1, lookback)
     structure = classify_structure(df_d1, swing_highs, swing_lows)
+
+    # DECISION JOURNAL -- see python_scripts/decision_journal.py. Same
+    # instrumentation carried by the scalping and intraday bots, so all three
+    # feed one analysis path (backtest/analyze_journal.py).
+    _j = dj.DecisionJournal(symbol, strategy='STRUCTURAL_SWING')
+    _j.note(dj.STRUCTURE, 'd1_structure',
+            dj.CONFIRMED if structure else dj.VETO,
+            (f'D1 structure is {structure} -- higher-highs AND higher-lows (or the '
+             f'mirror) across the last two confirmed swings of each' if structure
+             else 'D1 swing sequence disagrees (expanding range) or too few pivots yet'),
+            value=structure)
     if structure is None:
+        _j.decide(False, 'no clean D1 structure')
+        dj.record_rejection(_j)
         return None
     direction = "BUY" if structure == "BULLISH" else "SELL"
+    _j.direction = direction
 
     # The most recent impulse leg in the direction of bias: for BULLISH,
     # the move from the last confirmed swing low up to the last confirmed
@@ -438,12 +453,20 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
     if direction == "BUY":
         leg_start_idx, leg_end_idx = swing_lows[-1], swing_highs[-1]
         if leg_end_idx <= leg_start_idx:
+            _j.note(dj.STRUCTURE, 'impulse_leg', dj.VETO,
+                    'most recent swing high precedes the swing low -- no completed up-leg')
+            _j.decide(False, 'stale/ambiguous impulse leg')
+            dj.record_rejection(_j)
             return None  # the "high" isn't actually after the "low" -- stale/ambiguous leg
         leg_start = df_d1['low'].iloc[leg_start_idx]
         leg_end = df_d1['high'].iloc[leg_end_idx]
     else:
         leg_start_idx, leg_end_idx = swing_highs[-1], swing_lows[-1]
         if leg_end_idx <= leg_start_idx:
+            _j.note(dj.STRUCTURE, 'impulse_leg', dj.VETO,
+                    'most recent swing low precedes the swing high -- no completed down-leg')
+            _j.decide(False, 'stale/ambiguous impulse leg')
+            dj.record_rejection(_j)
             return None
         leg_start = df_d1['high'].iloc[leg_start_idx]
         leg_end = df_d1['low'].iloc[leg_end_idx]
@@ -454,7 +477,18 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
     # into the zone AND closed as a rejection candle in bias direction.
     h4_bar = df_h4.iloc[-1]
     touched_zone = h4_bar['low'] <= zone_high and h4_bar['high'] >= zone_low
+    _rej_ok = is_rejection_candle(h4_bar, direction)
+    _j.note(dj.LOCATION, 'h4_touched_fib_zone',
+            dj.CONFIRMED if touched_zone else dj.VETO,
+            (f'H4 traded into the {near:.3f}-{far:.3f} Fib retracement zone' if touched_zone
+             else 'H4 never reached the Fib retracement zone'))
+    _j.note(dj.TRIGGER, 'h4_rejection_candle',
+            dj.CONFIRMED if _rej_ok else dj.VETO,
+            ('H4 closed back in bias direction -- price actually turned here' if _rej_ok
+             else 'H4 touched the zone but did not close as a rejection'))
     if not touched_zone or not is_rejection_candle(h4_bar, direction):
+        _j.decide(False, 'no H4 rejection inside the Fib zone')
+        dj.record_rejection(_j)
         return None
 
     entry_price = float(h4_bar['close'])
@@ -490,10 +524,21 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
 
     sl_dist = abs(entry_price - stop_loss)
     if sl_dist <= 0:
+        _j.note(dj.RISK, 'sl_distance', dj.VETO, 'computed stop distance is zero')
+        _j.decide(False, 'zero stop distance')
+        dj.record_rejection(_j)
         return None
 
     target = find_nearest_target(df_d1, swing_highs, swing_lows, direction, entry_price)
+    _j.note(dj.LIQUIDITY, 'opposing_d1_target',
+            dj.CONFIRMED if target is not None else dj.VETO,
+            (f'nearest opposing D1 structural level at {target:.5f} used as TP'
+             if target is not None else
+             'no opposing D1 structural level ahead of price -- no real target to aim at'),
+            value=round(target, 5) if target is not None else None)
     if target is None:
+        _j.decide(False, 'no opposing D1 structural target')
+        dj.record_rejection(_j)
         return None
     reward_dist = abs(target - entry_price)
 
@@ -518,8 +563,25 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
     if equilibrium is not None and pd_conf['favorable']:
         effective_rr_min = max(1.0, rr_min - 0.3)
 
+    _rr = reward_dist / sl_dist
+    if equilibrium is not None:
+        _j.note(dj.LOCATION, 'premium_discount',
+                dj.CONFIRMED if pd_conf['favorable'] else dj.AGAINST,
+                pd_conf['reason'], value=equilibrium['zone'])
+    else:
+        _j.note(dj.LOCATION, 'premium_discount', dj.NEUTRAL,
+                'no D1 dealing range established yet')
+    _j.measure(rr=round(_rr, 2), min_rr_required=round(effective_rr_min, 2),
+               sl_distance=round(sl_dist, 5), atr_h4=round(float(atr_h4), 5))
     if reward_dist / sl_dist < effective_rr_min:
+        _j.note(dj.RISK, 'rr_floor', dj.VETO,
+                f'RR {_rr:.2f} below the {effective_rr_min:.2f} required')
+        _j.decide(False, f'RR {_rr:.2f} < {effective_rr_min:.2f}')
+        dj.record_rejection(_j)
         return None
+    _j.note(dj.RISK, 'rr_floor', dj.CONFIRMED,
+            f'RR {_rr:.2f} clears the {effective_rr_min:.2f} bar')
+    _j.decide(True, f'D1 structure + H4 Fib rejection confirmed, RR {_rr:.2f}')
 
     return {
         'direction': direction,
@@ -528,6 +590,7 @@ def detect_structural_swing_signal(df_d1: pd.DataFrame, df_h4: pd.DataFrame, sym
         'take_profit': float(target),
         'reason': f"STRUCTURAL_SWING_{structure}_RR{reward_dist / sl_dist:.1f}",
         'equilibrium_zone': equilibrium,
+        'journal': _j.to_dict(),
     }
 
 
@@ -745,6 +808,28 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"[DB ERROR] Close update failed: {e}")
 
+    def update_trade_metadata(self, ticket: int, updates: Dict) -> None:
+        """
+        Merge keys into a trade's metadata JSONB without clobbering what's
+        already there (read-modify-write, same pattern the scalping bot's
+        update_metadata uses). Added for the decision-journal close-out:
+        exit attribution, MFE/MAE and the management log all land here.
+
+        Best-effort by design -- analytics must never break close bookkeeping,
+        so a failure logs and returns rather than propagating.
+        """
+        try:
+            res = self.client.table('trades').select('metadata') \
+                .eq('ticket', int(ticket)).eq('user_id', self.user_id).execute()
+            if not res.data:
+                return
+            merged = dict(res.data[0].get('metadata') or {})
+            merged.update({k: dj._plain(v) for k, v in updates.items()})
+            self.client.table('trades').update({'metadata': merged}) \
+                .eq('ticket', int(ticket)).eq('user_id', self.user_id).execute()
+        except Exception as e:
+            logger.debug(f"[DB] metadata update failed for #{ticket}: {e}")
+
     def send_heartbeat(self) -> None:
         try:
             account_info = mt5.account_info()
@@ -902,6 +987,9 @@ def place_swing_trade(signal: Dict, account_equity: float) -> bool:
             'symbol': symbol, 'direction': direction, 'entry_price': entry_price,
             'stop_loss': signal['stop_loss'], 'take_profit': signal['take_profit'],
             'lot_size': lot_size, 'reason': signal['reason'],
+            # Entry reasoning carried on the position so the close-out can
+            # persist the complete case (entry + management + exit) together.
+            'journal': signal.get('journal'),
         }
         state.position_open_times[ticket] = datetime.now(timezone.utc)
         state.daily_trades += 1
@@ -967,6 +1055,9 @@ def close_position(position) -> bool:
             logger.error(f"Error fetching close profit: {e}")
 
         logger.info(f"[OK] Position closed: {symbol} | Ticket: {ticket} | P&L: ${profit:.2f}")
+        _pi = state.open_positions.get(ticket)
+        if _pi:
+            _attribute_and_log_exit(int(ticket), _pi, result.price, profit)
         db_manager.update_trade_close(int(ticket), result.price, profit)
         state.daily_pnl += profit
         state.open_positions.pop(ticket, None)
@@ -976,6 +1067,60 @@ def close_position(position) -> bool:
     except Exception as e:
         logger.error(f"Error closing position: {e}")
         return False
+
+
+def _record_management(pos_info: Dict, what: str, why: str, **extra) -> None:
+    """Append a management action to this position's live journal. Exception-safe
+    and return-value-free: instrumentation must never interfere with position
+    management. Persisted by sync_closed_trades()/close_position()."""
+    try:
+        pos_info.setdefault('management', []).append({
+            'what': what, 'why': why,
+            'at': datetime.now(timezone.utc).isoformat(),
+            **{k: dj._plain(v) for k, v in extra.items()},
+        })
+    except Exception:
+        pass
+
+
+def _attribute_and_log_exit(ticket: int, pos_info: Dict, close_price: float,
+                            profit: float) -> None:
+    """
+    WHY this swing trade ended -- the diagnosis, not just the P&L.
+
+    Swing trades are held for days, so a bad one is expensive and worth
+    explaining: the same attribution the scalping bot now produces, using the
+    MFE/MAE accumulated in manage_open_positions(). Wrapped so analytics can
+    never break close bookkeeping.
+    """
+    try:
+        entry = pos_info.get('entry_price', 0) or 0
+        init_sl = pos_info.get('stop_loss', 0) or 0
+        exit_reason = 'TP' if profit > 0 else ('BE' if abs(profit) < 1e-9 else 'SL')
+        open_time = state.position_open_times.get(ticket)
+        held = ((datetime.now(timezone.utc) - open_time).total_seconds()
+                if open_time else None)
+        attr = dj.attribute_live_exit(
+            direction=pos_info.get('direction', 'BUY'),
+            entry_price=entry, initial_sl=init_sl,
+            take_profit=pos_info.get('take_profit'),
+            exit_price=close_price, exit_reason=exit_reason,
+            mfe_r=pos_info.get('mfe_r'), mae_r=pos_info.get('mae_r'),
+            held_seconds=held, be_moved=(ticket in state.be_moved),
+            partial_taken=False,   # this strategy takes no partials by design
+        )
+        logger.info(f"[WHY CLOSED] {pos_info.get('symbol')} #{ticket} {exit_reason}: {attr}")
+        db_manager.update_trade_metadata(ticket, {
+            'exit_attribution': attr,
+            'mfe_r': round(pos_info.get('mfe_r') or 0.0, 3),
+            'mae_r': round(pos_info.get('mae_r') or 0.0, 3),
+            'held_seconds': round(held, 1) if held else None,
+            'be_moved': ticket in state.be_moved,
+            'management': pos_info.get('management', []),
+            'journal': pos_info.get('journal'),
+        })
+    except Exception as e:
+        logger.debug(f"[WHY CLOSED] attribution failed for #{ticket}: {e}")
 
 
 def manage_open_positions() -> None:
@@ -1005,9 +1150,20 @@ def manage_open_positions() -> None:
         favorable_dist = (current_price - entry) if direction == "BUY" else (entry - current_price)
         r_multiple = favorable_dist / sl_dist
 
+        # MAXIMUM FAVOURABLE / ADVERSE EXCURSION, in R -- consumed by
+        # decision_journal.attribute_live_exit() when the trade closes. Without
+        # it, a stop-out cannot be diagnosed: "SL" cannot distinguish a trade
+        # that reached +2R and gave it back (an exit/management failure) from
+        # one that never went our way (an entry failure).
+        pos_info['mfe_r'] = max(pos_info.get('mfe_r', 0.0) or 0.0, r_multiple)
+        pos_info['mae_r'] = min(pos_info.get('mae_r', 0.0) or 0.0, r_multiple)
+
         if ticket not in state.be_moved and r_multiple >= config.BREAKEVEN_TRIGGER_R:
             if modify_position_sl(pos, entry):
                 state.be_moved.add(ticket)
+                _record_management(pos_info, 'moved_to_breakeven',
+                                   f'reached {r_multiple:.2f}R -- stop moved to entry',
+                                   trigger_r=round(r_multiple, 2))
                 logger.info(f"[BREAKEVEN] {pos.symbol} ticket {ticket} moved to entry at {r_multiple:.2f}R")
 
         open_time = state.position_open_times.get(ticket)
@@ -1056,6 +1212,9 @@ def sync_closed_trades() -> None:
             profit = sum(d.profit for d in deals) if deals else 0.0
             close_price = deals[-1].price if deals else 0.0
             logger.info(f"[SYNC] Ticket {ticket} closed externally (SL/TP) | P&L: ${profit:.2f}")
+            _pi = state.open_positions.get(ticket)
+            if _pi:
+                _attribute_and_log_exit(ticket, _pi, close_price, profit)
             db_manager.update_trade_close(ticket, close_price, profit)
             state.daily_pnl += profit
         except Exception as e:

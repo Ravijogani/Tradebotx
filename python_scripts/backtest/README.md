@@ -1295,6 +1295,63 @@ economic event slightly differently (`swept_then_resumed` is backtest-only;
 same trade, not the same metric computed twice — don't pool them without
 accounting for that.
 
+### Journaling completed across all three bots
+
+Extended to `intraday.py` (H4 Trend Pullback, H1 OB Retest) and
+`structural_swing_pro.py` (Structural Swing), plus the shared
+`detect_balance_fade_signal()` that both bots use. Coverage on real data is
+now **208/208 trades journalled and parseable** across all eight
+strategy/driver combinations, with every strategy byte-identical to baseline
+and zero tracebacks.
+
+Each bot got the full three-phase treatment, not just entry notes:
+
+- **Entry** confirmations and rejections. Swing records D1 structure, the
+  impulse leg, the H4 Fib-zone touch, the rejection candle, premium/discount
+  and the RR floor. Intraday's STRAT A records the H4 EMA stack, the H1
+  pullback zone, the M15 rejection type (pinbar vs engulfing) and whether the
+  TP landed on real H1 liquidity; STRAT B records the H1 order block, the
+  doji check and the M15 directional close.
+- **MFE/MAE tracking** in both bots' management loops, and
+  `_record_management()` on every break-even move (2 sites in intraday, 1 in
+  swing).
+- **Exit attribution** via `_attribute_and_log_exit()` on every close path,
+  writing `exit_attribution`, `mfe_r`, `mae_r`, `held_seconds`, `be_moved` and
+  the management log to `trades.metadata`.
+
+Two gaps had to be closed that were invisible until the coverage was measured:
+
+1. **Neither bot's DB manager had a metadata merger.** `update_trade_metadata`
+   simply didn't exist on either — the attribution had nowhere to go. Added to
+   both, using the same read-modify-write merge the scalping bot uses so
+   existing metadata isn't clobbered.
+2. **`intraday.py` rebuilds its signal dict** for Balance Fade rather than
+   passing `bf_signal` along, so the journal was being dropped for every
+   intraday Balance Fade trade (5/5 missing). Caught by the coverage count
+   reading 203/208 rather than by inspection — worth noting as the reason to
+   measure coverage rather than assume it.
+
+`swing_driver.py`, `intraday_driver.py` and `balance_fade_driver.py` now close
+out journals too, via a shared `backtest/journal_util.py` rather than three
+copies of the same close-out (the drivers bypass `BacktestEngine`, so they
+could not reuse its inline version — and three copies is exactly the drift
+this harness keeps finding).
+
+**A useful contrast already visible in the first run.** The loss attribution
+splits the two bots in opposite directions:
+
+| Strategy | Thesis losses | Stop-placement losses | Reading |
+|---|---|---|---|
+| SHAAKUNI_SSM (scalp) | 17 | 26 (+66 partial_recovery) | targets too far / stops too tight |
+| INTRADAY_H4_TREND_PULLBACK | 4 | **0** | direction was simply wrong |
+
+SSM loses by being right about direction and wrong about distance. Intraday's
+H4 pullback loses the opposite way — zero swept stops, all four losses were
+price continuing against it. **Those need opposite fixes**, and without
+attribution both would have looked like "SL hit" and invited the same wrong
+remedy. Sample sizes are small (4 losses) and this is still one instrument in
+one window, so it is a direction to investigate rather than a conclusion.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

@@ -50,7 +50,8 @@ import pandas as pd
 
 from . import intraday_replay
 from .data import HistoricalDataset, infer_point_size
-from .engine import DEFAULT_SPREAD_MODEL, SimulatedTrade, simulate_exit
+from .engine import DEFAULT_SPREAD_MODEL, SimulatedTrade, simulate_exit, attribute_exit
+from .journal_util import close_journal as _close_journal
 
 
 @dataclass
@@ -185,6 +186,13 @@ def run_intraday_backtest(bot_module, dataset: HistoricalDataset, config: Intrad
             direction, stop_loss, tp, h1_series, i, config.max_bars_in_trade)
         realized = (exit_price - filled_entry) if direction == "BUY" else (filled_entry - exit_price)
 
+        _exit_idx = None
+        _m = h1_series.index[h1_series["time"] == exit_time] if exit_time is not None else []
+        if len(_m):
+            _exit_idx = h1_series.index.get_loc(_m[0])
+        _attr = attribute_exit(direction, filled_entry, stop_loss, tp,
+                               exit_reason or "", h1_series, _exit_idx)
+
         trades.append(SimulatedTrade(
             symbol=config.symbol, strategy=f"INTRADAY_{signal.get('strategy_name', '?')}", direction=direction,
             setup_reason=signal.get('strategy_name', 'INTRADAY'), entry_time=as_of, entry_price=filled_entry,
@@ -192,6 +200,13 @@ def run_intraday_backtest(bot_module, dataset: HistoricalDataset, config: Intrad
             order_type="MARKET", signal_time=as_of,
             exit_time=exit_time, exit_price=exit_price, exit_reason=exit_reason,
             r_multiple=realized / sl_dist, spread_charged=spread,
+            # DECISION JOURNAL: carry the strategy's own entry reasoning and
+            # close it out with the real outcome + attribution, so this driver's
+            # trades are minable by backtest/analyze_journal.py exactly like the
+            # scalping bot's are (one analysis path for all three bots).
+            journal=_close_journal(signal.get('journal'), exit_reason,
+                                   _attr, realized / sl_dist, exit_time),
+            exit_attribution=_attr,
         ))
         daily_trade_count += 1
 
