@@ -3852,14 +3852,22 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                                  direction=direction, strategy='SWAPPY_3C')
 
         def _leg_notes(c1_ok, c2_ok, seq_ok, c3_ok, holds_ok, seq_label):
+            # body_pct recorded as the `value` so a rejection can be diagnosed
+            # rather than guessed at: the band is 0.70 <= body_pct <= 0.80, an
+            # upper AND lower bound, so this distinguishes "candle too weak"
+            # (a correct rejection) from "candle too STRONG" (a candle with a
+            # 90% body is a better trend candle and is currently thrown away).
+            _bp1, _bp2 = round(body_pct(c1), 3), round(body_pct(c2), 3)
             _sj.note(dj.TRIGGER, 'c1_trend_candle',
                      dj.CONFIRMED if c1_ok else dj.VETO,
-                     'C1 is a full-bodied trend candle' if c1_ok
-                     else 'C1 failed the body/direction test')
+                     (f'C1 is a full-bodied trend candle (body {_bp1:.0%} of range)' if c1_ok
+                      else f'C1 failed the body/direction test (body {_bp1:.0%} of range)'),
+                     value=_bp1)
             _sj.note(dj.TRIGGER, 'c2_continuation',
                      dj.CONFIRMED if c2_ok else dj.VETO,
-                     'C2 continued the move with a full body' if c2_ok
-                     else 'C2 did not continue with a full body')
+                     (f'C2 continued the move with a full body (body {_bp2:.0%})' if c2_ok
+                      else f'C2 did not continue with a full body (body {_bp2:.0%})'),
+                     value=_bp2)
             # NOTE the shared key name. Using 'higher_low' for BUY and
             # 'lower_high' for SELL made these direction proxies rather than
             # comparable confirmations -- the analyzer then reported an "edge"
@@ -4024,6 +4032,7 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
         # Rejected setups carry their journal too -- knowing WHICH leg of the
         # pattern usually fails is as useful as knowing why trades lose.
         _sj.decide(False, 'Swappy conditions not met')
+        dj.record_rejection(_sj)
         return {**empty, "reason": "Swappy conditions not met", "journal": _sj.to_dict()}
 
     except Exception as e:
@@ -7883,6 +7892,8 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             spike = detect_manipulation_spike(df_m5, atr)
             if not spike:
                 _aj.note(dj.LIQUIDITY, 'manipulation_spike', dj.VETO, 'no manipulation spike detected')
+                _aj.decide(False, 'no manipulation spike')
+                dj.record_rejection(_aj)
                 return None
             fib = compute_aox_fibonacci(spike)
             direction = 'SELL' if spike['type'] == 'BEARISH' else 'BUY'
@@ -7899,9 +7910,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      dj.VETO if _trend_conflict else dj.CONFIRMED,
                      (f'{direction} conflicts with {effective_trend} HTF bias' if _trend_conflict
                       else f'{direction} does not fight the {effective_trend} HTF bias'))
-            if effective_trend != 'NEUTRAL':
-                if direction == 'BUY' and effective_trend == 'BEARISH': return None
-                if direction == 'SELL' and effective_trend == 'BULLISH': return None
+            if _trend_conflict:
+                _aj.decide(False, f'{direction} conflicts with {effective_trend} HTF bias')
+                dj.record_rejection(_aj)
+                return None
 
             # Check SD zone: price must be at -2.0 to -2.5 SD (minor) OR -4.0 to -4.5 SD (major reversal)
             reached_sd2 = spike.get('reached_sd2', False)
@@ -7913,6 +7925,8 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                       else 'price never reached a qualifying SD zone'),
                      value='SD4' if reached_sd4 else 'SD2' if reached_sd2 else None)
             if not reached_sd2 and not reached_sd4:
+                _aj.decide(False, 'no qualifying SD zone tap')
+                dj.record_rejection(_aj)
                 return None
             # SD4 major reversal zone = higher conviction, larger L1 allocation
             _l1_alloc = 0.35 if reached_sd4 else 0.25
@@ -7925,7 +7939,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      dj.CONFIRMED if in_sniper else dj.VETO,
                      ('price inside the Fibonacci sniper entry zone' if in_sniper
                       else 'price outside the sniper entry zone'))
-            if not in_sniper: return None
+            if not in_sniper:
+                _aj.decide(False, 'price outside the sniper entry zone')
+                dj.record_rejection(_aj)
+                return None
 
             # TDO filter
             tdo = get_true_day_open(symbol)
@@ -7942,6 +7959,8 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             else:
                 _aj.note(dj.LOCATION, 'true_day_open', dj.NEUTRAL, 'no true-day-open reference available')
             if _tdo_fail:
+                _aj.decide(False, 'wrong side of true day open')
+                dj.record_rejection(_aj)
                 return None
 
             # Macro window: HARD GATE -- AOX only executes during institutional 20-min windows
@@ -7953,6 +7972,8 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      value=macro)
             if not macro:
                 logger.debug(f"[AOX L1] {symbol}: outside macro window -- skip (wait for 8:50/9:50/10:50/13:50 EST)")
+                _aj.decide(False, 'outside every institutional macro window')
+                dj.record_rejection(_aj)
                 return None
             logger.info(f"[AOX L1] {symbol}: macro window active: {macro}")
 
@@ -7983,7 +8004,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      dj.CONFIRMED if smt_ok else dj.VETO,
                      ('correlated market confirms via SMT divergence' if smt_ok
                       else 'no SMT divergence -- correlated market does not confirm'))
-            if not smt_ok: return None
+            if not smt_ok:
+                _aj.decide(False, 'no SMT divergence confirmation')
+                dj.record_rejection(_aj)
+                return None
 
             # CISD on M1
             cisd = detect_cisd_trigger(df_m1, direction)
@@ -7991,7 +8015,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      dj.CONFIRMED if cisd else dj.VETO,
                      ('M1 change-in-state-of-delivery confirmed' if cisd
                       else 'no M1 CISD trigger'))
-            if not cisd: return None
+            if not cisd:
+                _aj.decide(False, 'no M1 CISD trigger')
+                dj.record_rejection(_aj)
+                return None
 
             # Find FPFVG (First Presented FVG) on M1 for Turtle Soup
             fpfvg = detect_fpfvg(df_m1, direction)
@@ -8000,7 +8027,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      (f'first-presented FVG located at {fpfvg:.5f} (Turtle Soup)' if fpfvg != 0.0
                       else 'no first-presented FVG on M1'),
                      value=fpfvg or None)
-            if fpfvg == 0.0: return None
+            if fpfvg == 0.0:
+                _aj.decide(False, 'no first-presented FVG on M1')
+                dj.record_rejection(_aj)
+                return None
 
             # LAYER 2: 25% at SMT confirmation + FVG
             sl2 = fib['sl_level']
@@ -8026,6 +8056,8 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             fpfvg = aox_state.get('fpfvg', 0)
             if fpfvg == 0:
                 _aj.note(dj.LIQUIDITY, 'fpfvg_carried', dj.VETO, 'no FPFVG carried from L2')
+                _aj.decide(False, 'no FPFVG carried from L2')
+                dj.record_rejection(_aj)
                 return None
 
             fvg_dist = abs(cur_price - fpfvg)
@@ -8045,7 +8077,10 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                      ('reversal still holding above/below the 9 EMA' if reversal_holding
                       else 'reversal has failed -- price back through the 9 EMA'))
 
-            if not (near_fvg and reversal_holding): return None
+            if not (near_fvg and reversal_holding):
+                _aj.decide(False, 'not at the mitigation block, or reversal has failed')
+                dj.record_rejection(_aj)
+                return None
 
             # LAYER 3: 50% at Hippo/Mitigation block
             sl3 = fib['sl_level']
@@ -8437,6 +8472,7 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
         if not sweep:
             _j.note(dj.LIQUIDITY, 'htf_sweep', dj.VETO, 'no H4/H1 liquidity sweep found')
             _j.decide(False, 'no HTF sweep -- nothing to trade')
+            dj.record_rejection(_j)
             return empty
         _j.note(dj.LIQUIDITY, 'htf_sweep', dj.CONFIRMED,
                 f"{sweep['type']} -- a prior high/low was swept and price closed back inside",
@@ -8448,6 +8484,7 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
             _j.note(dj.STRUCTURE, 'extreme_ob', dj.VETO,
                     'no unmitigated extreme order block inside the swept leg')
             _j.decide(False, 'sweep confirmed but no valid OB to enter at')
+            dj.record_rejection(_j)
             return empty
         _j.note(dj.STRUCTURE, 'extreme_ob', dj.CONFIRMED,
                 f"unmitigated extreme OB at {ob['entry']:.5f} -- limit entry level",
@@ -8455,9 +8492,13 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
 
         # Step 3: Validate entry level is still reachable
         cur_price = float(df_m5['close'].iloc[-1])
-        if direction == 'BUY' and cur_price <= ob['entry']:
-            return empty  # price already below OB -- limit already filled or stale
-        if direction == 'SELL' and cur_price >= ob['entry']:
+        _stale = ((direction == 'BUY' and cur_price <= ob['entry']) or
+                  (direction == 'SELL' and cur_price >= ob['entry']))
+        if _stale:
+            _j.note(dj.LOCATION, 'entry_still_reachable', dj.VETO,
+                    f'price {cur_price:.5f} already through the OB entry {ob["entry"]:.5f}')
+            _j.decide(False, 'OB entry no longer reachable')
+            dj.record_rejection(_j)
             return empty
 
         sl_dist = abs(ob['entry'] - ob['sl'])
@@ -8545,6 +8586,10 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
             _j.note(dj.RISK, 'rr_floor', dj.VETO,
                     f'RR {rr:.2f} below the {min_rr:.1f} required for this setup quality')
             _j.decide(False, f'RR {rr:.2f} < {min_rr:.1f}')
+            # Entry/SL/TP are all known here, so this rejection is one of the
+            # few whose outcome COULD be simulated -- the opportunity-cost case.
+            _j.measure(would_be_entry=ob['entry'], would_be_sl=ob['sl'], would_be_tp=tp)
+            dj.record_rejection(_j)
             return empty
         _j.note(dj.RISK, 'rr_floor', dj.CONFIRMED,
                 f'RR {rr:.2f} clears the {min_rr:.1f} bar for this setup quality')
@@ -9270,6 +9315,8 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
             logger.debug(f'[EMA 200 GATE] {symbol}: {direction} blocked -- '
                          f'price={_cur_price:.4f} {"below" if direction=="BUY" else "above"} '
                          f'200 EMA={_e200:.4f}')
+            _ej.decide(False, 'price on the wrong side of the 200 EMA')
+            dj.record_rejection(_ej)
             return None
         # DISTANCE RULE (doc requirement): 9/25 cluster must be
         # meaningfully separated from the 50 EMA. Bunched/braided
@@ -9286,6 +9333,8 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
             logger.debug(f'[EMA DISTANCE] {symbol}: EMAs bunched '
                          f'(25={_e25:.4f} 50={_e50:.4f} gap={abs(_e25-_e50):.4f} '
                          f'< {_atr_m5*config.EMA_DISTANCE_RULE_ATR_MULT:.4f}) -- ranging, skip')
+            _ej.decide(False, 'EMAs bunched -- ranging')
+            dj.record_rejection(_ej)
             return None
 
         # PATTERN PRE-FILTER (doc requirement):
@@ -9300,6 +9349,8 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
                  value=_ema_pattern.get('pattern'))
         if not _ema_pattern['found']:
             logger.debug(f"[EMA PATTERN] {symbol}: no qualifying pattern -- skip cross")
+            _ej.decide(False, 'no qualifying W/M/H&S pattern')
+            dj.record_rejection(_ej)
             return None
         logger.debug(f"[EMA PATTERN] {symbol}: {_ema_pattern['pattern']} -- EMA cross valid")
 
@@ -9337,6 +9388,7 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
                   else 'no 9/25 EMA trigger in the bias direction'))
         if not _cross_valid:
             _ej.decide(False, 'no valid EMA trigger')
+            dj.record_rejection(_ej)
             return None
         # WHICH of the three trigger variants fired -- a hard cross, an
         # anticipatory near-cross, or a 9-EMA bounce. These are materially
@@ -9361,6 +9413,7 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         if _trap_near:
             logger.debug(f"[EMA TRAP FILTER] {symbol}: unswept liquidity pool near price -- skip cross")
             _ej.decide(False, 'unswept trap adjacent to entry')
+            dj.record_rejection(_ej)
             return None
 
         # SL: structural -- last swing low/high on M5 (not ATR * 0.5)
@@ -9411,6 +9464,7 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         if not _ema_conf['confluent']:
             logger.debug(f"[EMA LIQUIDITY] {symbol}: no liquidity reference/FVG near cross -- skip")
             _ej.decide(False, 'no liquidity confluence at the cross')
+            dj.record_rejection(_ej)
             return None
         _liq_strength = min(1.0, (0.8 if _ema_m5['strength'] == 'STRONG' else 0.65) + 0.15)
         _ej.note(dj.REGIME, 'ema_momentum_strength',

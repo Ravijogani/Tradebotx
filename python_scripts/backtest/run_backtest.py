@@ -94,6 +94,11 @@ def main():
     p.add_argument("--rr", type=float, default=2.0, help="Take-profit distance as a multiple of SL distance, for strategies that don't compute their own TP (default 2.0)")
     p.add_argument("--spread", type=float, default=None, help="Override the default per-symbol spread model (price units)")
     p.add_argument("--out", default=None, help="Write the combined trade ledger to this CSV path")
+    p.add_argument("--rejections-out", default=None, metavar="PATH",
+                   help="Write the setups the strategies evaluated and DECLINED to this JSONL "
+                        "path, so 'which gate actually does the rejecting' becomes a number. "
+                        "Bounded (decision_journal._MAX_REJECTIONS) so a long run cannot exhaust "
+                        "memory; truncation is reported rather than hidden.")
     p.add_argument("--walk-forward", type=int, default=None, metavar="N",
                    help="Instead of one pooled run, split the history into N sequential windows and "
                         "report each independently -- does the edge persist across time, or did it come "
@@ -165,6 +170,7 @@ def main():
         return
 
     all_trades = []
+    all_rejections = []
     for adapter in adapters:
         if adapter.name == "SHAAKUNI_SSM" and "H4" not in dataset.frames:
             print(f"\nSkipping {adapter.name}: needs --h4 (not provided)")
@@ -175,6 +181,7 @@ def main():
         stats = summarize(trades)
         print_report(adapter.name, adapter.live, trades, stats)
         all_trades.extend(trades)
+        all_rejections.extend(getattr(engine, "rejections", []))
 
     if run_aox:
         if "M1" not in dataset.frames:
@@ -232,6 +239,21 @@ def main():
     if args.out and all_trades:
         write_trade_csv(all_trades, args.out)
         print(f"Combined trade ledger ({len(all_trades)} trades) written to {args.out}")
+
+    if args.rejections_out and all_rejections:
+        # JSONL rather than CSV: rejection journals are nested and numerous, so
+        # one JSON object per line stays greppable and streamable.
+        import json as _json
+        with open(args.rejections_out, "w") as _f:
+            for _r in all_rejections:
+                _f.write(_json.dumps(_r, default=str) + "\n")
+        print(f"\nRejected-setup journals ({len(all_rejections)}) written to {args.rejections_out}")
+        funnel = bot.dj.rejection_funnel(all_rejections)
+        for _strat, _counts in funnel.items():
+            _tot = sum(_counts.values())
+            print(f"\n  {_strat}: {_tot} setups declined -- decisive gate:")
+            for _k, _v in sorted(_counts.items(), key=lambda kv: -kv[1])[:8]:
+                print(f"    {_v:>7}  ({100*_v/_tot:>5.1f}%)  {_k}")
 
 
 if __name__ == "__main__":

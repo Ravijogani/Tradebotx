@@ -1167,6 +1167,74 @@ arrives every AOX decision will already explain itself.
   story across two strategies now, though still one instrument and one
   window — the same caveat as everything else here.
 
+### Rejection journaling — where setups actually die
+
+Journaling the trades we take only tells half the story. `--rejections-out
+PATH` now also records every setup a strategy **evaluated and declined**, so
+"which of our filters actually does the rejecting" is a number instead of an
+assumption.
+
+**Design constraint worth stating**, because it drove the implementation:
+every strategy signals "no trade" by returning a falsy value, and every
+caller branches on exactly that. Returning the rejection journal would make
+those returns *truthy* and a declined setup would be executed as a trade.
+So rejections go through a side-channel sink (`decision_journal.record_
+rejection` / `drain_rejections`) and return values are byte-for-byte
+unchanged. **Instrumentation must never be able to place an order.** The sink
+is also bounded (`_MAX_REJECTIONS`) because the scan loop evaluates every
+symbol on every bar — unbounded it would be a slow memory leak in a
+long-running live bot — and truncation is reported rather than hidden.
+
+**First run: 19,662 declined setups, and the decisive gate for each.**
+
+| Strategy | Declined | Decisive gate |
+|---|---|---|
+| SHAAKUNI_SSM | 7,023 | `extreme_ob` 64.0% · `htf_sweep` 35.0% · `premium_discount` 0.8% · `rr_floor` 0.2% |
+| SWAPPY_3C | 10,383 | `c1_trend_candle` **94.8%** · `c2_continuation` 5.2% |
+| EMA_SCALP_CROSS | 2,256 | `wm_hs_pattern` 56.2% · `cross_valid` 19.4% · `ema_separation` 15.0% · `ema200_trend_gate` 4.9% · `liquidity_confluence` 4.6% |
+
+Three things fall straight out of that table:
+
+1. **SSM's RR floor and premium/discount checks are nearly inert as gates** —
+   together they decide only 1% of rejections. All the earlier analysis of
+   whether premium/discount "earns its place" was measuring a check that
+   barely rejects anything; its real effect is on the RR *bar*, not on
+   admission.
+2. **Swappy dies almost entirely on its very first condition** — 94.8% of
+   10,383 rejections never get past C1. That single check explains the
+   strategy's ~0.23 trades/day, not the later filters.
+3. **EMA Scalp's own liquidity-confluence veto** (added earlier this session)
+   decides only 4.6% of its rejections; the W/M/H&S pattern pre-filter does
+   most of the work.
+
+**The Swappy C1 finding, investigated rather than assumed.** C1 requires
+`0.70 <= body_pct <= 0.80` — an upper *and* lower bound. Instrumenting the
+rejection with the actual body percentage showed:
+
+| C1 rejection cause | Count | Share |
+|---|---|---|
+| body < 70% (too weak — correct rejection) | 8,474 | 90.7% |
+| body > 80% (**too strong** — discarded) | 867 | 9.3% |
+
+A candle with a >80% body has almost no wick: it is a *stronger* trend candle
+than one at 75%, and the strategy currently throws it away. That looks like a
+design oddity rather than an intention.
+
+Measured, as an experiment (upper bound relaxed to 1.00, then **reverted**):
+
+| | Trades | Win rate | Expectancy | PF | Equity |
+|---|---|---|---|---|---|
+| Baseline (0.70–0.80) | 18 | 33.3% | +0.223R | 1.33 | +4.01R |
+| Relaxed (0.70–1.00) | 40 | 35.0% | +0.184R | 1.29 | **+7.37R** |
+
+Removed-vs-kept on the newly admitted setups: **22 trades, +3.35R total,
++0.152R average** — genuinely profitable, but weaker than the +0.223R the
+strategy already takes. So relaxing the band roughly doubles total profit
+while diluting per-trade quality. That is a judgment call about whether this
+bot wants frequency or selectivity, not an obvious bug fix, and it rests on
+22 new trades from one instrument in one window. **Left reverted**, recorded
+here with the numbers, for a deliberate decision rather than a silent one.
+
 ## How it works, and why it's structured this way
 
 `hybrid_trading_bot_multiuser.py` is a script, not a library — it parses

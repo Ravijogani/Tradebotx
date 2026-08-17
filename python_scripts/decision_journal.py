@@ -238,6 +238,79 @@ class DecisionJournal:
         }
 
 
+# ---------------------------------------------------------------------------
+# REJECTION SINK -- capturing the setups we DIDN'T take
+# ---------------------------------------------------------------------------
+# Why a side-channel instead of a return value:
+#
+# Every strategy signals "no trade" by returning a falsy value (`{}` or None),
+# and every caller branches on exactly that. Returning a dict containing the
+# rejection journal would make those returns TRUTHY and a rejected setup would
+# be executed as a trade. That is not a risk worth taking to collect
+# analytics, so rejections are pushed to this sink and return values stay
+# byte-for-byte unchanged. Instrumentation must never be able to place an
+# order.
+#
+# Bounded on purpose: the scan loop evaluates every symbol on every bar, so
+# rejections vastly outnumber trades (in a backtest, tens of thousands). An
+# unbounded list would be a slow memory leak in a long-running live bot.
+_MAX_REJECTIONS = 5000
+_rejections: List[Dict[str, Any]] = []
+_rejections_dropped = 0
+
+
+def record_rejection(journal: "DecisionJournal") -> None:
+    """
+    Record a setup that was evaluated and NOT taken. Exception-safe and
+    return-value-free: instrumentation must never affect trading.
+    """
+    global _rejections_dropped
+    try:
+        if len(_rejections) >= _MAX_REJECTIONS:
+            _rejections_dropped += 1
+            return
+        d = journal.to_dict()
+        d["taken"] = False
+        _rejections.append(d)
+    except Exception:
+        pass  # a journal failure must never break a strategy
+
+
+def drain_rejections() -> List[Dict[str, Any]]:
+    """Take and clear everything recorded so far (caller persists it)."""
+    global _rejections_dropped
+    out = list(_rejections)
+    _rejections.clear()
+    if _rejections_dropped:
+        # Surfaced rather than hidden: a truncated sample is still usable, but
+        # only if you know it was truncated.
+        out.append({"_meta": "rejections_dropped", "count": _rejections_dropped})
+        _rejections_dropped = 0
+    return out
+
+
+def rejection_funnel(rejections: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    """
+    Which gate actually does the rejecting, per strategy.
+
+    A strategy's stated gate order is not the same as where setups really die.
+    This counts the FIRST vetoing check in each rejected journal -- the gate
+    that was actually decisive -- so "we have 8 filters" becomes "7 of them
+    almost never fire and this one kills 90% of setups".
+    """
+    out: Dict[str, Dict[str, int]] = {}
+    for r in rejections:
+        if r.get("_meta"):
+            continue
+        strat = r.get("strategy") or "?"
+        vetoes = [c["key"] for c in (r.get("checks") or [])
+                  if c["verdict"] in (VETO, AGAINST)]
+        key = vetoes[0] if vetoes else (r.get("decision") or "unspecified")
+        out.setdefault(strat, {})
+        out[strat][key] = out[strat].get(key, 0) + 1
+    return out
+
+
 def summarize_by_confirmation(journals: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     THE PAYOFF FUNCTION. Given many journals with outcomes, report, per

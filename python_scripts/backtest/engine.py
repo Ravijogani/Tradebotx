@@ -221,6 +221,11 @@ class BacktestEngine:
         cfg = self.config
         ltf_series = self.dataset.frames[cfg.ltf_timeframe]
         trades: List[SimulatedTrade] = []
+        # Setups the strategy evaluated and declined. Collected via the
+        # side-channel sink in decision_journal (never via return values --
+        # see that module's note on why instrumentation must not be able to
+        # place an order). Exposed as .rejections for run_backtest to persist.
+        self.rejections: List[dict] = []
 
         i = cfg.warmup_bars
         n = len(ltf_series)
@@ -228,6 +233,13 @@ class BacktestEngine:
             as_of = ltf_series["time"].iloc[i]
 
             result = self.adapter.call(self.bot, self.dataset, as_of, cfg.symbol)
+
+            # Drain per bar so each rejection can be stamped with the bar it
+            # happened on -- draining once at the end would lose that.
+            for rj in self.bot.dj.drain_rejections():
+                rj["at_bar"] = str(as_of)
+                self.rejections.append(rj)
+
             if result is None:
                 i += 1
                 continue
