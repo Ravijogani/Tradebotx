@@ -463,3 +463,72 @@ if (errorRate > 10%) {
 **Last Updated**: November 18, 2025
 **Status**: Core AI functions fixed, ready for next phase
 **Priority**: Focus on reliability and monitoring first, then advanced features
+
+---
+
+## ⚠️ Deploying edge functions: a git push is NOT a deploy
+
+**Merging to `main` does not deploy an edge function.** Lovable syncs the
+repository and marks the commit's edit `status: "completed"`, and
+`read_file(ref="main")` will happily return the new source — but the version
+*running* in Supabase is still the old one until an explicit function deploy
+happens.
+
+This was learned the expensive way. A cutoff was added to
+`send-onboarding-nurture` specifically to stop it emailing long-abandoned
+signups. The change was merged to `main`, Lovable reported the sync complete,
+and the function was then invoked once to verify the fix. The old version was
+still live, so that single invocation sent **74 real onboarding emails** to
+people who had signed up between 3 weeks and 3 months earlier — precisely the
+outcome the change existed to prevent. Deploying the function properly and
+re-invoking returned `{"success":true,"emailsSent":0,"skippedTooOld":109,
+"candidates":109}`, i.e. the fix works and had simply never been live.
+
+### The rule
+
+Never verify an edge-function change by invoking it until you have confirmed
+the deploy landed. For any function with side effects — sending email,
+charging a card, placing an order, writing to a third party — invoking it *is*
+the side effect, and "I think it's deployed" is not good enough.
+
+1. Merge/push the source.
+2. **Explicitly deploy the function** (Lovable's agent: "deploy the edge
+   function `<name>`"; or `supabase functions deploy <name>`).
+3. Confirm the *running* version, ideally by an observable marker that costs
+   nothing — a new field in the response shape, a version constant. Add one
+   deliberately when the change is otherwise invisible from outside.
+4. Only then re-enable whatever schedule or caller drives it.
+
+### Sequencing rule for anything that sends
+
+When a fix bounds a blast radius, the *bound* must be live before the thing
+that triggers it. Order: deploy the bound → verify the bound → then repair the
+caller (cron auth, schedule, feature flag). Repairing the caller first, or
+"just testing once" first, means the unbounded version is what runs.
+
+### Cron jobs authenticate with CRON_SECRET, not a JWT
+
+`check-trial-expiry`, `send-onboarding-nurture` and `monitor-bot-health` all
+require `Authorization: Bearer <CRON_SECRET>`. Two of the three cron jobs were
+created with a Supabase JWT instead and had therefore been returning 401 on
+every run since they shipped — silently, because `cron.job_run_details.status`
+reads `succeeded` when the SQL merely *enqueues* the request. The HTTP result
+lives in `net._http_response`; that is the only place a 401 shows up.
+
+To re-point a job at the working secret without ever writing it into a query,
+copy it from a job that already has it:
+
+```sql
+headers := jsonb_build_object(
+  'Content-Type','application/json',
+  'Authorization','Bearer ' || (
+    SELECT substring(command from 'Bearer ([0-9a-f]{64})')
+    FROM cron.job WHERE jobname = 'monitor-bot-health-job'))
+```
+
+Verify a job's health with the response body, never the run status:
+
+```sql
+SELECT id, status_code, content, error_msg, created
+FROM net._http_response ORDER BY id DESC LIMIT 10;
+```
