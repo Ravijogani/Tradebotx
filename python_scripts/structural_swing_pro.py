@@ -207,8 +207,11 @@ class SwingTradingConfig:
     MT5_PASSWORD: str = MT5_PASSWORD_RESOLVED
     MT5_SERVER: str = args.mt5_server
 
+    # Full instrument set, matching SYMBOL_SPECS and the other two bots.
     SYMBOLS: List[str] = field(default_factory=lambda: [
-        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm', 'XAGUSDm', 'AUDUSDm',
+        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm', 'XAGUSDm',
+        'BTCUSDm', 'ETHUSDm', 'USOILm', 'NZDUSDm',
+        'USDCADm', 'AUDUSDm', 'USDCHFm', 'GBPJPYm'
     ])
 
     STRUCTURE_TF: int = mt5.TIMEFRAME_D1
@@ -260,6 +263,13 @@ SYMBOL_SPECS = {
     "USDCADm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "USDCHFm": {"pip_size": 0.0001, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
     "BTCUSDm": {"pip_size": 1.0, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    # Added so this table covers every symbol in SYMBOLS. Values copied
+    # verbatim from hybrid_trading_bot_multiuser.py so the three bots agree on
+    # instrument specs -- a symbol that is scanned but missing here would get
+    # no spec at sizing time.
+    "ETHUSDm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 10.0},
+    "USOILm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
+    "GBPJPYm": {"pip_size": 0.01, "min_lot": 0.01, "lot_step": 0.01, "max_lot": 100.0},
 }
 
 

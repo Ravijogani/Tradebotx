@@ -787,10 +787,23 @@ class AITradingConfig:
     #   $600 - $999:  + ETHUSDm
     #   $1000+:       + XAGUSDm (XAG is most expensive per lot)
     #
+    # Full instrument set, matching SYMBOL_SPECS and the other two bots.
+    # ETHUSDm was previously excluded as "too illiquid/volatile for this
+    # scalping strategy" -- that note is kept here rather than deleted, because
+    # it was a judgement, not a measurement, and the decision journal now
+    # records per-symbol outcomes that can settle it either way.
+    #
+    # Affordability is NOT decided here. It is decided per trade by the
+    # [SIZE SKIP] guard in lot sizing, which compares the real min-lot risk for
+    # the actual stop distance against the account, and skips the trade when it
+    # would breach the cap. That is strictly better than a static per-symbol
+    # equity table, because the same symbol is affordable on a tight stop and
+    # unaffordable on a wide one.
     SYMBOLS: List[str] = field(default_factory=lambda: [
-        'XAGUSDm', 'XAUUSDm',
-        'BTCUSDm', 'USOILm'
-    ])  # ETHUSDm removed -- too illiquid/volatile for this scalping strategy
+        'EURUSDm', 'GBPUSDm', 'USDJPYm', 'XAUUSDm', 'XAGUSDm',
+        'BTCUSDm', 'ETHUSDm', 'USOILm', 'NZDUSDm',
+        'USDCADm', 'AUDUSDm', 'USDCHFm', 'GBPJPYm'
+    ])
     SYMBOL_MIN_EQUITY: dict = field(default_factory=lambda: {
         'BTCUSDm':  50,    # viable at ~$50+ (ATR SL ~$1 at 0.01 lot)
         'USOILm':   150,   # viable at ~$150+ (ATR SL ~$1.50)
@@ -2210,6 +2223,16 @@ class SymbolCorrelationTracker:
             'GBP_MAJOR': ['GBPUSD', 'EURGBP', 'GBPJPY', 'GBPCHF', 'GBPAUD', 'GBPNZD', 'GBPCAD'],
             'JPY_MAJOR': ['USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY'],
             'AUD_MAJOR': ['AUDUSD', 'EURAUD', 'GBPAUD', 'AUDJPY', 'AUDNZD', 'AUDCAD', 'AUDCHF'],
+            # NZD/CAD/CHF groups exist so that no traded symbol falls through
+            # to 'UNCORRELATED'. Before these, NZDUSDm, USDCADm and USDCHFm
+            # matched no group and were therefore exempt from the exposure cap
+            # entirely -- the tracker would happily allow a position in all
+            # three at once. That was harmless while only XAU/XAG/BTC/USOIL
+            # were traded (all of which do have groups) and became a real hole
+            # the moment the full 13-symbol set was enabled.
+            'NZD_MAJOR': ['NZDUSD', 'EURNZD', 'GBPNZD', 'AUDNZD', 'NZDJPY', 'NZDCAD', 'NZDCHF'],
+            'CAD_MAJOR': ['USDCAD', 'EURCAD', 'GBPCAD', 'AUDCAD', 'CADJPY', 'NZDCAD', 'CADCHF'],
+            'CHF_MAJOR': ['USDCHF', 'EURCHF', 'GBPCHF', 'AUDCHF', 'CHFJPY', 'NZDCHF', 'CADCHF'],
             'GOLD': ['XAUUSD', 'XAGUSD'],
             'CRYPTO': ['BTCUSD', 'ETHUSD'],
             'OIL': ['USOIL', 'UKOIL'],
