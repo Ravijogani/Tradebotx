@@ -38,3 +38,14 @@ python_scripts/running_bots_state.json
 python_scripts/data/
 python_scripts/Hybrid_AI_Bot_Logs_*/
 python_scripts/Backup_Trades_*/
+
+# Per-bot log/state dirs created by the OTHER two live bots, and by every
+# backtest run (the harness imports the real bot modules, so their module-scope
+# os.makedirs() fires with USER_ID/STRATEGY_ID = "backtest"). These were being
+# deleted by hand after each run throughout this engagement -- ignoring the
+# patterns is the durable fix. All generated artifacts; nothing here is source.
+python_scripts/Intraday_Bot_Logs_*/
+python_scripts/Intraday_Data_*/
+python_scripts/Swing_Bot_Logs_*/
+python_scripts/Swing_Data_*/
+python_scripts/*_trade_history.db
