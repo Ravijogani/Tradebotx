@@ -3900,7 +3900,8 @@ def detect_3c_setup(df: 'pd.DataFrame', direction: str) -> dict:
 
 def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                       df_h1: Optional['pd.DataFrame'] = None,
-                      df_d1: Optional['pd.DataFrame'] = None) -> dict:
+                      df_d1: Optional['pd.DataFrame'] = None,
+                      last_bar_closed: bool = True) -> dict:
     """
     Swappy 3C Momentum Setup -- trend continuation, NOT reversal.
 
@@ -3946,13 +3947,42 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
     empty = {"confirmed": False, "pattern": "NONE", "strength": 0.0,
              "reason": "", "entry_level": 0.0}
 
-    if df is None or len(df) < 5:
+    if df is None:
+        return empty
+
+    # CLOSED CANDLES ONLY.
+    #
+    # The live loop feeds copy_rates_from_pos(symbol, tf, 0, N), whose bar 0
+    # is the bar still forming. The backtest's dataset.window() returns rows
+    # strictly BEFORE as_of, i.e. closed bars only. So the same function was
+    # reading a live, mutating C3 in production and a settled C3 in the
+    # backtest -- the two were never measuring the same pattern.
+    #
+    # A forming C3 is not a decision, it is a snapshot. "C3 pulled back and
+    # failed to break C1" is a claim about a finished candle; two minutes into
+    # that candle it can be true and by the close be false. Evaluated live it
+    # re-answered on every scan for five minutes, which is how one setup on
+    # USDCADm turned into ~25 identical stop orders on 2026-08-18.
+    #
+    # Callers whose last row is still forming pass last_bar_closed=False and
+    # it is dropped here, once, so every downstream .iloc[-1] in this function
+    # (avg_body, ATR, the market-intelligence reads) shifts with it.
+    if not last_bar_closed and len(df) > 1:
+        _attrs = dict(getattr(df, 'attrs', {}) or {})
+        df = df.iloc[:-1]
+        try:
+            df.attrs.update(_attrs)   # attrs carry the symbol for the journal
+        except Exception:
+            pass
+
+    if len(df) < 5:
         return empty
 
     try:
         c1 = df.iloc[-3]
         c2 = df.iloc[-2]
         c3 = df.iloc[-1]
+        _setup_candle_time = df['time'].iloc[-1] if 'time' in getattr(df, 'columns', []) else None
 
         avg_body = float(abs(df['close'] - df['open']).rolling(20).mean().iloc[-1]) or 1e-9
 
@@ -4075,6 +4105,7 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     "journal": _sj.to_dict(),
                     "strength": min(1.0, strength),
                     "entry_level": entry_level,       # C3 close = initial reference
+                    "setup_candle_time": _setup_candle_time,
                     "stop_entry":  _setup_high,        # Buy Stop: place order above this
                     "setup_high":  _setup_high,
                     "setup_low":   _setup_low,
@@ -4140,6 +4171,7 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                     "journal": _sj.to_dict(),
                     "strength": min(1.0, strength),
                     "entry_level": entry_level,
+                    "setup_candle_time": _setup_candle_time,
                     "stop_entry":  _setup_low,         # Sell Stop: place order below this
                     "setup_high":  _setup_high,
                     "setup_low":   _setup_low,
@@ -11003,7 +11035,13 @@ def ai_trading_session():
                 # in-trend consolidation the M5 auction read can score as
                 # BALANCE even in a correct setup.
                 if not setup:
-                    _sw = detect_swappy_3c(df_m5, _trade_direction, df_h1, _df_d1_liq)
+                    # last_bar_closed=False: df_m5 comes from
+                    # copy_rates_from_pos(..., 0, N), so its final row is the
+                    # bar still forming. See detect_swappy_3c's own comment --
+                    # the backtest feeds it closed bars, and until now the two
+                    # were reading different candles for C3.
+                    _sw = detect_swappy_3c(df_m5, _trade_direction, df_h1, _df_d1_liq,
+                                           last_bar_closed=False)
                     if _sw['confirmed']:
                         # Location check: near M5 support (BUY) or resistance (SELL)
                         _recent_hi = float(df_m5['high'].iloc[-20:-1].max())
@@ -11021,12 +11059,40 @@ def ai_trading_session():
                             # the market has proven it won't give price away there cheaply.
                             _sw_low  = float(_sw.get('setup_low',  _cur_price - _atr_m5))
                             _sw_high = float(_sw.get('setup_high', _cur_price + _atr_m5))
-                            _sw_allowed, _sw_reason = can_take_swappy_entry(
-                                symbol, _trade_direction, _sw_low, _sw_high)
-                            if not _sw_allowed:
-                                logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_trade_direction} blocked -- {_sw_reason}")
-                                state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                            # ONE ORDER PER SETUP CANDLE.
+                            #
+                            # Swappy self-executes and `continue`s below, so it
+                            # never reaches the shared same-candle guard further
+                            # down this loop (search state.last_trade_candle) --
+                            # the reason a single setup could re-fire on every
+                            # ~5s scan. C3 is now a closed candle, so it stays
+                            # confirmed for the whole of the NEXT candle;
+                            # latching on its timestamp means the setup gets one
+                            # order, and a genuinely new setup on a new candle
+                            # is still free to take its own.
+                            if not hasattr(state, 'swappy_last_setup'):
+                                state.swappy_last_setup = {}
+                            _sw_ct = _sw.get('setup_candle_time')
+                            _sw_repeat = (_sw_ct is not None
+                                          and state.swappy_last_setup.get(symbol) == _sw_ct)
+
+                            if _sw_repeat:
+                                # Falls through rather than `continue`-ing: Swappy is
+                                # done with this symbol for this candle, but the
+                                # strategies below it (AOX) have not had their turn
+                                # and should not be blocked by Swappy's latch.
+                                logger.debug(f"[SWAPPY 3C] {symbol}: setup already actioned "
+                                             f"for candle {_sw_ct} -- not re-placing")
+                                state._rej['same_candle'] = state._rej.get('same_candle', 0) + 1
+                                _sw_allowed, _sw_reason = False, 'already actioned this candle'
                             else:
+                                _sw_allowed, _sw_reason = can_take_swappy_entry(
+                                    symbol, _trade_direction, _sw_low, _sw_high)
+                                if not _sw_allowed:
+                                    logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_trade_direction} blocked -- {_sw_reason}")
+                                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+
+                            if _sw_allowed:
                                 if _sw_reason != 'first_setup':
                                     logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_sw_reason} -- entry allowed")
                                 # SL: last swing extreme in last 15 bars + trap-aware buffer.
@@ -11054,6 +11120,8 @@ def ai_trading_session():
                                     account_equity=account_info.equity, df_m5=df_m5,
                                 )
                                 if _sw_placed:
+                                    if _sw_ct is not None:
+                                        state.swappy_last_setup[symbol] = _sw_ct
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
                                                 f"at {_sw['stop_entry']:.4f} (near_support={_near_support} near_resist={_near_resist})")
                                     state.daily_trades += 1
