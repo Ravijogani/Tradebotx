@@ -10008,6 +10008,32 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
     found. Optional (not required) so any other caller passing only the
     original required arguments keeps working exactly as before.
     """
+    # ONE RESTING ORDER PER SYMBOL -- last line of defence.
+    #
+    # The scan loop now counts pending orders as committed risk, but this is
+    # the function that actually touches MT5, so it refuses duplicates itself
+    # too. Without this, ~25 identical SELL_STOPs accumulated on USDCADm on
+    # 2026-08-18 and filled simultaneously at 13:10:44, taking margin to 104%
+    # and tripping the circuit breaker.
+    #
+    # Checked against the broker rather than against state.swappy_pending: the
+    # broker is the truth after a restart, and an order this bot forgot about
+    # is exactly the one that would otherwise be duplicated.
+    try:
+        _existing = mt5.orders_get(symbol=symbol) or []
+        _mine = [o for o in _existing if getattr(o, 'magic', None) == MAGIC_NUMBER]
+        if _mine:
+            logger.info(f"[SWAPPY 3C] {symbol}: already has {len(_mine)} pending "
+                        f"order(s) on the book -- refusing to stack another")
+            return False
+    except Exception as _e:
+        # Fail CLOSED here, unlike most guards in this file. If we cannot see
+        # the order book we cannot know whether this would be a duplicate, and
+        # the cost of a wrong "yes" is the incident described above.
+        logger.warning(f"[SWAPPY 3C] {symbol}: cannot read pending orders ({_e}) "
+                       f"-- refusing to place blind")
+        return False
+
     # BAN/UNBAN GAP FIX: Swappy self-executes and `continue`s straight past
     # the main loop's shared setup-pipeline ban check (~line 8763, which only
     # ever sees setup dicts built by Shaakuni SSM / EMA scalp), so the
@@ -10549,6 +10575,12 @@ def ai_trading_session():
                 if check_emergency_conditions(account_info):
                     logger.critical("EMERGENCY CIRCUIT BREAKER TRIPPED. Stopping bot.")
                     send_heartbeat(status='stopped', mt5_connected=True, error_message="Emergency Stop Triggered")
+                    # Tell the DASHBOARD, not just the heartbeat table. Without
+                    # this the row kept is_running=true with a live PID after the
+                    # breaker fired on 2026-08-18, so the UI showed "1 Running"
+                    # for hours while nothing was managing the account.
+                    bot_control.mark_bot_stopped(supabase, USER_ID, STRATEGY_ID,
+                                                 'emergency_circuit_breaker')
                     send_telegram_notification(" <b>EMERGENCY STOP</b>\n\nBot has been halted due to safety violations.")
                     break
                 state._last_emergency_time = time.time()
@@ -10649,6 +10681,40 @@ def ai_trading_session():
             open_positions = mt5.positions_get()
             my_bot_positions = [p for p in open_positions if p.magic == MAGIC_NUMBER] if open_positions else []
 
+            # PENDING ORDERS COUNT AS COMMITTED RISK.
+            #
+            # They were invisible here, and it cost real money. The per-symbol
+            # guard below asked "do I already have a POSITION on this symbol?"
+            # -- a Swappy stop order sitting on the book is not a position, so
+            # every cycle answered no and placed another one. Live result on
+            # 2026-08-18: ~25 identical SELL_STOPs accumulated on USDCADm, all
+            # triggered together at 13:10:44 when price touched 1.38675, margin
+            # hit 104%, the circuit breaker fired, and all 25 closed at the same
+            # stop for -0.77 each.
+            #
+            # A resting stop order is a position the market has not filled yet.
+            # Counting it everywhere a position is counted is the fix.
+            #
+            # Read fail-CLOSED: if the order book cannot be read this cycle we
+            # do not know what is already committed, and scanning on with a
+            # blind spot is precisely how the duplicates stacked. Skip the
+            # cycle instead -- one missed scan costs nothing, one missed
+            # pending order cost 22.50 on a 150.00 account.
+            try:
+                _pending_orders = mt5.orders_get() or []
+            except Exception as _oe:
+                logger.warning(f"[EXPOSURE] cannot read pending orders ({_oe}) "
+                               f"-- skipping this scan rather than trading blind")
+                time.sleep(5); continue
+            my_bot_pending = [o for o in _pending_orders
+                              if getattr(o, 'magic', None) == MAGIC_NUMBER]
+            _committed_symbols = ({p.symbol for p in my_bot_positions}
+                                  | {o.symbol for o in my_bot_pending})
+            _committed_count = len(my_bot_positions) + len(my_bot_pending)
+            if my_bot_pending:
+                logger.debug(f"[EXPOSURE] {len(my_bot_positions)} open + "
+                             f"{len(my_bot_pending)} pending = {_committed_count} committed")
+
             # =========================================================
             # PRE-FLIGHT: MARKET STATE CHECK (ATR Chop Filter)
             # If M5 ATR < 70% of its 14-period average => market is CHOPPY.
@@ -10676,8 +10742,11 @@ def ai_trading_session():
                                                'same_candle','edge_ignore','throttle','position_exists']}
 
             for symbol in actual_symbols:
-                # Skip if bot already has an open position on this symbol
-                if any(pos.symbol == symbol and pos.magic == MAGIC_NUMBER for pos in my_bot_positions):
+                # Skip if this bot already has a position OR A PENDING ORDER on
+                # this symbol. Checking positions alone is what allowed ~25
+                # duplicate stop orders to stack on one symbol -- see the
+                # _committed_symbols comment above.
+                if symbol in _committed_symbols:
                     state._rej['position_exists'] += 1
                     continue
 
@@ -11223,9 +11292,13 @@ def ai_trading_session():
                     logger.debug(f"[SCAN] {symbol}: correlation blocked ({_corr_reason})")
                     continue
 
-                if len(my_bot_positions) >= config.MAX_CONCURRENT_TRADES:
+                # Counts pending orders too: MAX_CONCURRENT_TRADES is a limit on
+                # exposure, and an unfilled stop order is exposure that has not
+                # arrived yet.
+                if _committed_count >= config.MAX_CONCURRENT_TRADES:
                     if not cap_ctrl.allow_stacking(edge_score, regime, "EXPANSION"):
-                        logger.debug(f"[SCAN] {symbol}: stacking blocked (open={len(my_bot_positions)} edge={edge_score:.1f})")
+                        logger.debug(f"[SCAN] {symbol}: stacking blocked "
+                                     f"(committed={_committed_count} edge={edge_score:.1f})")
                         continue
 
                 if cap_ctrl.should_throttle_frequency(edge_score < 50):
@@ -11524,7 +11597,7 @@ def ai_trading_session():
 
                 # PORTFOLIO RISK CHECK: total risk across all open + this trade
                 # Prevent portfolio wipeout even if individual trades are sized correctly
-                _total_risk_pct = len(my_bot_positions) * config.BASE_RISK_PERCENT + final_risk
+                _total_risk_pct = _committed_count * config.BASE_RISK_PERCENT + final_risk
                 _max_portfolio_risk = 25.0  # Never exceed 3% total equity at risk
                 if _total_risk_pct > _max_portfolio_risk:
                     logger.warning(
@@ -11627,6 +11700,19 @@ def ai_trading_session():
             send_telegram_notification(f" <b>Critical Error</b>\n\nBot encountered an error: {e}")
             time.sleep(60)
     
+    # EVERY exit path lands here -- emergency breaker, remote stop, keyboard
+    # interrupt, fatal error. Marking the row stopped here rather than at each
+    # `break` guarantees the dashboard can never be left showing a running bot
+    # for a process that has ended, whatever ended it.
+    try:
+        if bot_control.mark_bot_stopped(supabase, USER_ID, STRATEGY_ID, 'shutdown'):
+            logger.info("[STOPPED] user_strategies marked stopped")
+        else:
+            logger.warning("[STOPPED] could not mark user_strategies stopped -- "
+                           "the dashboard may still show this bot as running")
+    except Exception as _e:
+        logger.warning(f"[STOPPED] mark_bot_stopped failed: {_e}")
+
     # Cleanup async systems
     if async_data_fetcher:
         async_data_fetcher.stop()

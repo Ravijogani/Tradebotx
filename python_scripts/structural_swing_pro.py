@@ -1428,6 +1428,17 @@ def swing_trading_session() -> None:
 
         time.sleep(5)
 
+    # EVERY exit path lands here. Marking the row stopped guarantees the
+    # dashboard cannot show a running bot for a process that has ended --
+    # the failure seen on the scalper on 2026-08-18, where the circuit
+    # breaker fired and the UI still read "1 Running" hours later.
+    try:
+        if bot_control.mark_bot_stopped(supabase, USER_ID, STRATEGY_ID, 'shutdown'):
+            logger.info("[STOPPED] user_strategies marked stopped")
+        else:
+            logger.warning("[STOPPED] could not mark user_strategies stopped")
+    except Exception as _e:
+        logger.warning(f"[STOPPED] mark_bot_stopped failed: {_e}")
     mt5.shutdown()
     logger.info("[FINISH] Bot shutdown complete")
 

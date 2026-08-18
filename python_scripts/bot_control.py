@@ -368,3 +368,40 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
                 'that confirm_bot_started() ran and that trigger-bot reached '
                 'the bot manager.'),
     )
+
+
+def mark_bot_stopped(supabase, user_id: str, strategy_id: str,
+                     reason: str = 'stopped') -> bool:
+    """
+    The mirror of confirm_bot_started: tell the platform this process is gone.
+
+    Without it the bot could exit and leave user_strategies still saying
+    is_running=true. Observed live on 2026-08-18: the circuit breaker fired at
+    18:41, the process shut down cleanly, and the dashboard went on showing
+    "1 Running" with a live PID for hours afterwards. The bot had sent a
+    HEARTBEAT with status='stopped', but nothing wrote the row the dashboard
+    actually reads.
+
+    That is the dangerous direction of the two. A dashboard that wrongly says
+    "stopped" is confusing; one that wrongly says "running" tells the operator
+    their account is being managed when nothing is watching it.
+
+    Unconditional by design -- no status guard. Whatever the row said, this
+    process is ending, and the row must reflect that. Returns True if the
+    write landed; failure is logged by the caller rather than raised, because
+    this runs on shutdown paths where raising would mask the real reason for
+    the exit.
+    """
+    try:
+        res = (supabase.table('user_strategies')
+               .update({'is_running': False,
+                        'status': 'stopped',
+                        'bot_pid': None,
+                        'stopped_at': datetime.now(timezone.utc).isoformat()})
+               .eq('user_id', user_id)
+               .eq('strategy_id', strategy_id)
+               .execute())
+        _confirmed_running.discard((user_id, strategy_id))
+        return bool(res.data)
+    except Exception:
+        return False
