@@ -2862,6 +2862,51 @@ def send_heartbeat(status: str = 'running', mt5_connected: bool = True, error_me
     ).start()
 
 
+def max_allowed_spread_price(symbol: str) -> float:
+    """
+    The "normal maximum" spread for a symbol, in PRICE units.
+
+    Two spike guards compared a raw price spread against
+    `SCALP_MAX_SPREAD_FX_PIPS * 0.0001` for every FX pair. That constant is
+    the pip size of a 5-digit pair (EURUSD, 1 pip = 0.0001) and is wrong by
+    100x for a 3-digit JPY pair, where 1 pip = 0.01.
+
+    So USDJPY's threshold came out as 0.00015 instead of 0.015, and a
+    completely ordinary 1.0-pip spread of 0.0100 scored as 67x normal:
+
+        [SPREAD SPIKE] USDJPYm order ABORTED: spread 0.0100 (67x normal)
+
+    Harmless while the bot traded only XAU/XAG/BTC/USOIL -- all of which take
+    the absolute-value branches above -- and live the moment USDJPYm and
+    GBPJPYm joined the symbol list. One guard blocked every JPY order; the
+    other CLOSED open JPY positions at a normal spread, turning a
+    protective feature into a guaranteed loss.
+
+    Pip size is derived from the symbol's own digits rather than assumed:
+    5/3-digit brokers quote a fractional pip so pip = point * 10, while
+    4/2-digit brokers quote whole pips so pip = point. The spread gate in
+    is_spread_acceptable() already used point-based conversion, which is why
+    it correctly PASSED the same spread these guards then rejected.
+    """
+    u = symbol.upper()
+    if 'XAGUSD' in u: return config.SCALP_MAX_SPREAD_XAGUSD
+    if 'XAUUSD' in u: return config.SCALP_MAX_SPREAD_XAUUSD
+    if 'USOIL' in u or 'OIL' in u: return config.SCALP_MAX_SPREAD_OIL
+    if 'BTC' in u: return config.SCALP_MAX_SPREAD_BTC
+    if 'ETH' in u: return config.SCALP_MAX_SPREAD_ETH
+
+    pip = 0.0001  # 5-digit FX default, used when MT5 can't tell us
+    try:
+        info = mt5.symbol_info(symbol)
+        point = getattr(info, 'point', None)
+        digits = getattr(info, 'digits', None)
+        if point:
+            pip = point * 10 if digits in (3, 5) else point
+    except Exception:
+        pass
+    return config.SCALP_MAX_SPREAD_FX_PIPS * pip
+
+
 def calculate_spread_correctly(symbol: str, tick) -> float:
     """
     FIX: Correct spread calculation for all asset types
@@ -5994,14 +6039,11 @@ def manage_all_positions():
                 _spread_now = _tick.ask - _tick.bid
                 _sym_u = _pos.symbol.upper()
                 # Get the "normal" max spread for this symbol
-                _normal_max = (
-                    config.SCALP_MAX_SPREAD_XAGUSD if 'XAGUSD' in _sym_u else
-                    config.SCALP_MAX_SPREAD_XAUUSD if 'XAUUSD' in _sym_u else
-                    config.SCALP_MAX_SPREAD_OIL    if 'USOIL'  in _sym_u else
-                    config.SCALP_MAX_SPREAD_BTC    if 'BTC'    in _sym_u else
-                    config.SCALP_MAX_SPREAD_ETH    if 'ETH'    in _sym_u else
-                    config.SCALP_MAX_SPREAD_FX_PIPS * 0.0001
-                )
+                # Was an inline chain ending in FX_PIPS * 0.0001, which is
+                # 100x too small on 3-digit JPY pairs -- it force-closed live
+                # JPY positions at an ordinary spread. See
+                # max_allowed_spread_price().
+                _normal_max = max_allowed_spread_price(_pos.symbol)
                 # If spread exceeds 8x normal maximum -> close trade NOW before SL spike hit
                 if _normal_max > 0 and _spread_now > _normal_max * 3:  # FIX: was 8x, reduced to 3x
                     logger.critical(
@@ -7553,15 +7595,9 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         # FINAL SPREAD RECHECK: re-validate spread using tick_final (freshest tick)
         # This catches spread spikes that occurred between the gate check and now.
         _final_spread = tick_final.ask - tick_final.bid
-        _sym_u_fc = symbol.upper()
-        _max_allowed = (
-            config.SCALP_MAX_SPREAD_XAGUSD if 'XAGUSD' in _sym_u_fc else
-            config.SCALP_MAX_SPREAD_XAUUSD if 'XAUUSD' in _sym_u_fc else
-            config.SCALP_MAX_SPREAD_OIL    if 'USOIL'  in _sym_u_fc else
-            config.SCALP_MAX_SPREAD_BTC    if 'BTC'    in _sym_u_fc else
-            config.SCALP_MAX_SPREAD_ETH    if 'ETH'    in _sym_u_fc else
-            config.SCALP_MAX_SPREAD_FX_PIPS * 0.0001
-        )
+        # See max_allowed_spread_price(): the old inline chain ended in
+        # FX_PIPS * 0.0001 and aborted every JPY-pair order at a normal spread.
+        _max_allowed = max_allowed_spread_price(symbol)
         if _final_spread > _max_allowed * 3:  # Allow 3x normal max before blocking
             logger.critical(
                 f"[SPREAD SPIKE BLOCKED] {symbol}: spread spiked to {_final_spread:.5f} "
