@@ -72,6 +72,36 @@ def ny_utc_offset_hours(when: datetime) -> int:
     return 4 if dst_start.date() <= when.date() < dst_end.date() else 5
 
 
+def ny_window_utc(now_utc: datetime,
+                  start_hm: Tuple[int, int],
+                  end_hm: Tuple[int, int]) -> Tuple[datetime, datetime]:
+    """
+    The UTC bounds of an arbitrary New York time-of-day window, for the
+    session containing `now_utc`.
+
+    Generalised from midnight_range_window so every macro window (08:30,
+    09:30, 10:00 ...) resolves through one DST-aware implementation rather
+    than each growing its own copy.
+
+    Always returns a window at or before `now_utc`: if today's has not
+    happened yet, the previous day's is returned. A window in the future
+    would be projected from bars that do not exist.
+    """
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    offset = ny_utc_offset_hours(now_utc)
+    ny_now = now_utc - timedelta(hours=offset)
+
+    start_ny = ny_now.replace(hour=start_hm[0], minute=start_hm[1],
+                              second=0, microsecond=0)
+    if ny_now < start_ny:
+        start_ny -= timedelta(days=1)
+    end_ny = start_ny.replace(hour=end_hm[0], minute=end_hm[1])
+    if end_ny <= start_ny:                     # window crosses NY midnight
+        end_ny += timedelta(days=1)
+    return start_ny + timedelta(hours=offset), end_ny + timedelta(hours=offset)
+
+
 def midnight_range_window(now_utc: datetime) -> Tuple[datetime, datetime]:
     """
     The UTC start/end of the 00:00-00:30 NY window for the session containing
@@ -83,19 +113,7 @@ def midnight_range_window(now_utc: datetime) -> Tuple[datetime, datetime]:
     trader is still watching. Returning a future window would silently
     produce levels from bars that do not exist.
     """
-    if now_utc.tzinfo is None:
-        now_utc = now_utc.replace(tzinfo=timezone.utc)
-    offset = ny_utc_offset_hours(now_utc)
-    ny_now = now_utc - timedelta(hours=offset)
-
-    start_ny = ny_now.replace(hour=OPENING_RANGE_START_NY[0],
-                              minute=OPENING_RANGE_START_NY[1],
-                              second=0, microsecond=0)
-    if ny_now < start_ny:                      # before midnight NY -> use yesterday's
-        start_ny -= timedelta(days=1)
-    end_ny = start_ny.replace(hour=OPENING_RANGE_END_NY[0],
-                              minute=OPENING_RANGE_END_NY[1])
-    return start_ny + timedelta(hours=offset), end_ny + timedelta(hours=offset)
+    return ny_window_utc(now_utc, OPENING_RANGE_START_NY, OPENING_RANGE_END_NY)
 
 
 def opening_range_from_bars(bars, now_utc: Optional[datetime] = None
