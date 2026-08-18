@@ -19,6 +19,7 @@ class FakeQuery:
     def eq(self, *a, **k): return self
     def in_(self, *a, **k): return self
     def limit(self, *a, **k): return self
+    def gte(self, *a, **k): return self
     def execute(self):
         if isinstance(self.store, Exception): raise self.store
         return FakeRes(self.store)
@@ -38,9 +39,21 @@ reset_cache()
 # "not confirmed started yet", and taking it literally made booting bots kill
 # themselves seconds after start (see test_startup_race.py). It is a stop when
 # the row says so, or once the bot has confirmed running.
-sb = FakeSupabase({'platform_settings': [], 'user_strategies': [{'is_running': False, 'status': 'stopped'}]})
+# A stop DURING LAUNCH now requires evidence a human asked for it -- an audit
+# row. Without one it is the dashboard's inference, which killed live bots two
+# seconds after start. See test_stop_authority.py for the full contract.
+sb = FakeSupabase({'platform_settings': [],
+                   'user_strategies': [{'is_running': False, 'status': 'stopped'}],
+                   'bot_audit_logs': [{'id': 1}]})
 sig = bc.check_remote_stop(sb, 'u1', 's1')
-check("is_running=False + status stopped -> StopSignal", sig is not None and sig.reason == 'remote_stop')
+check("is_running=False + status stopped + audit row -> StopSignal", sig is not None and sig.reason == 'remote_stop')
+
+reset_cache()
+sb = FakeSupabase({'platform_settings': [],
+                   'user_strategies': [{'is_running': False, 'status': 'stopped'}],
+                   'bot_audit_logs': []})
+check("is_running=False + status stopped, NO audit row -> keeps running",
+      bc.check_remote_stop(sb, 'u1', 's1') is None)
 
 # The emergency-stop guarantee: once running, a bare False stops INSTANTLY.
 reset_cache()

@@ -19,9 +19,10 @@ U, S = 'user-1', 'strat-1'
 
 class Q:
     """Minimal supabase double. Records update payloads; honours .eq filters."""
-    def __init__(self, row, settings=None, raise_on=None):
+    def __init__(self, row, settings=None, raise_on=None, audit=None):
         self.row = row; self.settings = settings or []
         self.raise_on = raise_on or set(); self.updates = []
+        self.audit = audit or []   # bot_audit_logs rows = evidence a HUMAN stopped it
     def table(self, name):
         self._t = name; self._filters = {}; self._payload = None; self._mode = 'select'; return self
     def select(self, *a): self._mode = 'select'; return self
@@ -29,10 +30,13 @@ class Q:
     def in_(self, *a): return self
     def eq(self, k, v): self._filters[k] = v; return self
     def limit(self, n): return self
+    def gte(self, k, v): return self
     def execute(self):
         if self._t in self.raise_on: raise RuntimeError("transport down")
         if self._t == 'platform_settings':
             return type('R', (), {'data': self.settings})
+        if self._t == 'bot_audit_logs':
+            return type('R', (), {'data': list(self.audit)})
         if self._mode == 'update':
             # emulate WHERE: all eq filters must match current row
             match = all(self.row.get(k) == v for k, v in self._filters.items()
@@ -81,19 +85,28 @@ check("latch: seen-true then false stops even with stale status", t4)
 
 # ---- 5. Stop pressed DURING launch (never confirmed) -> stop immediately.
 def t5():
-    q = Q({'is_running': False, 'status': 'stopped'})
+    # WITH evidence a human did it -> stop.
+    q = Q({'is_running': False, 'status': 'stopped'}, audit=[{'id': 1}])
     sig = bot_control.check_remote_stop(q, U, S)
     assert sig is not None, "ignored a Stop pressed during launch"
     assert sig.reason == 'remote_stop'
-check("stop during launch (status='stopped') -> stop, no grace", t5)
+    # WITHOUT evidence -> the dashboard guessed; keep running. This is the
+    # behaviour change that stopped bots dying 2s after launch.
+    bot_control.reset_state()
+    q2 = Q({'is_running': False, 'status': 'stopped'}, audit=[])
+    assert bot_control.check_remote_stop(q2, U, S) is None, "died on an inferred stop"
+check("stop during launch: honoured with audit row, ignored without", t5)
 
 # ---- 6. The guard must not resurrect a bot stopped during launch.
 def t6():
-    q = Q({'is_running': False, 'status': 'stopped'})   # user hit Stop first
-    assert bot_control.confirm_bot_started(q, U, S, 9) is False, "RESURRECTED a stopped bot"
+    # A genuine mid-launch Stop is now caught by check_remote_stop BEFORE the
+    # bot ever tries to claim the row -- the protection moved from a status
+    # guard to the caller, which is the only place the evidence exists.
+    q = Q({'is_running': False, 'status': 'stopped'}, audit=[{'id': 1}])
+    sig = bot_control.check_remote_stop(q, U, S)
+    assert sig is not None, "a real mid-launch Stop was not honoured"
     assert q.row['is_running'] is False and q.row['status'] == 'stopped'
-    assert bot_control.check_remote_stop(q, U, S) is not None
-check("confirm refuses to resurrect a bot stopped mid-launch", t6)
+check("a real mid-launch Stop halts the bot before it can claim the row", t6)
 
 # ---- 7. Grace EXPIRES: unconfirmed forever is a real failure, named distinctly.
 def t7():

@@ -48,6 +48,7 @@ DESIGN NOTES
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, NamedTuple, Optional
 
 
@@ -84,6 +85,52 @@ def reset_state() -> None:
     _first_check_at.clear()
 
 
+def explicit_stop_exists(supabase, user_id: str, strategy_id: str,
+                         since_epoch: float) -> Optional[bool]:
+    """
+    Did a HUMAN stop this bot since `since_epoch`, or did something merely
+    guess it was dead?
+
+    This distinction is the whole ballgame, and its absence is why bots kept
+    dying seconds after launch. `user_strategies.is_running` is used for two
+    incompatible jobs at once:
+
+      as a COMMAND   -- the user pressed Stop, the admin hit Emergency Stop
+      as TELEMETRY   -- something inferred "this bot looks dead" and wrote it
+
+    BotStatusSync (the dashboard, running in the user's browser) does the
+    second: it sees a stale bot_heartbeats row and writes is_running=false /
+    status='stopped'. During startup that inference is ALWAYS wrong, because
+    a bot that has not booted yet cannot have sent a heartbeat. Observed
+    live: started_at 19:00:35, stopped_at 19:00:37 -- the row was killed two
+    seconds in, before the Python process had finished importing.
+
+    Fixing each writer as it misbehaves is endless. Instead, tell the two
+    apart at the source. A real stop leaves an audit trail:
+
+      stop-trading-bot  -> INSERTs bot_audit_logs (action='stop')
+      BotStatusSync     -> writes no audit row at all (verified: zero
+                           references to bot_audit_logs in that component)
+
+    Returns True (a human stopped it), False (no evidence -- inference), or
+    None when the question could not be answered. None is NOT "no": callers
+    must decide deliberately, because guessing either way has a cost.
+    """
+    try:
+        since_iso = datetime.fromtimestamp(since_epoch, tz=timezone.utc).isoformat()
+        res = (supabase.table('bot_audit_logs')
+               .select('id')
+               .eq('user_id', user_id)
+               .eq('strategy_id', strategy_id)
+               .eq('action', 'stop')
+               .gte('created_at', since_iso)
+               .limit(1)
+               .execute())
+        return bool(res.data)
+    except Exception:
+        return None
+
+
 def confirm_bot_started(supabase, user_id: str, strategy_id: str,
                         pid: Optional[int] = None) -> bool:
     """
@@ -104,14 +151,26 @@ def confirm_bot_started(supabase, user_id: str, strategy_id: str,
 
     Returns True when this call flipped the row to running.
 
-    GUARDED on status='starting' so it cannot resurrect a bot that was
-    stopped during launch: every stop path (stop-trading-bot,
-    admin-stop-bots, the user's Stop button) writes status='stopped'
-    together with is_running=false, so if a stop landed first this update
-    matches no rows, returns False, and the bot then shuts down normally via
-    check_remote_stop. Without that guard, a Stop pressed during the launch
-    window would be silently undone by the starting bot.
+    Claims the row from 'starting' or from a 'stopped' that no human asked
+    for. It used to claim only from 'starting', which sounded safe and was
+    not: the dashboard writes status='stopped' by inference within seconds of
+    a launch, so the claim matched nothing and the bot then obeyed a stop
+    nobody issued.
+
+    Resurrecting a genuine stop is prevented by the CALLER, not by this
+    status guard -- check_remote_stop asks explicit_stop_exists() whether a
+    human actually stopped the bot and shuts down before ever calling this.
+    That is the right place for the decision, because only there is the
+    evidence (an audit row) available.
     """
+    # Claim the row from 'starting' OR from a 'stopped' that no human asked
+    # for. The guard used to be status='starting' alone, which meant the
+    # dashboard's bogus 'stopped' write (see explicit_stop_exists) made this
+    # match nothing -- the bot could not claim its own row and then obeyed
+    # the very stop that should never have been written. Claiming from
+    # 'stopped' is safe only because a human stop is detected separately and
+    # checked by the caller before we get here.
+    claimable = ('starting', 'stopped')
     try:
         res = (supabase.table('user_strategies')
                .update({'is_running': True,
@@ -120,7 +179,7 @@ def confirm_bot_started(supabase, user_id: str, strategy_id: str,
                         'stopped_at': None})
                .eq('user_id', user_id)
                .eq('strategy_id', strategy_id)
-               .eq('status', 'starting')
+               .in_('status', list(claimable))
                .execute())
     except Exception:
         # Fail OPEN, consistent with the rest of this module: if we cannot
@@ -262,13 +321,41 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
 
     status = (rows[0].get('status') or '').strip().lower()
 
-    if key in _confirmed_running or status in ('stopped', 'stopping'):
+    # ALREADY RUNNING: stop instantly, no questions, no grace. An emergency
+    # stop on an open position must never wait, and once we have been running
+    # a false here can only mean somebody turned us off.
+    if key in _confirmed_running:
         return StopSignal(
             reason='remote_stop',
             detail=('user_strategies.is_running is false -- stopped from the '
                     'dashboard (user Stop, admin per-bot Stop, admin '
                     'Emergency Stop All, or the stop-trading-bot function)'),
         )
+
+    # STILL LAUNCHING: a 'stopped' row here is far more often the dashboard
+    # guessing than a person deciding, so require evidence before dying.
+    # Asked only in this narrow window, so the running-bot path above stays
+    # a plain two-column read.
+    if status in ('stopped', 'stopping'):
+        human = explicit_stop_exists(supabase, user_id, strategy_id, first_seen)
+        if human:
+            return StopSignal(
+                reason='remote_stop',
+                detail=('stopped during launch by an explicit user/admin action '
+                        '(bot_audit_logs recorded a stop)'),
+            )
+        if human is False:
+            # No audit row: inference, not a command. Say so loudly -- this is
+            # the failure that repeatedly killed bots seconds after start, and
+            # a silent recovery would hide that it is still happening.
+            return None
+        # human is None -- the audit table could not be read. Do not guess.
+        # Carrying on is the safer error here: the admin's Emergency Stop All
+        # only ever targets `.eq('is_running', true)`, so it cannot be aimed at
+        # a bot that has not confirmed yet, and a real Stop also kills the
+        # process out-of-band via the bot manager. Refusing to start, by
+        # contrast, is the exact breakage being fixed.
+        return None
 
     if now - first_seen < startup_grace_seconds:
         return None  # launch not confirmed yet -- not a stop instruction
