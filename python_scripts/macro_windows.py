@@ -11,7 +11,7 @@ changes between windows is only the leg the tool is stretched across:
 
     window        execute (NY)     SD anchored on
     ------------  ---------------  --------------------------------------
-    MIDNIGHT      00:00-00:30      the 00:00-00:30 opening range itself
+    DAYLIGHT      00:00-00:30      the 00:00-00:30 opening range itself
     MACRO_0830    08:30-08:45      the 08:30 news reaction candle (5m)
     NY_OPEN       09:30-09:45      the 08:30 news swing (08:30-09:30)
     TEN_AM        10:00-10:05      the 09:30-09:59 opening leg
@@ -57,7 +57,13 @@ CONTINUATION_ZONE = (1.0, 1.5)
 
 # execute = when a setup may be taken; anchor = the leg the SD tool spans.
 WINDOWS: Dict[str, Dict[str, Tuple[Tuple[int, int], Tuple[int, int]]]] = {
-    'MIDNIGHT':   {'execute': ((0, 0), (0, 30)),   'anchor': ((0, 0), (0, 30))},
+    # DAYLIGHT, not "midnight": 00:00 NY is the daylight open in this
+    # framework. The midnight open is 18:00 NY -- the start of the new
+    # trading day -- and it does NOT belong here, because the midnight /
+    # daylight OPENING strategy does not use standard deviation at all. It
+    # runs on fake momentum -> liquidity sweep -> MSS -> FVG/extreme OB.
+    # See session_opens.py.
+    'DAYLIGHT':   {'execute': ((0, 0), (0, 30)),   'anchor': ((0, 0), (0, 30))},
     'MACRO_0830': {'execute': ((8, 30), (8, 45)),  'anchor': ((8, 30), (8, 35))},
     'NY_OPEN':    {'execute': ((9, 30), (9, 45)),  'anchor': ((8, 30), (9, 30))},
     'TEN_AM':     {'execute': ((10, 0), (10, 5)),  'anchor': ((9, 30), (9, 59))},

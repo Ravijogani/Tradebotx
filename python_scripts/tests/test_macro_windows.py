@@ -27,7 +27,7 @@ JAN = datetime(2026, 1, 15, 16, 0, tzinfo=timezone.utc)   # EST day, UTC-5
 # ---------- windows resolve to the right UTC, DST-aware ----------
 def t1():
     for name, (h, m) in (('MACRO_0830', (12, 30)), ('NY_OPEN', (13, 30)),
-                         ('TEN_AM', (14, 0)), ('MIDNIGHT', (4, 0))):
+                         ('TEN_AM', (14, 0)), ("DAYLIGHT", (4, 0))):
         s, _ = mw.window_bounds(name, AUG, 'execute')
         assert (s.hour, s.minute) == (h, m), f"{name} EDT -> {s.hour}:{s.minute:02d}"
 check("EDT: 08:30/09:30/10:00/00:00 NY map to 12:30/13:30/14:00/04:00 UTC", t1)
