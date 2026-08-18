@@ -8927,13 +8927,19 @@ def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
                 if spike_dist < atr * 0.5:
                     continue  # too small, just noise
 
-                # SD filter: spike must reach at least -2.0 SD (institutional depth)
-                # -2.0 SD for bearish = ref_high + 2.0 * ref_range (above range)
-                sd_neg2_level = ref_high + ref_range * 2.0
-                reached_sd2   = spike_high >= sd_neg2_level * 0.85  # 85% tolerance
-                # Extreme zone check
-                sd_neg4_level = ref_high + ref_range * 4.0
-                reached_sd4   = spike_high >= sd_neg4_level * 0.85
+                # SD filter: spike must reach at least -2.0 SD (institutional depth).
+                #
+                # The tolerance applies to the DISTANCE travelled beyond the
+                # range, never to the absolute price. `spike_high >=
+                # sd_neg2_level * 0.85` compared a price against 85% OF A
+                # PRICE: on XAUUSD around 4400 with a 5-point range, the -2 SD
+                # level is ~4405 and 85% of it is ~3744, so the test passed for
+                # literally any spike. The filter meant to demand institutional
+                # depth never rejected anything, and because reached_sd4 was
+                # equally always-true, every AOX entry also took the 35%
+                # "major reversal zone" allocation instead of 25%.
+                reached_sd2 = spike_dist >= (ref_range * 2.0) * 0.85
+                reached_sd4 = spike_dist >= (ref_range * 4.0) * 0.85
 
                 return {
                     'type':         'BEARISH',
@@ -8953,10 +8959,10 @@ def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
                 if spike_dist < atr * 0.5:
                     continue
 
-                sd_neg2_level = ref_low - ref_range * 2.0
-                reached_sd2   = spike_low <= sd_neg2_level * 1.15  # tolerance
-                sd_neg4_level = ref_low - ref_range * 4.0
-                reached_sd4   = spike_low <= sd_neg4_level * 1.15
+                # Same fix as the bearish branch: tolerance on the distance
+                # travelled below the range, not on the absolute price.
+                reached_sd2 = spike_dist >= (ref_range * 2.0) * 0.85
+                reached_sd4 = spike_dist >= (ref_range * 4.0) * 0.85
 
                 return {
                     'type':          'BULLISH',
