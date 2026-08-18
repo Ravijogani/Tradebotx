@@ -1265,6 +1265,78 @@ The sample is still 18–40 trades on one instrument in one window. This is the
 best available evidence, not a settled answer — re-run all three rows once
 more symbols have been exported.
 
+### The other three spec divergences (2026-08-18)
+
+Comparing the code against the published spec turned up four gaps, not one.
+The body filter above was the first; here are the rest, all now closed.
+
+**#2 — candle 3 must be a shallow pullback.** The spec calls C3 "a shallow
+pullback or retest candle… a healthy pause before the next wave". The code
+required only that C3 be the opposite colour and close inside C1's extreme, so
+a candle that gave back the entire impulse still qualified — which is not a
+pause, it is the move failing. Now two structural tests, both proportional to
+the impulse rather than tuned constants:
+
+- C3's body must be smaller than the larger of the two impulse legs;
+- C3 must not retrace more than half of the C1→C2 impulse (50% is the
+  pattern's own midpoint, already used for the `c3_above_mid` bonus).
+
+Behind `config.SWAPPY_REQUIRE_SHALLOW_C3` (default **True**) because it is the
+one change here with a judgement call in it — it cuts frequency, and C1 is
+already the decisive gate for 94.8% of Swappy's rejections. Flip the flag to
+A/B it without redeploying.
+
+**#3 — the stop was not on the 3-candle structure.** The spec puts it "beyond
+the invalidation wick/level of the 3-candle structure"; `compute_swappy_sl()`
+scanned the last **fifteen** bars. That extreme is by definition at or beyond
+the 3-candle one and usually well beyond it, so the stop was too wide — and
+because `find_swappy_structural_tp()` takes `sl_dist` as its input, the target
+was pushed out with it. Wider stop, smaller lot, more distant TP, all from one
+window size. Now `df.iloc[-3:]`, with the existing trap-aware buffer unchanged
+and a new `SWAPPY_MIN_SL_ATR = 0.5` floor so three tight candles cannot produce
+a near-zero stop distance and a correspondingly enormous lot. That floor is a
+safety guard, not a tuned parameter.
+
+Both `compute_swappy_sl()` and `detect_swappy_3c()` now take `last_bar_closed`,
+so the stop is measured from exactly the three candles the pattern matched —
+live (forming last bar) and backtest (`window()` is closed-only) alike.
+
+**#4 — the reversal variant did not exist.** The spec's second pattern is
+impulse → indecision → confirmation, the mirror of the continuation variant:
+that one trades *with* the impulse, this one *against* it. Now
+`detect_swappy_reversal()` + `compute_swappy_reversal_sl()`:
+
+| | C1 | C2 | C3 |
+|---|---|---|---|
+| Test | strong impulse **against** the trade, body ≥70% and ≥0.5×avg | body ≤35% of its range **and** ≤50% of C1's body | closes past C1's **midpoint** with body ≥0.8×avg |
+
+C3 is itself the confirmation, so the entry is a market order at its close —
+no resting order, which is the structural difference from the continuation
+variant's stop entry. `direction` is the *trade's*, so C1 is checked for the
+opposite; getting that backwards would detect continuations and label them
+reversals, and there is a test pinning it.
+
+Two deliberate choices worth recording:
+
+- **Default OFF** (`config.ENABLE_SWAPPY_REVERSAL = False`). It has never
+  traded and never been backtested; shipping it enabled would put an unmeasured
+  strategy on a live account.
+- **It does not self-execute.** It builds a `setup` dict and goes through the
+  shared pipeline like SSM and EMA scalp. Every Swappy bug found so far — the
+  skipped ban check, the skipped lesson check, the skipped same-candle guard,
+  each discovered separately — traces to the continuation variant placing its
+  own order and `continue`-ing past that pipeline. A new entry path is the
+  worst place to reintroduce a bypass.
+
+Registered as `StrategyAdapter("SWAPPY_REVERSAL", live=False, …)` so it can be
+**measured before anyone turns it on** — the thing that could not be done for
+any other strategy in this file when it first shipped. Run it against real
+bars before flipping the flag.
+
+Note the live path is H4-aligned (`_trade_direction`), so what it actually
+detects is a counter-trend push that stalled and reversed *back into* the
+higher-timeframe bias — a reversal of the pullback, not a fight with the trend.
+
 ### Live exit attribution — closing the loop the LIVE bot was missing
 
 The entry reasoning and the exit attribution built above had one asymmetry

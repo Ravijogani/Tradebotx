@@ -375,10 +375,66 @@ def _adapt_ema_scalp_cross(bot, dataset: HistoricalDataset, as_of, symbol):
                            journal=r.get("journal"))
 
 
+def _adapt_swappy_reversal(bot, dataset: HistoricalDataset, as_of, symbol):
+    """
+    STRATEGY B2 -- the published Swappy 3C REVERSAL variant (impulse ->
+    indecision -> confirmation). Mirrors the live call site: H4-aligned
+    direction, so what this measures is a counter-trend push that stalled and
+    reversed back into the higher-timeframe bias.
+
+    `live=False` in the registry below, matching reality: the live path is
+    behind config.ENABLE_SWAPPY_REVERSAL, which defaults OFF. It is registered
+    here precisely so it can be measured BEFORE anyone turns it on -- the
+    thing that could not be done for any of the other strategies when they
+    first shipped.
+
+    order_type MARKET with no limit_entry: C3 is itself the confirmation, so
+    the entry is at the close of the bar that confirmed it. There is no
+    resting order and nothing to wait for, which is the whole structural
+    difference from the continuation variant's stop entry.
+    """
+    with replay_context(bot, dataset, as_of):
+        trend = _get_trend(bot, dataset, as_of, symbol)
+        if trend not in ("BULLISH", "BEARISH"):
+            return None
+        direction = "BUY" if trend == "BULLISH" else "SELL"
+        df_m5 = dataset.window("M5", as_of, 80)
+        if len(df_m5) < 20:
+            return None
+        # No last_bar_closed here: dataset.window() returns rows strictly
+        # before as_of, so its final row is already closed. Passing False
+        # would drop a real candle and read the pattern one bar stale.
+        r = bot.detect_swappy_reversal(df_m5, direction)
+        if not r.get("confirmed"):
+            return None
+        atr = float(bot.calculate_atr(df_m5['high'], df_m5['low'],
+                                      df_m5['close'], 14).iloc[-1])
+        sl = bot.compute_swappy_reversal_sl(df_m5, direction, atr)
+        entry = float(df_m5['close'].iloc[-1])
+        sl_dist = abs(entry - sl)
+        if sl_dist <= 0:
+            return None
+        # Same wrong-side guard the live call site applies -- a stop that
+        # inverts after the buffer would otherwise be "filled" instantly by
+        # the engine and score as a loss the strategy never actually took.
+        if (direction == "BUY" and sl >= entry) or (direction == "SELL" and sl <= entry):
+            return None
+        tp = bot.find_swappy_structural_tp(df_m5, direction, entry, sl_dist)
+        if tp is None:
+            tp = entry + sl_dist * 3.0 if direction == "BUY" else entry - sl_dist * 3.0
+    return StrategyResult(direction=direction, stop_loss=sl,
+                           reason=f"SWAPPY_REVERSAL_{r['pattern']}",
+                           confidence=r.get("strength", 0.0),
+                           order_type="MARKET", take_profit=tp,
+                           journal=r.get("journal"))
+
+
 STRATEGIES_LIVE = [
     StrategyAdapter("SHAAKUNI_SSM", True, _adapt_shaakuni_ssm),
     StrategyAdapter("SWAPPY_3C", True, _adapt_swappy_3c),
     StrategyAdapter("EMA_SCALP_CROSS", True, _adapt_ema_scalp_cross),
+    # live=False: gated behind config.ENABLE_SWAPPY_REVERSAL, default OFF.
+    StrategyAdapter("SWAPPY_REVERSAL", False, _adapt_swappy_reversal),
 ]
 
 ALL_STRATEGIES = STRATEGIES_LIVE

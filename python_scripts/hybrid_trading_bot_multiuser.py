@@ -810,6 +810,22 @@ class AITradingConfig:
     # Shaakuni midnight/daylight OPENING strategy (session-open trap).
     # Independent of the SD/AOX model -- see strategy_shaakuni_opening().
     ENABLE_STRATEGY_SSM_OPENING: bool = True
+    # Swappy 3C: require candle 3 to be a SHALLOW pullback, per the published
+    # spec ("a shallow pullback or retest candle... a healthy pause before the
+    # next wave"). Without it any opposite-colour candle qualified, including
+    # one that gave back the entire impulse -- which is not a pause, it is the
+    # move failing. Behind a flag because it is the one Swappy change with a
+    # judgement call in it: it cuts trade frequency, and the strategy already
+    # dies on C1 for 94.8% of its rejections. Set False to A/B it live without
+    # redeploying.
+    SWAPPY_REQUIRE_SHALLOW_C3: bool = True
+    # Swappy 3C REVERSAL variant (impulse -> indecision -> confirmation), the
+    # published spec's second pattern. Distinct from the continuation variant
+    # above and from detect_3c_setup() (which is SSM's sweep confirmation).
+    # Default OFF: it is a new entry path that has never traded or been
+    # backtested, and enabling it by default would put an unmeasured strategy
+    # on a live account. Turn on deliberately -- see detect_swappy_reversal().
+    ENABLE_SWAPPY_REVERSAL: bool = False
     # "Distance Rule" from the 9/15/50/200 EMA framework spec: the 9/25
     # cluster must be meaningfully separated from the 50 EMA before a cross
     # is considered tradeable -- when they're bunched/braided (ranging
@@ -4080,11 +4096,33 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
             # C3 red but fails to close below C1 low (bears rejected)
             c3_red = is_red(c3)
             c3_holds = c3['close'] > c1['low']
+            # SHALLOW PULLBACK (spec: "a shallow pullback or retest candle...
+            # a healthy pause before the next wave"). Two structural tests,
+            # both measured against the impulse itself rather than a tuned
+            # constant, because "shallow" is a statement about proportion:
+            #   - the pullback body must be smaller than the larger impulse
+            #     leg. A pullback bigger than the move it interrupts is not a
+            #     pause, it is the move failing.
+            #   - it must not retrace more than half of the C1->C2 impulse.
+            #     50% is the pattern's own midpoint, already used two lines
+            #     below as the c3_above_mid strength bonus.
+            _impulse = float(c2['close']) - float(c1['open'])
+            _c3_small = body(c3) < max(body(c1), body(c2))
+            _c3_half  = (_impulse <= 0 or
+                         float(c3['close']) >= float(c2['close']) - _impulse * 0.5)
+            c3_shallow = (not config.SWAPPY_REQUIRE_SHALLOW_C3) or (_c3_small and _c3_half)
             # Bonus: C3 closes above the midpoint of C1 (strong rejection)
             c3_above_mid = c3['close'] > (c1['low'] + c1['high']) / 2
 
             _leg_notes(c1_green, c2_green, higher_low, c3_red, c3_holds, 'higher_low')
-            if c1_green and c2_green and higher_low and c3_red and c3_holds:
+            _sj.note(dj.TRIGGER, 'c3_shallow',
+                     dj.CONFIRMED if c3_shallow else dj.VETO,
+                     ('C3 is a pause: body smaller than the impulse leg and '
+                      'retracing less than half of it' if c3_shallow else
+                      'C3 gave back too much of the impulse to be a pause -- '
+                      'the move is failing, not resting'),
+                     value=round(body(c3) / max(body(c1), body(c2), 1e-9), 3))
+            if c1_green and c2_green and higher_low and c3_red and c3_holds and c3_shallow:
                 strength = 0.65
                 if c3_above_mid: strength += 0.15
                 if body(c2) > avg_body * 1.1: strength += 0.10
@@ -4155,10 +4193,23 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
             lower_high = c2['high'] <= c1['high'] * 1.0005
             c3_green = is_green(c3)
             c3_holds = c3['close'] < c1['high']
+            # Shallow pullback -- mirror of the BUY leg, see its comment.
+            _impulse = float(c1['open']) - float(c2['close'])
+            _c3_small = body(c3) < max(body(c1), body(c2))
+            _c3_half  = (_impulse <= 0 or
+                         float(c3['close']) <= float(c2['close']) + _impulse * 0.5)
+            c3_shallow = (not config.SWAPPY_REQUIRE_SHALLOW_C3) or (_c3_small and _c3_half)
             c3_below_mid = c3['close'] < (c1['low'] + c1['high']) / 2
 
             _leg_notes(c1_red, c2_red, lower_high, c3_green, c3_holds, 'lower_high')
-            if c1_red and c2_red and lower_high and c3_green and c3_holds:
+            _sj.note(dj.TRIGGER, 'c3_shallow',
+                     dj.CONFIRMED if c3_shallow else dj.VETO,
+                     ('C3 is a pause: body smaller than the impulse leg and '
+                      'retracing less than half of it' if c3_shallow else
+                      'C3 gave back too much of the impulse to be a pause -- '
+                      'the move is failing, not resting'),
+                     value=round(body(c3) / max(body(c1), body(c2), 1e-9), 3))
+            if c1_red and c2_red and lower_high and c3_green and c3_holds and c3_shallow:
                 strength = 0.65
                 if c3_below_mid: strength += 0.15
                 if body(c2) > avg_body * 1.1: strength += 0.10
@@ -4225,7 +4276,18 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
         return {**empty, "reason": f"Swappy error: {e}"}
 
 
-def compute_swappy_sl(df_m5: 'pd.DataFrame', direction: str, atr_m5: float) -> float:
+# Safety floor on the Swappy stop distance, as an ATR multiple.
+#
+# Not a tuned strategy parameter -- a guard against degenerate position sizes.
+# The stop now sits on the 3-candle structure, and three tight candles can span
+# almost nothing; risk % / stop distance = lots, so a 2-pip structure would ask
+# for an enormous position. This is the floor below which the structure is too
+# small to risk-size against, whatever the pattern says.
+SWAPPY_MIN_SL_ATR = 0.5
+
+
+def compute_swappy_sl(df_m5: 'pd.DataFrame', direction: str, atr_m5: float,
+                      last_bar_closed: bool = True) -> float:
     """
     Swappy's SL computation, extracted so the live main loop's STRATEGY B
     block and the backtest's _adapt_swappy_3c adapter call the exact same
@@ -4236,28 +4298,258 @@ def compute_swappy_sl(df_m5: 'pd.DataFrame', direction: str, atr_m5: float) -> f
     itself doesn't compute a SL, only the pattern match -- this is that
     missing piece, factored out to its own function.
 
-    TRAP-AWARE SL: was a flat atr*0.3 buffer regardless of how violent the
-    anchor candle's own wick was -- see adaptive_sl_buffer's docstring.
+    ON THE 3-CANDLE STRUCTURE, not a 15-bar window. The published Swappy 3C
+    spec puts the stop "beyond the invalidation wick/level of the 3-candle
+    structure"; this scanned the last FIFTEEN bars, whose extreme is by
+    definition at or beyond the 3-candle extreme and is usually well beyond
+    it. That hurt twice over: the wider distance shrank the lot for a given
+    risk %, and because find_swappy_structural_tp() takes sl_dist as its
+    input, it also pushed the target further away and made it less likely to
+    be reached. The invalidation level for this pattern is the 3-candle
+    extreme -- past it, the "failed pullback" premise is simply wrong and
+    there is nothing left to be stopped out of.
+
+    TRAP-AWARE SL: the buffer beyond that extreme is not flat atr*0.3, it
+    scales with how violent the anchor candle's own wick was -- see
+    adaptive_sl_buffer's docstring.
+
+    last_bar_closed mirrors detect_swappy_3c: the live loop's final row is
+    still forming, the backtest's is not. Both must measure the SAME three
+    candles the pattern matched, or the stop belongs to a different setup
+    than the entry.
     """
-    scan = df_m5.iloc[-15:]
+    df = df_m5
+    if not last_bar_closed and len(df) > 1:
+        df = df.iloc[:-1]
+
+    scan = df.iloc[-3:]          # C1, C2, C3 -- the structure itself
+    floor = abs(atr_m5) * SWAPPY_MIN_SL_ATR
+
     if direction == 'BUY':
-        anchor_idx = scan['low'].idxmin()
-        anchor = scan.loc[anchor_idx]
+        extreme = float(scan['low'].min())
+        anchor = scan.loc[scan['low'].idxmin()]
         buf = adaptive_sl_buffer(
             float(anchor['low']), float(anchor['high']),
             float(anchor['open']), float(anchor['close']),
             'BUY', atr_m5 * 0.3,
         )
-        return float(scan['low'].min()) - buf
+        sl = extreme - buf
+        # Reference for the floor is the structure's own extreme, not the
+        # entry: the entry is a stop order at the OPPOSITE extreme and is not
+        # known here, and widening from the entry would silently re-introduce
+        # the too-wide stop this change exists to remove.
+        return min(sl, extreme - floor)
     else:
-        anchor_idx = scan['high'].idxmax()
-        anchor = scan.loc[anchor_idx]
+        extreme = float(scan['high'].max())
+        anchor = scan.loc[scan['high'].idxmax()]
         buf = adaptive_sl_buffer(
             float(anchor['low']), float(anchor['high']),
             float(anchor['open']), float(anchor['close']),
             'SELL', atr_m5 * 0.3,
         )
-        return float(scan['high'].max()) + buf
+        sl = extreme + buf
+        return max(sl, extreme + floor)
+
+
+
+def detect_swappy_reversal(df: 'pd.DataFrame', direction: str,
+                           last_bar_closed: bool = True) -> dict:
+    """
+    Swappy 3C REVERSAL variant -- the published spec's second pattern.
+
+        C1  a strong impulse candle in the PREVAILING direction (the pressure
+            about to be reversed -- red for a BUY, green for a SELL)
+        C2  a small-bodied indecision candle (doji / spinning top): the move
+            has run out of participants
+        C3  a powerful confirmation candle closing PAST C1's midpoint in the
+            new direction -- control has changed hands
+
+    Three functions in this file now begin with three candles, so it is worth
+    being explicit about which is which:
+
+        detect_swappy_3c()   CONTINUATION. Two trend legs, then a failed
+                             pullback. Trades WITH the impulse. Stop entry at
+                             the 3-candle extreme.
+        detect_3c_setup()    SSM's confirmation FILTER. Sweep -> displacement
+                             -> hold. Never an entry on its own; it grades a
+                             Shaakuni setup that already exists.
+        this one             REVERSAL. Impulse -> stall -> reversal. Trades
+                             AGAINST the impulse. C3 IS the confirmation, so
+                             the entry is a market order once it closes,
+                             not a resting order waiting for a break.
+
+    ENTRY SIDE. `direction` is the direction of the TRADE, so C1 is checked
+    for the opposite. Getting this backwards would make the function detect
+    continuations and label them reversals, which is why C1's own direction is
+    asserted first rather than inferred.
+
+    WHY C1's MIDPOINT AND NOT ITS OPEN. The spec allows either ("closing past
+    the opening or midpoint levels of the first candle"). The midpoint is the
+    stricter of the two for a full-bodied C1 and does not depend on where the
+    open happened to sit, so it behaves consistently across candles of
+    different shapes.
+
+    Returns the same shape as detect_swappy_3c so callers can treat them
+    alike, minus stop_entry/expiry_candles -- there is no resting order here.
+    """
+    empty = {"confirmed": False, "pattern": "NONE", "strength": 0.0,
+             "reason": "", "entry_level": 0.0}
+
+    if df is None:
+        return empty
+
+    # Same forming-bar contract as detect_swappy_3c -- see its comment. C3 is
+    # the confirmation candle and its CLOSE is the entire signal, so reading
+    # it half-formed would be reading a number that has not happened yet.
+    if not last_bar_closed and len(df) > 1:
+        _attrs = dict(getattr(df, 'attrs', {}) or {})
+        df = df.iloc[:-1]
+        try:
+            df.attrs.update(_attrs)
+        except Exception:
+            pass
+
+    if len(df) < 5:
+        return empty
+
+    try:
+        c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
+        _setup_candle_time = df['time'].iloc[-1] if 'time' in getattr(df, 'columns', []) else None
+
+        avg_body = float(abs(df['close'] - df['open']).rolling(20).mean().iloc[-1]) or 1e-9
+
+        def body(c):  return abs(float(c['close']) - float(c['open']))
+        def rng(c):   return float(c['high']) - float(c['low'])
+        def bpct(c):
+            r = rng(c)
+            return body(c) / r if r > 0 else 0.0
+
+        _sj = dj.DecisionJournal(getattr(df, 'attrs', {}).get('symbol', ''),
+                                 direction=direction, strategy='SWAPPY_REVERSAL')
+
+        if direction == 'BUY':
+            c1_ok = float(c1['close']) < float(c1['open'])      # prevailing pressure DOWN
+            c3_ok = float(c3['close']) > float(c3['open'])
+            c1_mid = (float(c1['low']) + float(c1['high'])) / 2.0
+            c3_past = float(c3['close']) > c1_mid
+        elif direction == 'SELL':
+            c1_ok = float(c1['close']) > float(c1['open'])      # prevailing pressure UP
+            c3_ok = float(c3['close']) < float(c3['open'])
+            c1_mid = (float(c1['low']) + float(c1['high'])) / 2.0
+            c3_past = float(c3['close']) < c1_mid
+        else:
+            return empty
+
+        # C1 strong: same body-proportion floor the continuation variant uses,
+        # plus an absolute-size floor, so a tiny candle cannot pass on ratio
+        # alone (bpct is a RATIO -- a 2-pip candle can score 90%).
+        c1_strong = c1_ok and bpct(c1) >= 0.70 and body(c1) >= avg_body * 0.5
+
+        # C2 indecision. Both tests matter and they say different things:
+        # a small body relative to its OWN range is the doji/spinning-top
+        # shape, and a small body relative to C1 is "momentum actually
+        # stopped" rather than "this candle happened to be quiet".
+        c2_doji = bpct(c2) <= 0.35 and body(c2) <= body(c1) * 0.5
+
+        # C3 powerful: a confirmation that closes past C1's midpoint but is
+        # itself a weak candle has not taken control of anything.
+        c3_strong = c3_ok and c3_past and body(c3) >= avg_body * 0.8
+
+        _sj.note(dj.TRIGGER, 'c1_impulse',
+                 dj.CONFIRMED if c1_strong else dj.VETO,
+                 f'C1 is a strong impulse against the trade (body {bpct(c1):.0%})',
+                 value=round(bpct(c1), 3))
+        _sj.note(dj.TRIGGER, 'c2_indecision',
+                 dj.CONFIRMED if c2_doji else dj.VETO,
+                 (f'C2 stalled -- body {bpct(c2):.0%} of its range and '
+                  f'{body(c2) / max(body(c1), 1e-9):.0%} of C1' if c2_doji else
+                  'C2 is not an indecision candle -- momentum has not stalled'),
+                 value=round(bpct(c2), 3))
+        _sj.note(dj.TRIGGER, 'c3_confirmation',
+                 dj.CONFIRMED if c3_strong else dj.VETO,
+                 ('C3 closed past C1 midpoint with a full body -- control changed'
+                  if c3_strong else
+                  'C3 did not close past C1 midpoint with conviction'),
+                 value=round(bpct(c3), 3))
+
+        if c1_strong and c2_doji and c3_strong:
+            strength = 0.65
+            # C3 engulfing C1 outright is the strongest form of this pattern.
+            if body(c3) >= body(c1):
+                strength += 0.15
+            # The flatter C2 is, the cleaner the stall.
+            if bpct(c2) <= 0.15:
+                strength += 0.10
+            # C3 closing past C1's OPEN as well as its midpoint -- the spec's
+            # looser alternative, treated here as a bonus on top of the
+            # stricter test rather than as a substitute for it.
+            if ((direction == 'BUY' and float(c3['close']) > float(c1['open'])) or
+                    (direction == 'SELL' and float(c3['close']) < float(c1['open']))):
+                strength += 0.10
+
+            _setup_high = max(float(c1['high']), float(c2['high']), float(c3['high']))
+            _setup_low = min(float(c1['low']), float(c2['low']), float(c3['low']))
+
+            _sj.measure(strength=round(min(1.0, strength), 3), avg_body=round(avg_body, 5))
+            _sj.decide(True, f'Swappy reversal confirmed, strength {min(1.0, strength):.2f}')
+            return {
+                "confirmed": True,
+                "pattern": f"SWAPPY_REVERSAL_{'BULL' if direction == 'BUY' else 'BEAR'}",
+                "journal": _sj.to_dict(),
+                "strength": min(1.0, strength),
+                # C3 has closed and IS the trigger, so the entry is the market
+                # here and now. entry_level is a reference for the caller's
+                # journal, not a level to rest an order at.
+                "entry_level": float(c3['close']),
+                "setup_candle_time": _setup_candle_time,
+                "setup_high": _setup_high,
+                "setup_low": _setup_low,
+                "order_type": "MARKET",
+                "reason": (f"Swappy REVERSAL {direction}: C1 impulse (body {bpct(c1):.0%}), "
+                           f"C2 stall (body {bpct(c2):.0%}), C3 closed past C1 mid "
+                           f"{c1_mid:.5f} at {float(c3['close']):.5f}."),
+            }
+
+        _sj.decide(False, 'Swappy reversal conditions not met')
+        dj.record_rejection(_sj)
+        return {**empty, "reason": "Swappy reversal conditions not met",
+                "journal": _sj.to_dict()}
+
+    except Exception as e:
+        return {**empty, "reason": f"Swappy reversal error: {e}"}
+
+
+def compute_swappy_reversal_sl(df: 'pd.DataFrame', direction: str, atr: float,
+                               last_bar_closed: bool = True) -> float:
+    """
+    Stop for the reversal variant: beyond the 3-candle structure, same rule and
+    same safety floor as compute_swappy_sl().
+
+    Kept as its own function rather than reusing that one because the two will
+    not necessarily stay identical -- the reversal's invalidation is C1's
+    extreme specifically (if price trades back through the impulse's origin,
+    the reversal thesis is dead), and the 3-candle extreme happens to be that
+    same level today only because C1 is the impulse candle.
+    """
+    d = df
+    if not last_bar_closed and len(d) > 1:
+        d = d.iloc[:-1]
+    scan = d.iloc[-3:]
+    floor = abs(atr) * SWAPPY_MIN_SL_ATR
+
+    if direction == 'BUY':
+        extreme = float(scan['low'].min())
+        anchor = scan.loc[scan['low'].idxmin()]
+        buf = adaptive_sl_buffer(float(anchor['low']), float(anchor['high']),
+                                 float(anchor['open']), float(anchor['close']),
+                                 'BUY', atr * 0.3)
+        return min(extreme - buf, extreme - floor)
+    extreme = float(scan['high'].max())
+    anchor = scan.loc[scan['high'].idxmax()]
+    buf = adaptive_sl_buffer(float(anchor['low']), float(anchor['high']),
+                             float(anchor['open']), float(anchor['close']),
+                             'SELL', atr * 0.3)
+    return max(extreme + buf, extreme + floor)
 
 
 def find_swappy_structural_tp(df: 'pd.DataFrame', direction: str, entry_price: float,
@@ -11132,7 +11424,8 @@ def ai_trading_session():
                                 # SL: last swing extreme in last 15 bars + trap-aware buffer.
                                 # Extracted to compute_swappy_sl() so the backtest adapter uses
                                 # the exact same logic instead of a second, drift-prone copy.
-                                _sl_sw = compute_swappy_sl(df_m5, _trade_direction, _atr_m5)
+                                _sl_sw = compute_swappy_sl(df_m5, _trade_direction, _atr_m5,
+                                                          last_bar_closed=False)
 
                                 # BUG FIX: this used to build a generic `setup` dict with
                                 # entry_price = _sw['entry_level'] (candle 3's close) and let
@@ -11176,6 +11469,58 @@ def ai_trading_session():
                             symbol, df_m5, df_m1, effective_trend, _acct_now_aox.equity)
                         if _aox_executed:
                             continue  # AOX placed a layer, skip rest of pipeline this iteration
+
+                # STRATEGY B2: SWAPPY 3C REVERSAL (impulse -> stall -> confirmation)
+                #
+                # The published spec's second pattern, and the mirror of
+                # STRATEGY B above: that one trades WITH the impulse, this one
+                # AGAINST it. Off by default (ENABLE_SWAPPY_REVERSAL) because
+                # it has never traded or been backtested.
+                #
+                # Deliberately NOT self-executing. Swappy's continuation branch
+                # places its own order and `continue`s, and every one of its
+                # bugs came from that: it skipped the ban check, the lesson
+                # check and the same-candle guard, each found separately and
+                # each fixed separately. This builds a `setup` dict and lets
+                # the shared pipeline size, score and risk-check it like any
+                # other strategy. A new entry path is the worst possible place
+                # to reintroduce a bypass.
+                #
+                # `_trade_direction` is H4-aligned, so what this actually
+                # detects is a counter-trend push that stalled and reversed
+                # back INTO the higher-timeframe bias -- a reversal of the
+                # pullback, not a fight with the trend.
+                if not setup and getattr(config, 'ENABLE_SWAPPY_REVERSAL', False):
+                    _swr = detect_swappy_reversal(df_m5, _trade_direction,
+                                                  last_bar_closed=False)
+                    if _swr['confirmed']:
+                        _sl_swr = compute_swappy_reversal_sl(df_m5, _trade_direction,
+                                                             _atr_m5, last_bar_closed=False)
+                        # Sanity: the stop must be on the losing side of entry.
+                        # A structure this tight can otherwise invert after the
+                        # buffer, and a stop on the wrong side is an instant
+                        # close, not a trade.
+                        if ((_trade_direction == 'BUY' and _sl_swr < _cur_price) or
+                                (_trade_direction == 'SELL' and _sl_swr > _cur_price)):
+                            setup = {
+                                'signal':        _trade_direction,
+                                'reason':        'SWAPPY_REVERSAL',
+                                'stop_loss':     _sl_swr,
+                                'strategy_type': 'SWAPPY_REV',
+                                'entry_price':   _cur_price,
+                                'order_type':    'MARKET',
+                                'htf_needed':    False,
+                                'liquidity_distance':  0.7,
+                                'liquidity_strength':  _swr['strength'],
+                                'momentum_state':      0.8,
+                                'structure_alignment': 0.7,
+                                'journal':       _swr.get('journal'),
+                            }
+                            logger.info(f"[SWAPPY REV] {symbol}: {_swr['pattern']} -- "
+                                        f"{_trade_direction} @ {_cur_price:.5f} sl={_sl_swr:.5f}")
+                        else:
+                            logger.warning(f"[SWAPPY REV] {symbol}: stop {_sl_swr:.5f} is on the "
+                                           f"wrong side of {_cur_price:.5f} -- skipping")
 
                 # STRATEGY F: SHAAKUNI MIDNIGHT / DAYLIGHT OPENING
                 # A distinct strategy, not a filter on SSM and not related to
