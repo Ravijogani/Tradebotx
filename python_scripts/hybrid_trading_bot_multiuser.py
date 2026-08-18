@@ -94,6 +94,7 @@ import google.generativeai as genai
 import market_intelligence as mi
 import bot_control
 import macro_windows
+import session_opens
 import midnight_sd
 import decision_journal as dj
 import risk_limits
@@ -806,6 +807,9 @@ class AITradingConfig:
     # Refuse a macro-window entry when the closing 5m candle drove a thick body
     # through the level instead of rejecting off it. The framework's own rule.
     ENABLE_MACRO_5MIN_RULE: bool = True
+    # Shaakuni midnight/daylight OPENING strategy (session-open trap).
+    # Independent of the SD/AOX model -- see strategy_shaakuni_opening().
+    ENABLE_STRATEGY_SSM_OPENING: bool = True
     # "Distance Rule" from the 9/15/50/200 EMA framework spec: the 9/25
     # cluster must be meaningfully separated from the 50 EMA before a cross
     # is considered tradeable -- when they're bunched/braided (ranging
@@ -9578,6 +9582,159 @@ def detect_ema_pattern_prefilter(df_m5: 'pd.DataFrame', direction: str, atr: flo
     return {'found': False, 'pattern': 'NONE', 'reason': 'No qualifying pattern found'}
 
 
+def strategy_shaakuni_opening(df_m5: 'pd.DataFrame', direction: str, symbol: str = "",
+                              df_m1: Optional['pd.DataFrame'] = None,
+                              atr: float = 0.0) -> Optional[Dict[str, Any]]:
+    """
+    STRATEGY F -- Shaakuni Midnight / Daylight OPENING strategy.
+
+    A separate strategy from Shaakuni SSM, and from the Swappy SD/AOX model.
+    It uses no standard deviation ladder at all. The opening PRICE of the
+    session is a line, and the setup is a fixed sequence of events around it:
+
+        fake momentum away from the open
+          -> liquidity sweep
+            -> market structure shift
+              -> retrace into FVG / extreme order block
+                -> entry, on the correct side of the line
+
+    Sessions (see session_opens.py):
+        MIDNIGHT  18:00 New York -- start of the new trading day
+        DAYLIGHT  00:00 New York
+
+    What this strategy contributes that SSM does not: the OPEN as an
+    equilibrium reference. SSM hunts a sweep and an extreme OB wherever they
+    occur; this one additionally requires that the manipulation happened
+    around a specific clock price, and that the entry sits at a genuine
+    discount (long) or premium (short) relative to it. Entering a long above
+    the open is buying premium -- the retail side of the very trap being
+    faded -- so session_opens.entry_allowed() refuses it.
+
+    Returns a setup dict in the same shape every other strategy uses, or
+    None. Every refusal is journalled with its reason rather than dropped,
+    so a day of no trades is still readable afterwards.
+    """
+    if df_m5 is None or len(df_m5) < 20:
+        return None
+
+    _oj = dj.DecisionJournal(symbol, direction=direction, strategy='SHAAKUNI_OPENING')
+    try:
+        session = None
+        open_px = None
+        for _s in ('MIDNIGHT', 'DAYLIGHT'):
+            _res = session_opens.session_open_price(_s, df_m5)
+            if _res:
+                # Prefer the most RECENT open: at 02:00 NY both exist, but the
+                # 00:00 daylight line is the live reference, not last evening's.
+                if open_px is None or _res[1] > open_px[1]:
+                    session, open_px = _s, _res
+        if not open_px:
+            return None                      # no session line available yet
+        open_price, open_time = open_px
+
+        _oj.note(dj.LOCATION, 'session_open', dj.CONFIRMED,
+                 f'{session} open at {open_price:.5f}', value=open_price)
+
+        # Bars since the open define the trap.
+        import pandas as _pd
+        _cols = getattr(df_m5, 'columns', [])
+        _ts = _pd.to_datetime(df_m5['time'] if 'time' in _cols else df_m5.index, utc=True)
+        _since = df_m5[(_ts >= _pd.Timestamp(open_time)).values]
+        if len(_since) < 2:
+            return None                      # session too young to judge
+
+        _atr = atr or float(calculate_atr(df_m5['high'], df_m5['low'],
+                                          df_m5['close'], 14).iloc[-1])
+        state = session_opens.session_state(open_price, list(_since['high']),
+                                            list(_since['low']), _atr)
+
+        _oj.note(dj.STRUCTURE, 'trap_formed',
+                 dj.CONFIRMED if state['crossed_both'] else dj.WEAK,
+                 ('price traded both sides of the open -- manipulation phase present'
+                  if state['crossed_both'] else
+                  'price has not yet traded both sides of the open'),
+                 value=state['fake_side'])
+
+        if state['no_go']:
+            _oj.note(dj.REGIME, 'no_go', dj.VETO,
+                     f"expanded {state['max_excursion']:.5f} from the open without "
+                     f"crossing it -- manipulation phase skipped")
+            _oj.decide(False, 'no-go session')
+            dj.record_rejection(_oj)
+            return None
+
+        # The sequence: sweep -> structure shift.
+        _sh, _sl_idx = identify_swing_highs_lows(_since, lookback=3)
+        _bos = detect_break_of_structure(_since, _sh, _sl_idx)
+        _want = 'BULLISH' if direction == 'BUY' else 'BEARISH'
+        _oj.note(dj.STRUCTURE, 'market_structure_shift',
+                 dj.CONFIRMED if _bos == _want else dj.VETO,
+                 f'structure shift reads {_bos or "none"}, need {_want}',
+                 value=_bos)
+        if _bos != _want:
+            _oj.decide(False, f'no {_want} market structure shift since the open')
+            dj.record_rejection(_oj)
+            return None
+
+        # Entry location: FVG left by the displacement leg, else the extreme
+        # of the swing that shifted structure.
+        _cur = float(df_m5['close'].iloc[-1])
+        _entry = _cur
+        _zone = 'current price'
+        try:
+            _fvgs = mi.detect_fvg_zones(_since, direction)
+            if _fvgs:
+                _z = _fvgs[0]
+                _entry = float(_z.get('mid', _z.get('high', _cur)))
+                _zone = 'FVG'
+        except Exception:
+            pass
+
+        _oj.note(dj.TRIGGER, 'entry_zone', dj.CONFIRMED,
+                 f'{_zone} at {_entry:.5f}', value=_zone)
+
+        # The discipline check: right side of the line, fading not joining.
+        _ok, _why = session_opens.entry_allowed(direction, _entry, open_price, state)
+        _oj.note(dj.LOCATION, 'premium_discount',
+                 dj.CONFIRMED if _ok else dj.VETO, _why)
+        if not _ok:
+            _oj.decide(False, _why)
+            dj.record_rejection(_oj)
+            return None
+
+        # SL structurally beyond the sweep extreme, never a fixed pip amount.
+        if direction == 'BUY':
+            _sl = float(_since['low'].min()) - _atr * 0.2
+        else:
+            _sl = float(_since['high'].max()) + _atr * 0.2
+        if (direction == 'BUY' and _sl >= _entry) or (direction == 'SELL' and _sl <= _entry):
+            _oj.decide(False, 'stop would sit the wrong side of entry')
+            dj.record_rejection(_oj)
+            return None
+
+        _oj.decide(True, f'{session} opening trap faded from {_zone}')
+        return {
+            'signal':      direction,
+            'reason':      'SHAAKUNI_OPENING',
+            'strategy_type': 'SSM_OPEN',
+            'entry_price': _entry,
+            'stop_loss':   _sl,
+            'session':     session,
+            'session_open': open_price,
+            'fake_side':   state['fake_side'],
+            'liquidity_distance':   0.6,
+            'liquidity_strength':   0.7,
+            'liquidity_confluence': 0.7,
+            'momentum_state':       0.7,
+            'structure_alignment':  0.75,
+            'htf_needed':  False,
+            'journal':     _oj.to_dict(),
+        }
+    except Exception as e:
+        logger.debug(f"[SSM OPEN] {symbol}: {e}")
+        return None
+
+
 def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str = "",
                               df_h1: Optional['pd.DataFrame'] = None,
                               df_d1: Optional['pd.DataFrame'] = None) -> Optional[Dict[str, Any]]:
@@ -10848,6 +11005,24 @@ def ai_trading_session():
                             symbol, df_m5, df_m1, effective_trend, _acct_now_aox.equity)
                         if _aox_executed:
                             continue  # AOX placed a layer, skip rest of pipeline this iteration
+
+                # STRATEGY F: SHAAKUNI MIDNIGHT / DAYLIGHT OPENING
+                # A distinct strategy, not a filter on SSM and not related to
+                # the Swappy SD/AOX model: it uses no standard-deviation
+                # ladder. The session OPEN (18:00 or 00:00 NY) is an
+                # equilibrium line, and the setup is the trap sequence around
+                # it -- fake push, sweep, structure shift, FVG/OB tap. Placed
+                # before SSM because when both qualify, the one anchored to a
+                # known clock price is the more specific read.
+                if not setup and getattr(config, 'ENABLE_STRATEGY_SSM_OPENING', True):
+                    setup = strategy_shaakuni_opening(df_m5, _trade_direction, symbol,
+                                                      df_m1, _atr_m5)
+                    if setup:
+                        logger.info(
+                            f"[SSM OPEN] {symbol}: {setup['session']} opening trap -- "
+                            f"{_trade_direction} @ {setup['entry_price']:.5f} "
+                            f"(open {setup['session_open']:.5f}, fake push "
+                            f"{setup['fake_side']})")
 
                 # SHAAKUNI SSM: dedicated HTF sweep + extreme OB entry
                 # This replaces generic liquidity grab with proper Shaakuni rules.
