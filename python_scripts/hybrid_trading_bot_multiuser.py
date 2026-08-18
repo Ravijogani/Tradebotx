@@ -10053,6 +10053,21 @@ def ai_trading_session():
         # dashboard showed "No bots running" beside a live process, and the
         # admin's Emergency Stop All (which filters on is_running=true)
         # matched nothing.
+        # HEARTBEAT FIRST -- order matters, and getting it wrong killed a live
+        # bot. The invariant is: `is_running=true` must NEVER exist without a
+        # fresh bot_heartbeats row behind it.
+        #
+        # The loop below only heartbeats every 60s and starts its timer at loop
+        # entry, so the first beat used to land a full minute after this claim.
+        # For that minute the row said "running" while the heartbeat was stale
+        # or absent -- which is precisely the "bot crashed" verdict
+        # BotStatusSync and monitor-bot-health are built to detect. Observed
+        # live: confirmed running 10:12:16, killed 10:12:25. Nine seconds.
+        # The dashboard was not misbehaving there; by its own rules the bot
+        # genuinely looked dead. Announce liveness before announcing running.
+        send_heartbeat(status='running', mt5_connected=True)
+        last_heartbeat_time = time.time()
+
         if bot_control.confirm_bot_started(supabase, USER_ID, STRATEGY_ID, os.getpid()):
             logger.info(f"[STARTED] Confirmed running in user_strategies (pid {os.getpid()})")
         else:
@@ -10255,7 +10270,12 @@ def ai_trading_session():
                 _thr3.Thread(target=ai_analyze_closed_trades, daemon=True).start()
             
             # --- 5. HEARTBEAT & STATUS LOGGING ---
-            if time.time() - last_heartbeat_time > 60:
+            # 30s, not 60s. Both watchdogs (BotStatusSync in the browser and
+            # monitor-bot-health) treat a heartbeat older than 90s as a crash,
+            # so a 60s cadence left only one beat of margin -- a single failed
+            # send, GIL stall or slow Supabase call crossed the line and got a
+            # healthy bot marked crashed and stopped. 30s gives two.
+            if time.time() - last_heartbeat_time > 30:
                 send_heartbeat(status='running', mt5_connected=True)
                 last_heartbeat_time = time.time()
             

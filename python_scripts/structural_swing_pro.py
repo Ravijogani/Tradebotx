@@ -247,7 +247,11 @@ class SwingTradingConfig:
     SCAN_INTERVAL_SECONDS: int = 900   # 15 min -- D1/H4 structure doesn't change bar to bar;
                                         # no reason to hammer MT5 every couple seconds
     POSITION_MANAGE_INTERVAL_SECONDS: int = 60
-    HEARTBEAT_INTERVAL: int = 60
+    # 30s, not 60s: both watchdogs (BotStatusSync in the browser and
+    # monitor-bot-health) treat a heartbeat older than 90s as a crash, so a
+    # 60s cadence left only one beat of margin. One failed send marked a
+    # healthy bot crashed and stopped it. See hybrid_trading_bot_multiuser.py.
+    HEARTBEAT_INTERVAL: int = 30
 
 
 config = SwingTradingConfig()
@@ -1293,6 +1297,15 @@ def swing_trading_session() -> None:
     except Exception as e:
         logger.error(f"Failed to get initial account info: {e}")
         state.daily_start_equity = 0.0
+
+    # HEARTBEAT FIRST -- `is_running=true` must never exist without a fresh
+    # bot_heartbeats row behind it. The loop's heartbeat runs on an interval
+    # that starts at loop entry, so claiming "running" before the first beat
+    # leaves a window where the row says running while the heartbeat looks
+    # stale -- exactly the "crashed" verdict BotStatusSync and
+    # monitor-bot-health are built to detect. That window killed a live bot
+    # nine seconds after it confirmed. See hybrid_trading_bot_multiuser.py.
+    db_manager.send_heartbeat()
 
     # --- CONFIRM STARTED ---
     # Claim user_strategies (is_running=true, bot_pid) now that MT5 is up.
