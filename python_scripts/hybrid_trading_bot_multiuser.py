@@ -93,6 +93,8 @@ import google.generativeai as genai
 
 import market_intelligence as mi
 import bot_control
+import macro_windows
+import midnight_sd
 import decision_journal as dj
 import risk_limits
 from datetime import datetime, timezone, timedelta
@@ -796,6 +798,14 @@ class AITradingConfig:
 
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
+    # Anchor the standard-deviation reference range on the NY session window
+    # (midnight range, or the 08:30 / 09:30 / 10:00 leg) while one is open,
+    # instead of the rolling 10-bar window. Outside those windows behaviour is
+    # unchanged. Set False to revert to rolling-only without redeploying.
+    ENABLE_MACRO_SD_ANCHOR: bool = True
+    # Refuse a macro-window entry when the closing 5m candle drove a thick body
+    # through the level instead of rejecting off it. The framework's own rule.
+    ENABLE_MACRO_5MIN_RULE: bool = True
     # "Distance Rule" from the 9/15/50/200 EMA framework spec: the 9/25
     # cluster must be meaningfully separated from the 50 EMA before a cross
     # is considered tradeable -- when they're bunched/braided (ranging
@@ -8118,7 +8128,13 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
             # data does arrive, every AOX decision will already be explaining
             # itself instead of needing this work done retroactively.
             _aj = dj.DecisionJournal(symbol, strategy='AOX_L1_SD_TAP')
-            spike = detect_manipulation_spike(df_m5, atr)
+            _sd_ref, _sd_anchor = resolve_sd_anchor(symbol, df_m5)
+            _aj.note(dj.LOCATION, 'sd_anchor',
+                     dj.CONFIRMED if _sd_ref else dj.NEUTRAL,
+                     (f'SD projected from the {_sd_anchor} session leg'
+                      if _sd_ref else 'SD projected from the rolling 10-bar window'),
+                     value=_sd_anchor)
+            spike = detect_manipulation_spike(df_m5, atr, _sd_ref, _sd_anchor)
             if not spike:
                 _aj.note(dj.LIQUIDITY, 'manipulation_spike', dj.VETO, 'no manipulation spike detected')
                 _aj.decide(False, 'no manipulation spike')
@@ -8157,6 +8173,33 @@ def detect_aox_phase_signal(aox_state: dict, df_m5: 'pd.DataFrame', df_m1: 'pd.D
                 _aj.decide(False, 'no qualifying SD zone tap')
                 dj.record_rejection(_aj)
                 return None
+
+            # THE 5-MINUTE RULE (macro windows only).
+            # A thick-bodied candle closing THROUGH the SD level is the
+            # algorithm continuing, not exhausting -- the framework requires a
+            # wick rejection before entry. Applied only when the SD ladder came
+            # from a session anchor, because the rule is written about those
+            # windows; the rolling-anchor path keeps its previous behaviour.
+            if _sd_ref is not None and getattr(config, 'ENABLE_MACRO_5MIN_RULE', True):
+                try:
+                    _c5 = df_m5.iloc[-2]          # last CLOSED 5m candle
+                    _side5 = 'above' if direction == 'SELL' else 'below'
+                    _lvl5 = (spike['sd_levels'].get('sd_neg25')
+                             or spike['sd_levels'].get('sd_neg2'))
+                    if _lvl5:
+                        _ok5, _why5 = macro_windows.five_minute_rule(
+                            float(_c5['open']), float(_c5['high']),
+                            float(_c5['low']), float(_c5['close']),
+                            float(_lvl5), _side5)
+                        _aj.note(dj.TRIGGER, 'five_minute_rule',
+                                 dj.CONFIRMED if _ok5 else dj.VETO, _why5)
+                        if not _ok5:
+                            logger.info(f"[AOX L1] {symbol}: 5-min rule blocks entry -- {_why5}")
+                            _aj.decide(False, f'5-minute rule: {_why5}')
+                            dj.record_rejection(_aj)
+                            return None
+                except Exception as _e5:
+                    logger.debug(f"[AOX L1] {symbol}: 5-min rule skipped ({_e5})")
             # SD4 major reversal zone = higher conviction, larger L1 allocation
             _l1_alloc = 0.35 if reached_sd4 else 0.25
             if reached_sd4:
@@ -8889,7 +8932,47 @@ def compute_sd_levels(ref_high: float, ref_low: float) -> Dict:
     }
 
 
-def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
+def resolve_sd_anchor(symbol: str, df: 'pd.DataFrame'
+                      ) -> Tuple[Optional[Tuple[float, float]], str]:
+    """
+    Which range should the standard-deviation ladder be projected from?
+
+    Returns (range_or_None, label). None means "no session anchor available --
+    use the rolling window", which is the pre-existing behaviour and the safe
+    default whenever anything is missing or uncertain:
+
+      * the feature is switched off
+      * no macro window is currently open
+      * the window's anchor leg isn't fully covered by the bars we hold
+
+    That last case matters. A half-formed leg would produce a range that is
+    too small, and since every level is a multiple of that range, the -2 SD
+    zone would sit far too close to price -- turning "wait for a deep sweep"
+    into "enter almost immediately". Falling back is strictly safer than
+    projecting from an incomplete anchor.
+    """
+    if not getattr(config, 'ENABLE_MACRO_SD_ANCHOR', False):
+        return None, 'rolling'
+    try:
+        window = macro_windows.active_window()
+        if not window:
+            return None, 'rolling'
+        rng = macro_windows.anchor_range(window, df)
+        if not rng or rng[0] <= rng[1]:
+            logger.debug(f"[SD ANCHOR] {symbol}: {window} open but anchor leg "
+                         f"incomplete -- falling back to rolling window")
+            return None, 'rolling'
+        logger.info(f"[SD ANCHOR] {symbol}: {window} -- anchoring SD on "
+                    f"{rng[1]:.5f}-{rng[0]:.5f} (session leg, not rolling bars)")
+        return rng, window
+    except Exception as e:
+        logger.debug(f"[SD ANCHOR] {symbol}: resolver error {e} -- rolling window")
+        return None, 'rolling'
+
+
+def detect_manipulation_spike(df: pd.DataFrame, atr: float,
+                              ref_override: Optional[Tuple[float, float]] = None,
+                              anchor_label: str = 'rolling') -> Optional[Dict]:
     """
     Detect a fast manipulation spike (Judas Swing) on M15.
 
@@ -8904,11 +8987,22 @@ def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
     """
     if len(df) < 15: return None
     try:
-        # Reference range: last 10 bars before the most recent 3
-        ref      = df.iloc[-13:-3]
-        ref_high = float(ref['high'].max())
-        ref_low  = float(ref['low'].min())
-        ref_range= ref_high - ref_low
+        # Reference range. `ref_override` is the session anchor -- the
+        # midnight opening range, or the 08:30 / 09:30 / 10:00 leg -- supplied
+        # by the caller when a macro window is open. Without it we fall back
+        # to the historical rolling window (last 10 bars before the most
+        # recent 3), which keeps behaviour outside those windows unchanged.
+        #
+        # The anchor is the whole difference between levels that mean
+        # something and levels that slide with every candle. See
+        # macro_windows.py.
+        if ref_override is not None:
+            ref_high, ref_low = float(max(ref_override)), float(min(ref_override))
+        else:
+            ref      = df.iloc[-13:-3]
+            ref_high = float(ref['high'].max())
+            ref_low  = float(ref['low'].min())
+        ref_range = ref_high - ref_low
         if ref_range <= 0: return None
 
         # Compute SD levels for this reference range
@@ -8943,6 +9037,7 @@ def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
 
                 return {
                     'type':         'BEARISH',
+                    'anchor':       anchor_label,
                     'spike_start':  ref_high,
                     'spike_peak':   spike_high,
                     'ref_high':     ref_high,
@@ -8966,6 +9061,7 @@ def detect_manipulation_spike(df: pd.DataFrame, atr: float) -> Optional[Dict]:
 
                 return {
                     'type':          'BULLISH',
+                    'anchor':        anchor_label,
                     'spike_start':   ref_low,
                     'spike_trough':  spike_low,
                     'ref_high':      ref_high,
@@ -9218,8 +9314,10 @@ def strategy_aox_model(symbol: str, df_m15: pd.DataFrame, df_m1: pd.DataFrame,
         atr_m15 = float(calculate_atr(df_m15['high'], df_m15['low'], df_m15['close'], 14).iloc[-1])
         cur_price = float(df_m15['close'].iloc[-1])
 
-        # Step 1: Detect the manipulation spike
-        spike = detect_manipulation_spike(df_m15, atr_m15)
+        # Step 1: Detect the manipulation spike, projected from the session
+        # anchor when a macro window is open (see resolve_sd_anchor).
+        _sd_ref, _sd_anchor = resolve_sd_anchor(symbol, df_m15)
+        spike = detect_manipulation_spike(df_m15, atr_m15, _sd_ref, _sd_anchor)
         if not spike:
             return None
 
