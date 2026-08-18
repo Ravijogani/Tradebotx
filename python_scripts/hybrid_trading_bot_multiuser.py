@@ -587,8 +587,16 @@ class ScalpingExitEngine:
         - TP scale-out at progress >= 90%
         - Stale exit only after 45+ minutes with no movement at all
         """
-        # 1. TP hit or near TP -- scale out to lock profit
-        if ctx.liquidity_state == "HIT":
+        # 1. TP hit or near TP -- scale out to lock profit.
+        #
+        # Both scale-out triggers are now gated on ENABLE_PARTIAL_TP (default
+        # False = trailing mode). See that flag's comment: returning anything
+        # other than HOLD here makes manage_all_positions `continue`, which
+        # skipped runner promotion and the Stage 3 trail entirely -- both of
+        # which trigger at exactly the 2.0R this used to fire at. Gating the
+        # RETURN rather than deleting the branch keeps the old behaviour one
+        # flag away instead of one commit away.
+        if config.ENABLE_PARTIAL_TP and ctx.liquidity_state == "HIT":
             return "SCALE_OUT"
 
         # 1b. DEAD-CONFIG FIX: ENABLE_PARTIAL_TP / PARTIAL_TP_RR had zero live
@@ -920,9 +928,61 @@ class AITradingConfig:
     PARTIAL_TP_RR: float = 2.0       # Partial at 1:2
     
     ENABLE_BREAKEVEN: bool = True
-    BREAKEVEN_TRIGGER_RR: float = 1.5 # Breakeven at 1.5R
+    # Spread multiple at which an OPEN position is force-closed as a spike.
+    # Was hardcoded 3x (reduced from 8x at some point). 3x normal spread is
+    # reached routinely at the NY open, on scheduled news and at broker
+    # rollover -- so the guard was closing healthy trades at market, INTO the
+    # very spread it exists to avoid. 6x still catches a genuine blowout.
+    # Note this is the OPEN-POSITION guard; the pre-order spike check is
+    # separate and deliberately stricter.
+    SPREAD_SPIKE_CLOSE_MULT: float = 6.0
+    # Weekend gap protection. An M5 scalp sized for a 20-pip stop is a
+    # different instrument once it is held across a Sunday gap, which can
+    # open past the stop with no fill in between. There was no handling of
+    # this at all: the bot would happily open a position at 16:55 NY on a
+    # Friday and carry it into the close.
+    ENABLE_WEEKEND_FLAT: bool = True
+    # No NEW positions after this NY time on Friday (24h clock, DST-aware).
+    FRIDAY_NO_NEW_NY_HOUR: int = 15
+    FRIDAY_NO_NEW_NY_MIN: int = 0
+    # Close everything still open at this NY time on Friday. The FX week ends
+    # 17:00 NY; this leaves half an hour of liquidity to exit in rather than
+    # exiting into the last minutes when spreads widen.
+    FRIDAY_FLATTEN_NY_HOUR: int = 16
+    FRIDAY_FLATTEN_NY_MIN: int = 30
+    # BREAKEVEN AT 1.0R, EVERYWHERE.
+    #
+    # Was 1.5R generic / 1.0R AOX / 2.0R Swappy. Two problems with that. On a
+    # 2.0R target, 1.5R is 75% of the way to TP -- that is not protection, it
+    # is a formality, and a trade could run +1.4R and still give back a full
+    # -1R. And Swappy's structural TP has a 1.5R floor, so any Swappy trade
+    # targeting 1.5-2.0R had a breakeven trigger BEYOND its own target: full
+    # risk from entry to exit, no BE, no trail, ever.
+    #
+    # 1.0R is the point the trade has paid for its own risk. Uniform across
+    # strategies, and it makes the Swappy gap impossible by construction
+    # rather than by a special case.
+    BREAKEVEN_TRIGGER_RR: float = 1.0
     
-    ENABLE_PARTIAL_TP: bool = True
+    # TRAIL, DON'T SCALE OUT.
+    #
+    # False puts the bot in trailing mode: ScalpingExitEngine stops returning
+    # SCALE_OUT, which is what makes 2R a FLOOR instead of a ceiling.
+    #
+    # Why that flag controls so much: the engine returned SCALE_OUT whenever
+    # r >= PARTIAL_TP_RR (2.0) or progress >= 90% of target, and
+    # manage_all_positions `continue`s on ANY non-HOLD decision. Runner
+    # promotion needs r >= 2.0. The Stage 3 (70% lock) trail needs r >= 2.0.
+    # Both sit BELOW that intercept, so from the moment a trade reached 2R the
+    # exit engine claimed it every cycle and neither ever executed. The
+    # "professional 3-stage trailing system" was in practice "BE, one narrow
+    # 50% window, then 50% closed at 1.8R".
+    #
+    # Set True to restore scale-out behaviour; PARTIAL_TP_RR and
+    # PARTIAL_TP_PERCENT then apply as before. DecisionEngineV2's REDUCE is
+    # deliberately NOT gated by this -- that is cutting risk on a failing
+    # trade, not banking profit on a working one.
+    ENABLE_PARTIAL_TP: bool = False
     PARTIAL_TP_PERCENT: float = 50.0
 
     SPREAD_ATR_THRESHOLD: float = 0.50
@@ -6416,8 +6476,12 @@ def manage_all_positions():
                 # JPY positions at an ordinary spread. See
                 # max_allowed_spread_price().
                 _normal_max = max_allowed_spread_price(_pos.symbol)
-                # If spread exceeds 8x normal maximum -> close trade NOW before SL spike hit
-                if _normal_max > 0 and _spread_now > _normal_max * 3:  # FIX: was 8x, reduced to 3x
+                # Force-close on a genuine spread blowout, before the SL is
+                # taken out by it. Multiple is config.SPREAD_SPIKE_CLOSE_MULT
+                # (6x) -- see that flag: the previous hardcoded 3x is reached
+                # routinely at the NY open, on news and at rollover, so it was
+                # closing healthy positions at market into a wide spread.
+                if _normal_max > 0 and _spread_now > _normal_max * config.SPREAD_SPIKE_CLOSE_MULT:
                     logger.critical(
                         f"[SPIKE GUARD] {_pos.symbol} #{_pos.ticket}: "
                         f"spread SPIKED to {_spread_now:.5f} (normal max={_normal_max:.5f}, "
@@ -6836,21 +6900,29 @@ def manage_all_positions():
                         except Exception: pass
                 continue  # AOX exits via MT5 TP levels set on entry, not trailing
 
-            # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening. BE at 2R only.
-            # Same ENABLE_BREAKEVEN wiring as AOX above; SWAPPY's own 2.0R trigger
-            # is left untouched. Note: the 3R+ trail below requires
-            # `ticket in state.be_moved`, so disabling BE here also implicitly
-            # disables that trail -- BE is the prerequisite state marker for it,
-            # not a separate control, so this is the correct behavior, not a gap.
+            # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening.
+            # BE at BREAKEVEN_TRIGGER_RR (1.0R), same as everywhere else.
+            #
+            # This was a hardcoded 2.0R, and it was a live gap rather than a
+            # preference: find_swappy_structural_tp has a 1.5R floor, so a
+            # Swappy trade targeting 1.5-2.0R had its breakeven trigger BEYOND
+            # its own take-profit. Those trades carried full structural risk
+            # from entry to exit -- and since the 3R trail below requires
+            # `ticket in state.be_moved`, they had no trail either.
+            #
+            # The "hold to 3R" intent is unchanged: there is still no Stage 1/2
+            # tightening here, only the stop coming off risk once the trade has
+            # paid for itself.
             if _strategy_type == 'SWAPPY':
-                if config.ENABLE_BREAKEVEN and r_multiple >= 2.0 and ticket not in state.be_moved:
+                if (config.ENABLE_BREAKEVEN and r_multiple >= config.BREAKEVEN_TRIGGER_RR
+                        and ticket not in state.be_moved):
                     _dig_sw = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
                     _be_sw  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_sw)
                     _be_sw_r = round(_be_sw, _dig_sw)
                     _sl_r_sw = round(sl, _dig_sw)
                     _can_sw = (is_buy and _be_sw_r > _sl_r_sw) or (not is_buy and _be_sw_r < _sl_r_sw)
                     if _can_sw:
-                        logger.info(f"[SWAPPY TRAIL] {symbol} #{ticket}: BE at 2R -- holding to 3R+ min (r={r_multiple:.2f}R)")
+                        logger.info(f"[SWAPPY TRAIL] {symbol} #{ticket}: BE at {config.BREAKEVEN_TRIGGER_RR}R -- holding to 3R+ min (r={r_multiple:.2f}R)")
                         if modify_position(ticket, _be_sw, tp):
                             state.be_moved.add(ticket)
                             _record_management(params, 'moved_to_breakeven',
@@ -6954,15 +7026,40 @@ def manage_all_positions():
                 trail_sl = (entry_price + locked_dist) if is_buy else (entry_price - locked_dist)
                 trail_sl_safe = (trail_sl - _min_buffer) if is_buy else (trail_sl + _min_buffer)
 
+                # EXTEND THE TARGET WHEN THE TRAIL TAKES OVER.
+                #
+                # Trailing a stop while the take-profit sits at 2R is a
+                # contradiction -- the TP closes the trade at 2R whatever the
+                # stop does, so the trail can only ever run for the few ticks
+                # before the fill. Once Stage 3 owns the stop, the target moves
+                # to the runner TP (TP_RUNNER_RR, default 3.0R) that
+                # get_dynamic_trade_params has always computed and place_ai_trade
+                # has always discarded. The trail is what protects the trade
+                # from here; the TP is no longer the thing doing that job.
+                #
+                # Only ever pushed FURTHER away, and only for strategies on
+                # this generic path -- AOX and SWAPPY own their targets and
+                # `continue` above without reaching this branch.
+                _tp_use = tp
+                _tp2 = params.get('tp2', 0.0)
+                if _tp2 and ((is_buy and _tp2 > tp) or (not is_buy and _tp2 < tp)):
+                    _tp_use = _tp2
+
                 can_advance = (is_buy and trail_sl_safe > sl) or (not is_buy and trail_sl_safe < sl)
-                if can_advance:
+                if can_advance or _tp_use != tp:
                     sym_digits = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+                    _new_sl = round(trail_sl_safe, sym_digits) if can_advance else sl
                     logger.info(
                         f"[TRAIL STAGE3] {symbol} #{ticket}: 70% lock "
-                        f"SL {sl:.{sym_digits}f} -> {trail_sl_safe:.{sym_digits}f} "
-                        f"(r={r_multiple:.2f}R)"
+                        f"SL {sl:.{sym_digits}f} -> {_new_sl:.{sym_digits}f}"
+                        + (f", TP {tp:.{sym_digits}f} -> {_tp_use:.{sym_digits}f} (runner target)"
+                           if _tp_use != tp else "")
+                        + f" (r={r_multiple:.2f}R)"
                     )
-                    modify_position(ticket, round(trail_sl_safe, sym_digits), tp)
+                    if modify_position(ticket, _new_sl, _tp_use) and _tp_use != tp:
+                        _record_management(params, 'target_extended',
+                                           f'trail took over at {r_multiple:.2f}R -- target moved to the runner TP',
+                                           trigger_r=round(r_multiple, 2), new_tp=_tp_use)
 
             # ------------------------------------------------------------------
             # STAGE 2: TRAIL AT 50% OF GAINS (1.5R to 2.0R)
@@ -8127,6 +8224,14 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
                     'symbol':        symbol,
                     'strategy_type': _strat_t,     # CRITICAL: needed for strategy-specific management
                     'aox_fib':       _aox_fib,     # AOX SD levels: tp1_near/tp1_far/tp2_near/tp2_mid/tp2_far
+                    # THE RUNNER TARGET, which used to be computed and thrown
+                    # away. get_dynamic_trade_params returns tp1 AND tp2
+                    # (TP_RUNNER_RR, default 3.0) and only tp1 was ever sent to
+                    # MT5. Kept here so the Stage 3 trail has somewhere to
+                    # extend to -- without it, "let the trade run past 2R" is a
+                    # contradiction: the position would still be closed by a
+                    # take-profit sitting at exactly 2R.
+                    'tp2':           params.get('tp2', 0.0),
                     **capture_entry_market_context(symbol),  # entry_session/entry_hour/entry_adx -- see its docstring
                 }
             }
@@ -8161,6 +8266,108 @@ def _ny_to_utc_minutes(h_ny: int, m_ny: int) -> int:
     is_edt = dst_start.date() <= now.date() < dst_end.date()
     offset = 4 if is_edt else 5  # EDT=UTC-4, EST=UTC-5
     return (h_ny * 60 + m_ny + offset * 60) % (24 * 60)
+
+
+
+def ny_now() -> datetime:
+    """
+    Current time on the New York clock, DST-aware.
+
+    Everything institutional in this file is quoted in NY time (the macro
+    windows, the 18:00 session open, the 17:00 Friday close) while the bot
+    runs on UTC, so the conversion needs to live in exactly one place.
+    Shares its DST rule with _ny_to_utc_minutes: 2nd Sunday of March to 1st
+    Sunday of November, EDT = UTC-4, EST = UTC-5.
+    """
+    now = datetime.now(timezone.utc)
+    mar1 = datetime(now.year, 3, 1)
+    dst_start = mar1 + timedelta(days=(6 - mar1.weekday()) % 7 + 7)
+    nov1 = datetime(now.year, 11, 1)
+    dst_end = nov1 + timedelta(days=(6 - nov1.weekday()) % 7)
+    offset = 4 if dst_start.date() <= now.date() < dst_end.date() else 5
+    return now - timedelta(hours=offset)
+
+
+def weekend_state(now_ny: Optional[datetime] = None) -> str:
+    """
+    'OPEN' | 'NO_NEW' | 'FLATTEN' -- how close the weekend is.
+
+    An M5 scalp sized for a 20-pip stop stops being that instrument the
+    moment it is carried through a weekend: the Sunday open can gap straight
+    past the stop with no fill in between, so the realised loss has no
+    relation to the risk the position was sized for. Nothing in this bot
+    handled that -- it would open a position at 16:55 NY on a Friday and
+    carry it into the close.
+
+    Returns FLATTEN from the flatten time until the Sunday reopen, so a bot
+    started over the weekend does not immediately arm itself.
+    """
+    n = now_ny or ny_now()
+    if not config.ENABLE_WEEKEND_FLAT:
+        return 'OPEN'
+
+    minutes = n.hour * 60 + n.minute
+    dow = n.weekday()                      # 0=Mon .. 4=Fri, 5=Sat, 6=Sun
+
+    if dow == 5:                           # Saturday: market shut
+        return 'FLATTEN'
+    if dow == 6:                           # Sunday: reopens 17:00 NY
+        return 'FLATTEN' if minutes < 17 * 60 else 'OPEN'
+    if dow != 4:                           # Mon-Thu
+        return 'OPEN'
+
+    flatten_at = config.FRIDAY_FLATTEN_NY_HOUR * 60 + config.FRIDAY_FLATTEN_NY_MIN
+    no_new_at = config.FRIDAY_NO_NEW_NY_HOUR * 60 + config.FRIDAY_NO_NEW_NY_MIN
+    if minutes >= flatten_at:
+        return 'FLATTEN'
+    if minutes >= no_new_at:
+        return 'NO_NEW'
+    return 'OPEN'
+
+
+def flatten_for_weekend() -> int:
+    """
+    Close every position this bot owns, and cancel its resting orders.
+
+    Pending orders matter as much as fills here: a Swappy stop order left on
+    the book over the weekend can be triggered by the Sunday gap itself, at a
+    price nobody chose.
+
+    Returns how many things were closed or cancelled.
+    """
+    closed = 0
+    try:
+        for pos in (mt5.positions_get() or []):
+            if pos.magic != MAGIC_NUMBER:
+                continue
+            tick = mt5.symbol_info_tick(pos.symbol)
+            if not tick:
+                continue
+            res = mt5.order_send({
+                "action": mt5.TRADE_ACTION_DEAL, "position": pos.ticket,
+                "symbol": pos.symbol, "volume": pos.volume,
+                "type": mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY,
+                "price": tick.bid if pos.type == 0 else tick.ask,
+                "deviation": 50, "magic": MAGIC_NUMBER,
+                "comment": "WeekendFlat",
+                "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+            })
+            if res and getattr(res, 'retcode', None) == mt5.TRADE_RETCODE_DONE:
+                closed += 1
+                logger.info(f"[WEEKEND] closed {pos.symbol} #{pos.ticket} before the weekly close")
+            else:
+                logger.warning(f"[WEEKEND] could not close {pos.symbol} #{pos.ticket}: "
+                               f"{getattr(res, 'comment', 'no result')}")
+
+        for order in (mt5.orders_get() or []):
+            if getattr(order, 'magic', None) != MAGIC_NUMBER:
+                continue
+            mt5.order_delete(order.ticket)
+            closed += 1
+            logger.info(f"[WEEKEND] cancelled resting order {order.symbol} #{order.ticket}")
+    except Exception as e:
+        logger.error(f"[WEEKEND] flatten failed: {e}")
+    return closed
 
 
 def get_active_macro_window() -> Optional[str]:
@@ -10975,6 +11182,41 @@ def ai_trading_session():
                 _thr_mgr.Thread(target=manage_all_positions, daemon=True).start()
                 _thr_mgr.Thread(target=check_swappy_expirations, daemon=True).start()
 
+            # --- 2b. WEEKEND GAP PROTECTION ---
+            #
+            # Runs right after management and before anything that could open
+            # a position. FLATTEN closes everything and cancels resting orders
+            # (a stop order left on the book can be triggered by the Sunday gap
+            # itself, at a price nobody chose); NO_NEW lets existing trades
+            # keep being managed but stops new ones being taken into the close.
+            #
+            # The flatten is latched on the calendar date so it fires once per
+            # weekend rather than every cycle for the next 48 hours.
+            _wk = weekend_state()
+            if _wk == 'FLATTEN':
+                _wk_key = ny_now().strftime('%Y-%W')
+                if getattr(state, '_weekend_flat_done', None) != _wk_key:
+                    _n_flat = flatten_for_weekend()
+                    state._weekend_flat_done = _wk_key
+                    if _n_flat:
+                        logger.warning(f"[WEEKEND] flattened {_n_flat} position(s)/order(s) "
+                                       f"before the weekly close")
+                        send_telegram_notification(
+                            f"<b>WEEKEND FLAT</b>\n\nClosed {_n_flat} position(s)/order(s) "
+                            f"before the weekly close -- a stop cannot protect a position "
+                            f"across a Sunday gap.")
+                    else:
+                        logger.info("[WEEKEND] market closed, nothing open")
+                time.sleep(30)
+                continue
+            elif _wk == 'NO_NEW':
+                if not getattr(state, '_weekend_no_new_logged', False):
+                    logger.info("[WEEKEND] Friday cut-off passed -- managing open trades, "
+                                "taking no new ones")
+                    state._weekend_no_new_logged = True
+            else:
+                state._weekend_no_new_logged = False
+
             # --- 3. UPDATE CLOSED TRADES (throttled: max every 10s) ---
             if not hasattr(state, '_last_closed_time'): state._last_closed_time = 0.0
             if time.time() - state._last_closed_time >= 10.0:
@@ -11098,6 +11340,14 @@ def ai_trading_session():
             if not hasattr(state, '_rej'):
                 state._rej = {k: 0 for k in ['no_data','no_setup','banned','cooldown',
                                                'same_candle','edge_ignore','throttle','position_exists']}
+
+            # No new entries once Friday's cut-off has passed. Checked here
+            # rather than only at the top of the cycle because the scan below
+            # is the one thing that can open a position, and management above
+            # must keep running either way.
+            if _wk == 'NO_NEW':
+                time.sleep(5)
+                continue
 
             for symbol in actual_symbols:
                 # Skip if this bot already has a position OR A PENDING ORDER on
