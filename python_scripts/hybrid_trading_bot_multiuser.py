@@ -5089,10 +5089,44 @@ approved=true only when score>=7."""
             prompt,
             system_prompt="You are a JSON-only ICT trade validator. Return only the JSON object.",
             temperature=0.1,
-            max_tokens=200,
+            # 200 was too tight for a reasoning-capable model: thinking tokens
+            # are charged against this budget, so the response could be cut off
+            # before it emitted any JSON at all -- producing exactly the silent
+            # rejection described below. The JSON itself is ~40 tokens.
+            max_tokens=800,
             json_mode=True
         )
         result = _parse_ai_json(raw)
+
+        # AN AI THAT SAYS NOTHING IS NOT AN AI THAT SAYS "MARGINAL".
+        #
+        # _parse_ai_json returns {} for an empty, truncated or non-JSON reply.
+        # The .get() defaults below then manufactured score=5 ("marginal skip"
+        # per this function's own prompt), approved=False, reason="No reason
+        # given" -- a verdict indistinguishable from a considered rejection,
+        # logged in that exact wording. Live logs showed dozens of SSM setups
+        # a minute all rejected with `score=5/10 approved=False | No reason
+        # given`, which is the fingerprint of this default, not of a model
+        # actually scoring anything: a real reply must carry a `reason`,
+        # because the prompt's JSON schema demands one.
+        #
+        # So the bot found setups continuously and placed nothing, and the log
+        # read as if the AI were carefully declining each one.
+        #
+        # Treat a reply missing the fields that matter as what it is -- no
+        # answer -- and degrade to the same honest L1-bias fallback used when
+        # Gemini isn't configured, which fails closed and cannot fabricate an
+        # endorsement. Log the raw reply (truncated) so the cause is visible
+        # rather than inferred; it contains only our own prompt's echo, no
+        # credentials.
+        if not isinstance(result, dict) or 'score' not in result or 'reason' not in result:
+            logger.warning(
+                f"[AI L3] {symbol} {direction}: unusable response from "
+                f"{getattr(config, 'GEMINI_MODEL', '?')} -- falling back to L1 bias. "
+                f"raw={str(raw)[:300]!r}"
+            )
+            return _l3_bias_fallback(symbol, direction, 'AI returned no usable JSON')
+
         score  = int(result.get('score', 5))
         approved = bool(result.get('approved', score >= 7))
         reason   = str(result.get('reason', 'No reason given'))
