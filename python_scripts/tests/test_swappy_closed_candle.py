@@ -49,14 +49,14 @@ def _bars(rows):
     })
 
 
-# A clean SWAPPY_BEAR: two red legs with ~75% bodies, then a green pullback
-# that holds below C1's high. Padding bars keep the 20-bar body average and
-# the >=5-row length requirement satisfied.
+# A clean SWAPPY_BEAR: two red legs whose bodies clear the spec's 80% floor,
+# then a green pullback that holds below C1's high. Padding bars keep the
+# 20-bar body average and the >=5-row length requirement satisfied.
 PAD = [(100.0, 100.2, 99.8, 100.0)] * 20
-C1  = (100.0, 100.05, 99.20, 99.35)     # red, body 0.65 of 0.85 range = 76%
-C2  = ( 99.35,  99.40, 98.55, 98.70)    # red, same shape, lower high
-C3  = ( 98.70,  98.95, 98.65, 98.90)    # green pullback, closes below C1 high
-FORMING = (98.90, 99.00, 98.80, 98.85)  # the unfinished bar
+C1  = (100.00, 100.02, 99.22, 99.30)    # red, body 0.70 of 0.80 range = 87.5%
+C2  = ( 99.30,  99.32, 98.52, 98.60)    # red, same shape, lower high
+C3  = ( 98.60,  98.90, 98.55, 98.85)    # green pullback, closes below C1 high
+FORMING = (98.85, 98.95, 98.75, 98.80)  # the unfinished bar
 
 
 def t1():
@@ -157,6 +157,43 @@ def t8():
     assert c['setup_candle_time'] != a['setup_candle_time'], \
         "a different candle must get a different latch key"
 check("the latch key identifies the setup candle, not the symbol", t8)
+
+
+def t9():
+    # THE BODY FILTER WAS A BAND, NOT A FLOOR.
+    #
+    # `0.70 <= body_pct <= 0.80` rejected a 90%-body candle -- the strongest
+    # possible trend leg, and exactly what a momentum continuation setup
+    # hunts for. 9.3% of Swappy's C1 rejections were for being too STRONG
+    # (backtest/README.md, "The Swappy C1 finding").
+    #
+    # The floor stays at 0.70 rather than the published spec's 0.80: measured
+    # on XAUUSDm/90d the >80% cohort averaged +0.152R against the +0.223R the
+    # 70-80% candles already earn, so a 0.80 floor would drop the better
+    # cohort. See the filter's own comment for the full numbers.
+    #
+    # Real candles, not source text -- a source-string check would pass on a
+    # comment quoting the old threshold.
+    strong = [(100.00, 100.01, 99.21, 99.30),   # body 0.70 / range 0.80 = 87.5%
+              ( 99.30,  99.31, 98.51, 98.60)]
+    mid    = [(100.00, 100.05, 99.20, 99.35),   # body 0.65 / range 0.85 = 76.5%
+              ( 99.35,  99.40, 98.55, 98.70)]
+    weak   = [(100.00, 100.30, 99.40, 99.70),   # body 0.30 / range 0.90 = 33%
+              ( 99.70,  99.95, 99.05, 99.35)]
+    tail_s = ( 98.60,  98.90, 98.55, 98.85)
+    tail_m = ( 98.70,  98.95, 98.65, 98.90)
+    tail_w = ( 99.35,  99.60, 99.30, 99.55)
+
+    r_strong = bot.detect_swappy_3c(_bars(PAD + strong + [tail_s]), 'SELL')
+    r_mid    = bot.detect_swappy_3c(_bars(PAD + mid    + [tail_m]), 'SELL')
+    r_weak   = bot.detect_swappy_3c(_bars(PAD + weak   + [tail_w]), 'SELL')
+    assert r_strong['confirmed'], \
+        "an 87% body was rejected -- the upper bound is still there"
+    assert r_mid['confirmed'], \
+        "a 76% body was rejected -- the floor was raised above 0.70"
+    assert not r_weak['confirmed'], \
+        "a 33% body was accepted -- there is no floor at all"
+check("body filter is a >=0.70 floor with no upper bound", t9)
 
 
 print(f"\n{passed} passed, {failed} failed")

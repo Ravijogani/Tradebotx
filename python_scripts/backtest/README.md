@@ -862,7 +862,10 @@ either needed loosening or needed nothing:
 - **Swappy 3C**'s thinness is intrinsic to its own pattern definition (two
   candles at 70-80% body with a higher-low/lower-high plus a failed
   pullback, all in the same 3-bar window) — a rare shape by construction,
-  predating this session. Its liquidity-confluence and (new, this pass)
+  predating this session. *(Superseded 2026-08-18: the upper bound was
+  removed, so the filter is now `body_pct >= 0.70`. See "The Swappy C1
+  finding" below — that upper bound was itself a large part of the
+  thinness described here.)* Its liquidity-confluence and (new, this pass)
   premium/discount/OTE additions are pure strength bonuses that never gate
   `confirmed` — the regime gate was tried here too and reverted specifically
   because it hurt Swappy (see the regime-router section). No evidence this
@@ -1232,8 +1235,35 @@ Removed-vs-kept on the newly admitted setups: **22 trades, +3.35R total,
 strategy already takes. So relaxing the band roughly doubles total profit
 while diluting per-trade quality. That is a judgment call about whether this
 bot wants frequency or selectivity, not an obvious bug fix, and it rests on
-22 new trades from one instrument in one window. **Left reverted**, recorded
-here with the numbers, for a deliberate decision rather than a silent one.
+22 new trades from one instrument in one window. Recorded here with the
+numbers so the decision could be made deliberately rather than silently.
+
+**Decision taken (2026-08-18): shipped as `body_pct >= 0.70`, upper bound
+removed.** The trigger was comparing the code against the published Swappy 3C
+spec, which calls for a body of **at least 80%** of range. Taken literally
+that means a *floor at 0.80* — and the table above says that would have been
+the worst of the three options available:
+
+| C1/C2 body filter | Trades | Expectancy | Equity |
+|---|---|---|---|
+| `[0.70, 0.80]` — as written | 18 | +0.223R | +4.01R |
+| `[0.70, 1.00]` — **shipped** | 40 | +0.184R | **+7.37R** |
+| `[0.80, 1.00]` — the literal spec | ≤22 | +0.152R | ≤+3.35R |
+
+The third row is derived, not run: the >80% cohort in isolation is what a
+0.80 floor admits, and it is an *upper* bound because the floor demands both
+C1 **and** C2 clear 0.80 while that cohort includes setups where only one did.
+
+So the published rule is worse here than either the old band or the shipped
+floor. The likeliest reason is instrument: Swappy 3C is documented for Nifty
+and Bank Nifty index options, and index candles do not wick like XAUUSD or FX
+majors, so an 80% body means something different on each. 0.70 admits
+everything the spec asks for *plus* the 70–80% cohort that measures best per
+trade.
+
+The sample is still 18–40 trades on one instrument in one window. This is the
+best available evidence, not a settled answer — re-run all three rows once
+more symbols have been exported.
 
 ### Live exit attribution — closing the loop the LIVE bot was missing
 

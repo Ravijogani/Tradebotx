@@ -4003,10 +4003,10 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
 
         def _leg_notes(c1_ok, c2_ok, seq_ok, c3_ok, holds_ok, seq_label):
             # body_pct recorded as the `value` so a rejection can be diagnosed
-            # rather than guessed at: the band is 0.70 <= body_pct <= 0.80, an
-            # upper AND lower bound, so this distinguishes "candle too weak"
-            # (a correct rejection) from "candle too STRONG" (a candle with a
-            # 90% body is a better trend candle and is currently thrown away).
+            # rather than guessed at: the test is body_pct >= 0.70, so this
+            # says how far short a rejected candle fell. (It used to be a
+            # BAND, 0.70-0.80, which threw away the strongest trend candles --
+            # see the filter itself for that history and the numbers.)
             _bp1, _bp2 = round(body_pct(c1), 3), round(body_pct(c2), 3)
             _sj.note(dj.TRIGGER, 'c1_trend_candle',
                      dj.CONFIRMED if c1_ok else dj.VETO,
@@ -4039,10 +4039,42 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                      else 'C3 broke through C1 -- pullback was not rejected')
 
         if direction == 'BUY':
-            # Two green candles then one red pullback
-            # Threshold 0.25/0.20: realistic for M5 scalping candles (Asian session has small candles)
-            c1_green = is_green(c1) and 0.70 <= body_pct(c1) <= 0.80 and body(c1) >= avg_body * 0.5
-            c2_green = is_green(c2) and 0.70 <= body_pct(c2) <= 0.80
+            # Two green candles then one red pullback.
+            #
+            # BODY FILTER: a FLOOR, not a band. This used to read
+            # `0.70 <= body_pct(c) <= 0.80`, which rejected a 90%-body candle
+            # -- the strongest possible trend leg, and exactly what a momentum
+            # continuation setup is hunting for. The stale comment that used to
+            # sit here ("Threshold 0.25/0.20") did not match the numbers on the
+            # line either, so the upper bound looks like leftover tuning rather
+            # than a decision.
+            #
+            # WHY 0.70 AND NOT THE SPEC'S 0.80. The published Swappy 3C rule is
+            # "real body at least 80% of range". Our own instrumentation says
+            # otherwise for the instruments this bot actually trades
+            # (backtest/README.md, "The Swappy C1 finding"): 94.8% of Swappy's
+            # 10,383 declined setups die on C1, and of those, 9.3% were
+            # rejected for being too STRONG. Removing the upper bound was
+            # measured on XAUUSDm/90d:
+            #
+            #     [0.70, 0.80]  18 trades  +0.223R/trade  +4.01R total
+            #     [0.70, 1.00]  40 trades  +0.184R/trade  +7.37R total
+            #
+            # and the >80% cohort alone averaged +0.152R -- worse per trade
+            # than the 70-80% candles the spec would have us discard. So a
+            # floor at 0.80 would have been the worst of the three: it drops
+            # our best cohort to chase a rule calibrated on Nifty index
+            # candles, which do not wick like XAUUSD or FX majors. 0.70 admits
+            # everything the spec wants plus that cohort.
+            #
+            # Caveat kept deliberately visible: one instrument, one window,
+            # 18-40 trades. Re-measure before treating this as settled.
+            #
+            # avg_body * 0.5 stays: body_pct is a RATIO, so a tiny candle can
+            # score 90% on a 2-pip range. That floor keeps "strong trend
+            # candle" meaning strong in absolute terms too.
+            c1_green = is_green(c1) and body_pct(c1) >= 0.70 and body(c1) >= avg_body * 0.5
+            c2_green = is_green(c2) and body_pct(c2) >= 0.70
             # C2 low >= C1 low: higher lows = trend intact
             higher_low = c2['low'] >= c1['low'] * 0.9995
             # C3 red but fails to close below C1 low (bears rejected)
@@ -4116,8 +4148,10 @@ def detect_swappy_3c(df: 'pd.DataFrame', direction: str,
                 }
 
         elif direction == 'SELL':
-            c1_red = is_red(c1) and 0.70 <= body_pct(c1) <= 0.80 and body(c1) >= avg_body * 0.5
-            c2_red = is_red(c2) and 0.70 <= body_pct(c2) <= 0.80
+            # Body filter >= 0.70 -- see the BUY leg above for why this is a
+            # floor and not a band, and why 0.70 rather than the spec's 0.80.
+            c1_red = is_red(c1) and body_pct(c1) >= 0.70 and body(c1) >= avg_body * 0.5
+            c2_red = is_red(c2) and body_pct(c2) >= 0.70
             lower_high = c2['high'] <= c1['high'] * 1.0005
             c3_green = is_green(c3)
             c3_holds = c3['close'] < c1['high']
