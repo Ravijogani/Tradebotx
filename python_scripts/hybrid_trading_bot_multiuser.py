@@ -10960,7 +10960,12 @@ def strategy_banko_smc(df_m15: Optional['pd.DataFrame'],
             return None
 
         # ---- LEG 5: invalidation beyond the sweep extreme ---------------
-        buf = st.structure_buffer(atr_m5, get_spread(symbol) if symbol else 0.0)
+        try:
+            _tick = mt5.symbol_info_tick(symbol) if symbol else None
+            _spread = calculate_spread_correctly(symbol, _tick) if _tick else 0.0
+        except Exception:
+            _spread = 0.0
+        buf = st.structure_buffer(atr_m5, _spread)
         sl = (sweep['extreme'] - buf) if direction == 'BUY' else (sweep['extreme'] + buf)
         sl_dist = abs(cur_price - sl)
         if sl_dist <= 0:
