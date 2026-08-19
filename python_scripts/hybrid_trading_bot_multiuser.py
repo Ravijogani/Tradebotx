@@ -8325,7 +8325,35 @@ def weekend_state(now_ny: Optional[datetime] = None) -> str:
     return 'OPEN'
 
 
+def order_delete_compat(ticket) -> bool:
+    """
+    Cancel a pending order.
+
+    The MetaTrader5 python package has no mt5.order_delete() -- pending orders
+    are removed with an order_send(TRADE_ACTION_REMOVE) request. Calling the
+    non-existent attribute raised:
+        module 'MetaTrader5' has no attribute 'order_delete'
+    """
+    try:
+        fn = getattr(mt5, 'order_delete', None)
+        if callable(fn):
+            return bool(fn(ticket))
+        res = mt5.order_send({
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": int(ticket),
+        })
+        ok = bool(res) and getattr(res, 'retcode', None) == mt5.TRADE_RETCODE_DONE
+        if not ok:
+            logger.warning(f"[CANCEL] could not remove pending order #{ticket}: "
+                           f"{getattr(res, 'comment', 'no result')}")
+        return ok
+    except Exception as e:
+        logger.error(f"[CANCEL] order removal failed for #{ticket}: {e}")
+        return False
+
+
 def flatten_for_weekend() -> int:
+
     """
     Close every position this bot owns, and cancel its resting orders.
 
