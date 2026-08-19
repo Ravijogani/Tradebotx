@@ -808,6 +808,27 @@ class AITradingConfig:
 
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
+    # BANKO -- the all-day SMC/ICT scalping engine (strategy_banko_smc).
+    # HTF bias -> M15 liquidity sweep -> displaced M5 MSS -> FVG retest,
+    # stop beyond the sweep extreme, target the next liquidity pool. It
+    # runs in every session on purpose (the mandate is continuous equity
+    # growth), and compensates outside the killzones by requiring a
+    # higher RR rather than by standing aside.
+    ENABLE_STRATEGY_BANKO: bool = True
+    # How far back on the structure timeframe to look for the raid.
+    BANKO_SWEEP_LOOKBACK: int = 14
+    # Minimum displacement behind the structure break, as an ATR multiple.
+    # Below this a break is drift, and drift retraces through the entry.
+    BANKO_DISPLACEMENT_ATR_MULT: float = 1.2
+    # How close to the FVG price must return before BANKO will enter. It
+    # never enters on the displacement candle itself -- no chasing.
+    BANKO_FVG_TOLERANCE_ATR_MULT: float = 0.20
+    # Widest invalidation BANKO will accept, ATR multiples. Beyond this
+    # the sweep is too far behind price for the trade to still be a scalp.
+    BANKO_MAX_SL_ATR_MULT: float = 3.5
+    # RR bar: inside a killzone vs outside one.
+    BANKO_MIN_RR: float = 2.0
+    BANKO_OFF_KILLZONE_MIN_RR: float = 2.5
     # Anchor the standard-deviation reference range on the NY session window
     # (midnight range, or the 08:30 / 09:30 / 10:00 leg) while one is open,
     # instead of the rolling 10-bar window. Outside those windows behaviour is
@@ -10694,6 +10715,359 @@ def strategy_ema_scalp_cross(df_m5: 'pd.DataFrame', direction: str, symbol: str 
         return None
 
 
+# =============================================================================
+# STRATEGY: BANKO -- all-day SMC/ICT scalping engine
+# =============================================================================
+def _banko_in_killzone(ts) -> Tuple[bool, str]:
+    """
+    ICT killzones in UTC. BANKO is deliberately allowed to trade OUTSIDE
+    them (the mandate is "find scalping opportunity all day"), but a
+    setup outside a killzone has to clear a higher RR bar -- outside the
+    killzones the same pattern is measurably more likely to be range
+    noise rather than a real algorithmic delivery. So this returns a
+    label rather than acting as a gate.
+    """
+    try:
+        hour = int(getattr(ts, 'hour', datetime.now(timezone.utc).hour))
+    except Exception:
+        hour = datetime.now(timezone.utc).hour
+    if 0 <= hour < 4:
+        return True, 'ASIA'
+    if 7 <= hour < 10:
+        return True, 'LONDON'
+    if 12 <= hour < 15:
+        return True, 'NY_AM'
+    if 17 <= hour < 19:
+        return True, 'NY_PM'
+    return False, 'OFF_KILLZONE'
+
+
+def _banko_find_sweep(df: 'pd.DataFrame', direction: str, atr: float,
+                      lookback: int = 14) -> Optional[Dict[str, Any]]:
+    """
+    Leg 1 of the BANKO sequence: a liquidity sweep AGAINST the intended
+    direction, rejected within the same or the next bar.
+
+    For a BUY we need sell-side liquidity taken: a bar whose LOW trades
+    below a prior swing low (resting stops) but whose CLOSE comes back
+    ABOVE that low. A bar that closes below and stays below is not a
+    sweep -- it is a break, and buying it is buying into a real move
+    down. That distinction is the whole trade; it is checked explicitly
+    rather than inferred from a wick ratio.
+
+    Returns {'idx', 'level', 'extreme', 'bars_ago'} or None. `extreme`
+    is the sweep's own high/low -- the invalidation point the stop goes
+    beyond, NOT an ATR guess.
+    """
+    if df is None or len(df) < lookback + 8:
+        return None
+    try:
+        closed = df.iloc[:-1]                      # ignore the forming bar
+        window = closed.iloc[-lookback:]
+        for pos in range(len(window) - 1, -1, -1):
+            bar = window.iloc[pos]
+            # prior structure the sweep is supposed to have raided --
+            # everything before this bar inside the pre-window history
+            prior_end = len(closed) - len(window) + pos
+            prior = closed.iloc[max(0, prior_end - 40):prior_end]
+            if len(prior) < 8:
+                continue
+            if direction == 'BUY':
+                level = float(prior['low'].iloc[:-2].min()) if len(prior) > 2 else float(prior['low'].min())
+                took_liquidity = float(bar['low']) < level
+                rejected = float(bar['close']) > level
+                extreme = float(bar['low'])
+            else:
+                level = float(prior['high'].iloc[:-2].max()) if len(prior) > 2 else float(prior['high'].max())
+                took_liquidity = float(bar['high']) > level
+                rejected = float(bar['close']) < level
+                extreme = float(bar['high'])
+            if not (took_liquidity and rejected):
+                continue
+            # The raid has to be a real excursion, not a one-tick graze
+            # that no stop cluster actually sat under.
+            if abs(level - extreme) < atr * 0.10:
+                continue
+            return {'idx': prior_end, 'level': level, 'extreme': extreme,
+                    'bars_ago': len(window) - pos}
+        return None
+    except Exception:
+        return None
+
+
+def _banko_market_structure_shift(df: 'pd.DataFrame', direction: str,
+                                  since_idx: int, atr: float,
+                                  displacement_mult: float) -> Optional[Dict[str, Any]]:
+    """
+    Leg 2: after the sweep, the lower timeframe must SHIFT -- a closed
+    bar through the last opposing swing, carried by a displacement
+    candle (range >= displacement_mult * ATR). A break with no
+    displacement behind it is drift, and drift retraces straight back
+    through the entry.
+    """
+    if df is None or len(df) < 12:
+        return None
+    try:
+        closed = df.iloc[:-1]
+        if since_idx >= len(closed) - 2:
+            return None
+        pre = closed.iloc[max(0, since_idx - 30):since_idx + 1]
+        post = closed.iloc[since_idx + 1:]
+        if len(pre) < 5 or len(post) < 2:
+            return None
+        if direction == 'BUY':
+            structure_level = float(pre['high'].max())
+            broke = post['close'].astype(float) > structure_level
+        else:
+            structure_level = float(pre['low'].min())
+            broke = post['close'].astype(float) < structure_level
+        if not bool(broke.any()):
+            return None
+        break_pos = int(broke.values.argmax())
+        # displacement measured over the breaking bar and the two before
+        leg = post.iloc[max(0, break_pos - 2):break_pos + 1]
+        rng = float((leg['high'].astype(float) - leg['low'].astype(float)).max())
+        body = float((leg['close'].astype(float) - leg['open'].astype(float)).abs().max())
+        if rng < atr * displacement_mult or body < rng * 0.45:
+            return None
+        return {'level': structure_level,
+                'break_idx': since_idx + 1 + break_pos,
+                'displacement': rng / atr if atr else 0.0}
+    except Exception:
+        return None
+
+
+def strategy_banko_smc(df_m15: Optional['pd.DataFrame'],
+                       df_m5: 'pd.DataFrame',
+                       df_m1: Optional['pd.DataFrame'],
+                       direction: str,
+                       symbol: str = "",
+                       df_h1: Optional['pd.DataFrame'] = None,
+                       df_d1: Optional['pd.DataFrame'] = None) -> Optional[Dict[str, Any]]:
+    """
+    BANKO -- continuous SMC/ICT scalping engine.
+
+    The full ICT sequence, in order, with every leg an actual gate:
+
+      1. HTF bias        -- supplied by the caller (_trade_direction, the
+                            same H4/H1 read every other strategy uses).
+      2. Liquidity sweep -- M15 raid of the opposing side's resting stops
+                            that CLOSES back inside (_banko_find_sweep).
+                            Counter-direction sweep, same-direction trade:
+                            this is why BANKO aligns with HTF bias instead
+                            of fighting it.
+      3. MSS             -- M5 closed-bar break of the opposing swing with
+                            displacement behind it.
+      4. Entry           -- retest of the unmitigated FVG the displacement
+                            left behind. If price hasn't come back to the
+                            gap yet, BANKO returns None and waits; it does
+                            NOT chase the displacement candle. The M1 gap
+                            is used when the M5 one has already been
+                            filled, for entry precision.
+      5. Invalidation    -- stop beyond the SWEEP EXTREME (the only price
+                            that actually disproves the idea), not an ATR
+                            multiple.
+      6. Target          -- the next opposing liquidity pool
+                            (mi.nearest_liquidity_target), not a fixed RR.
+
+    Runs all day by design; outside the killzones it simply has to clear
+    a higher RR bar (BANKO_OFF_KILLZONE_MIN_RR) rather than being blocked,
+    since the mandate is continuous equity growth, not session purity.
+    """
+    try:
+        if df_m5 is None or len(df_m5) < 60:
+            return None
+        struct_df = df_m15 if (df_m15 is not None and len(df_m15) >= 40) else df_m5
+        cur_price = float(df_m5['close'].iloc[-1])
+        atr_m5 = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
+        atr_struct = float(calculate_atr(struct_df['high'], struct_df['low'],
+                                         struct_df['close'], 14).iloc[-1])
+        if not atr_m5 or atr_m5 <= 0 or not atr_struct or atr_struct <= 0:
+            return None
+
+        _bj = dj.DecisionJournal(symbol, direction=direction, strategy='BANKO')
+        in_kz, kz_name = _banko_in_killzone(df_m5['time'].iloc[-1] if 'time' in df_m5.columns else None)
+        _bj.note(dj.REGIME, 'killzone', dj.CONFIRMED if in_kz else dj.WEAK,
+                 (f'inside the {kz_name} killzone' if in_kz else
+                  'outside every killzone -- allowed, but held to a higher RR bar'),
+                 value=kz_name)
+
+        # ---- LEG 2: liquidity sweep on the structure timeframe ----------
+        sweep = _banko_find_sweep(struct_df, direction, atr_struct,
+                                  lookback=getattr(config, 'BANKO_SWEEP_LOOKBACK', 14))
+        _bj.note(dj.LIQUIDITY, 'liquidity_sweep',
+                 dj.CONFIRMED if sweep else dj.VETO,
+                 (f"opposing liquidity at {sweep['level']:.4f} was raided to "
+                  f"{sweep['extreme']:.4f} and rejected" if sweep else
+                  'no opposing-side sweep that closed back inside'))
+        if not sweep:
+            _bj.decide(False, 'no liquidity sweep -- nothing was engineered to reverse from')
+            dj.record_rejection(_bj)
+            return None
+
+        # ---- LEG 3: market structure shift on M5 ------------------------
+        # The sweep index is in struct_df space. When the structure frame
+        # IS M5 the index carries over directly; when it's M15 we map by
+        # timestamp so the MSS is only searched for AFTER the raid.
+        if struct_df is df_m5:
+            since_idx = sweep['idx']
+        else:
+            try:
+                sweep_time = struct_df['time'].iloc[sweep['idx']]
+                since_idx = int((df_m5['time'] <= sweep_time).sum()) - 1
+            except Exception:
+                since_idx = max(0, len(df_m5) - 1 - sweep['bars_ago'] * 3)
+            since_idx = max(0, min(since_idx, len(df_m5) - 4))
+
+        mss = _banko_market_structure_shift(
+            df_m5, direction, since_idx, atr_m5,
+            getattr(config, 'BANKO_DISPLACEMENT_ATR_MULT', 1.2))
+        _bj.note(dj.STRUCTURE, 'market_structure_shift',
+                 dj.CONFIRMED if mss else dj.VETO,
+                 (f"M5 closed through {mss['level']:.4f} with "
+                  f"{mss['displacement']:.1f}x ATR displacement" if mss else
+                  'no displaced M5 structure break after the sweep'))
+        if not mss:
+            _bj.decide(False, 'sweep never converted into a structure shift')
+            dj.record_rejection(_bj)
+            return None
+
+        # ---- LEG 4: entry on the retest of the imbalance ----------------
+        # M5 gap first; fall back to the M1 gap for precision when the M5
+        # one has already been consumed.
+        zones = mi.detect_fvg_zones(df_m5, direction, lookback=20)
+        zone_tf = 'M5'
+        if not zones and df_m1 is not None and len(df_m1) > 25:
+            zones = mi.detect_fvg_zones(df_m1, direction, lookback=25)
+            zone_tf = 'M1'
+        _bj.note(dj.STRUCTURE, 'imbalance_present',
+                 dj.CONFIRMED if zones else dj.VETO,
+                 (f'{zone_tf} displacement left an unmitigated FVG' if zones else
+                  'displacement left no unmitigated FVG to retrace into'))
+        if not zones:
+            _bj.decide(False, 'no imbalance to enter on')
+            dj.record_rejection(_bj)
+            return None
+
+        zone = zones[0]
+        tolerance = atr_m5 * getattr(config, 'BANKO_FVG_TOLERANCE_ATR_MULT', 0.20)
+        if direction == 'BUY':
+            at_zone = cur_price <= zone['high'] + tolerance
+        else:
+            at_zone = cur_price >= zone['low'] - tolerance
+        _bj.note(dj.TRIGGER, 'fvg_retest',
+                 dj.CONFIRMED if at_zone else dj.VETO,
+                 (f"price back at the {zone_tf} FVG "
+                  f"({zone['low']:.4f}-{zone['high']:.4f})" if at_zone else
+                  'price still extended away from the FVG -- waiting for the retrace, not chasing'))
+        if not at_zone:
+            _bj.decide(False, 'no retest yet -- refusing to chase displacement')
+            dj.record_rejection(_bj)
+            return None
+
+        # The retrace must not have destroyed the shift it is retracing
+        # into: a close back beyond the MSS level means the break failed.
+        if direction == 'BUY':
+            shift_intact = float(df_m5['close'].iloc[-2]) > sweep['extreme']
+        else:
+            shift_intact = float(df_m5['close'].iloc[-2]) < sweep['extreme']
+        _bj.note(dj.STRUCTURE, 'shift_still_valid',
+                 dj.CONFIRMED if shift_intact else dj.VETO,
+                 'the reversal leg is still intact' if shift_intact else
+                 'price traded back through the sweep extreme -- setup dead')
+        if not shift_intact:
+            _bj.decide(False, 'sweep extreme violated')
+            dj.record_rejection(_bj)
+            return None
+
+        # ---- LEG 5: invalidation beyond the sweep extreme ---------------
+        try:
+            _tick = mt5.symbol_info_tick(symbol) if symbol else None
+            _spread = calculate_spread_correctly(symbol, _tick) if _tick else 0.0
+        except Exception:
+            _spread = 0.0
+        buf = st.structure_buffer(atr_m5, _spread)
+        sl = (sweep['extreme'] - buf) if direction == 'BUY' else (sweep['extreme'] + buf)
+        sl_dist = abs(cur_price - sl)
+        if sl_dist <= 0:
+            return None
+        # A stop this wide is no longer a scalp -- the sweep is too far
+        # behind price to risk against.
+        max_sl = atr_m5 * getattr(config, 'BANKO_MAX_SL_ATR_MULT', 3.5)
+        _bj.note(dj.RISK, 'invalidation_distance',
+                 dj.CONFIRMED if sl_dist <= max_sl else dj.VETO,
+                 f'stop sits {sl_dist / atr_m5:.1f}x ATR beyond the sweep extreme')
+        if sl_dist > max_sl:
+            _bj.decide(False, 'invalidation too far -- not a scalp any more')
+            dj.record_rejection(_bj)
+            return None
+
+        # ---- LEG 6: target = the next opposing liquidity pool -----------
+        levels = cached_liquidity_reference_levels(df_d1, df_h1) if df_h1 is not None else []
+        try:
+            levels = list(levels) + [
+                {'label': f"{zone_tf}_POOL_{i}", 'price': p['price'],
+                 'side': p['side'], 'swept': p['swept']}
+                for i, p in enumerate(mi.build_liquidity_map(struct_df) or [])
+            ]
+        except Exception:
+            pass
+        min_rr = (getattr(config, 'BANKO_MIN_RR', 2.0) if in_kz
+                  else getattr(config, 'BANKO_OFF_KILLZONE_MIN_RR', 2.5))
+        tp = mi.nearest_liquidity_target(cur_price, direction, levels, sl_dist, min_rr=min_rr)
+        if tp is None:
+            # No named pool clears the bar -- fall back to the structural
+            # swing target, still held to the same RR.
+            tgt = st.liquidity_targets(struct_df, direction, cur_price, sl_dist, min_rr=min_rr)
+            tp = (tgt or {}).get('tp2') or (tgt or {}).get('tp1')
+        rr = (abs((tp or 0) - cur_price) / sl_dist) if tp else 0.0
+        _bj.note(dj.LIQUIDITY, 'draw_on_liquidity',
+                 dj.CONFIRMED if (tp and rr >= min_rr) else dj.VETO,
+                 (f'next opposing pool at {tp:.4f} gives {rr:.1f}R' if tp else
+                  f'no liquidity pool clears {min_rr:.1f}R from here'))
+        if not tp or rr < min_rr:
+            _bj.decide(False, f'no draw on liquidity worth {min_rr:.1f}R')
+            dj.record_rejection(_bj)
+            return None
+
+        _bj.measure(atr_m5=round(atr_m5, 5), sl_distance=round(sl_dist, 5),
+                    rr=round(rr, 2), displacement=round(mss['displacement'], 2),
+                    sweep_extreme=round(sweep['extreme'], 5))
+        _bj.decide(True, f'full BANKO sequence confirmed in {kz_name}')
+
+        setup = {
+            'signal':        direction,
+            'reason':        f'BANKO_SMC_{kz_name}',
+            'stop_loss':     float(sl),
+            'strategy_type': 'BANKO',
+            # Reuses the generic structural-TP hint channel consumed by
+            # get_dynamic_trade_params (named ema50_tp for historical
+            # reasons -- it is the only TP-override input that function
+            # accepts, and it applies its own RR sanity check on top).
+            'ema50_tp':      float(tp),
+            'entry_price':   cur_price,
+            'liquidity_distance':  0.85,
+            'liquidity_strength':  min(1.0, 0.75 + (0.15 if in_kz else 0.0)),
+            'momentum_state':      min(1.0, 0.6 + mss['displacement'] * 0.15),
+            'structure_alignment': 0.9,
+            'htf_needed':    False,
+            'banko': {'sweep_level': sweep['level'], 'sweep_extreme': sweep['extreme'],
+                      'mss_level': mss['level'], 'fvg': zone, 'fvg_tf': zone_tf,
+                      'killzone': kz_name, 'rr': rr},
+            'journal': _bj.to_dict(),
+        }
+        logger.info(f"[BANKO] {symbol}: {direction} sequence complete -- sweep "
+                    f"{sweep['level']:.4f}->{sweep['extreme']:.4f}, MSS {mss['level']:.4f} "
+                    f"({mss['displacement']:.1f}x ATR), {zone_tf} FVG retest @ {cur_price:.4f}, "
+                    f"SL {sl:.4f}, TP {tp:.4f} ({rr:.1f}R, {kz_name})")
+        return setup
+    except Exception as _bk_err:
+        logger.debug(f"[BANKO] error: {_bk_err}")
+        return None
+
+
+
+
 def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
                                entry_price: float, sl: float, account_equity: float,
                                df_m5: Optional['pd.DataFrame'] = None) -> bool:
@@ -11735,6 +12109,27 @@ def ai_trading_session():
                 # router instead of its own separate auction-state check.
                 if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _regime_ok:
                     setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol, df_h1, _df_d1_liq)
+
+                #
+                # STRATEGY A2: BANKO (SMC/ICT all-day scalping engine)
+                # HTF bias -> M15 liquidity sweep -> displaced M5 MSS ->
+                # FVG retest. Placed AFTER EMA Scalp and BEFORE Swappy so
+                # the cheap indicator cross keeps first refusal, but BANKO
+                # gets its shot before the momentum-continuation setups --
+                # the two would otherwise compete for the same M5 bar and
+                # Swappy (a continuation pattern) would routinely win the
+                # bar right after a sweep reversal, which is exactly the
+                # bar BANKO exists to trade.
+                #
+                # Deliberately NOT gated by _regime_ok: the regime router
+                # stands aside in BALANCE, and a sweep-and-reverse at range
+                # extremes is precisely a balance-regime setup. Its own
+                # sweep + displacement + RR gates are the filter here.
+                #
+                if not setup and getattr(config, 'ENABLE_STRATEGY_BANKO', True):
+                    setup = strategy_banko_smc(df_m15, df_m5, df_m1, _trade_direction,
+                                               symbol, df_h1, _df_d1_liq)
+
 
                 # 
                 # STRATEGY B: SWAPPY 3C (momentum continuation)
