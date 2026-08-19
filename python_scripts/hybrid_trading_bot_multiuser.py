@@ -12905,7 +12905,7 @@ def ai_trading_session():
                     if trade_result is True:
                         signals_found += 1
                         state.last_trade_candle[_candle_key] = current_candle_time
-                            _entries_this_symbol += 1
+                        _entries_this_symbol += 1
                     elif trade_result == "ORDER_FAILED":
                         state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=1)
                         logger.warning(f" [SPAM PREVENT] {symbol} MT5 order rejected. 1-min cooldown.")
