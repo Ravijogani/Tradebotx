@@ -8390,7 +8390,7 @@ def flatten_for_weekend() -> int:
         for order in (mt5.orders_get() or []):
             if getattr(order, 'magic', None) != MAGIC_NUMBER:
                 continue
-            mt5.order_delete(order.ticket)
+            order_delete_compat(order.ticket)
             closed += 1
             logger.info(f"[WEEKEND] cancelled resting order {order.symbol} #{order.ticket}")
     except Exception as e:
@@ -10869,11 +10869,11 @@ def check_swappy_expirations():
         cur  = tick.bid
         if info['direction'] == 'BUY' and cur < info['setup_low']:
             logger.info(f"[SWAPPY CANCEL] {sym} BUY invalidated @ {cur:.4f} < setup_low {info['setup_low']:.4f}")
-            mt5.order_delete(ticket)
+            order_delete_compat(ticket)
             to_remove.append(ticket)
         elif info['direction'] == 'SELL' and cur > info['setup_high']:
             logger.info(f"[SWAPPY CANCEL] {sym} SELL invalidated @ {cur:.4f} > setup_high {info['setup_high']:.4f}")
-            mt5.order_delete(ticket)
+            order_delete_compat(ticket)
             to_remove.append(ticket)
 
     # pos_ids computed once, up at the top of this function now (see the FILLED
