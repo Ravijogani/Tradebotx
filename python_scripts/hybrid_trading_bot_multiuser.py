@@ -806,6 +806,20 @@ class AITradingConfig:
     # verified, flags nobody remembered were off). Recoverable from git
     # history if ever needed; don't rebuild from scratch.
 
+    # INDEPENDENT STRATEGY SCAN -- how many NEW entries a single symbol may
+    # take in one scan cycle, across all strategies combined.
+    #
+    # Every strategy now scans every cycle and contributes its own candidate
+    # (no first-match-wins cascade), and each candidate is risk-checked and
+    # sized on its own. This cap is the safety valve on top of that: at 1,
+    # the strategies all get evaluated -- so a setup no longer dies just
+    # because a higher-priority strategy rejected first -- but the symbol
+    # still takes at most one new position per cycle, keeping per-symbol
+    # exposure identical to the old behavior. Raise it only if you actually
+    # want two strategies holding separate positions on the same symbol at
+    # the same time; that multiplies correlated risk on one instrument.
+    MAX_ENTRIES_PER_SYMBOL_PER_CYCLE: int = 1
+
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
     # BANKO -- the all-day SMC/ICT scalping engine (strategy_banko_smc).
