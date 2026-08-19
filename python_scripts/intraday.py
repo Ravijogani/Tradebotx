@@ -3895,6 +3895,33 @@ def manage_intraday_positions():
                 
                 # GAP 2: Narrative Exit Engine
                 exit_action = NarrativeExitEngine.evaluate_exit(lifecycle, narrative_conf, expansion_prob, liquidity_distance, False)
+
+                # PULLBACK VETO ON DISCRETIONARY EXITS.
+                #
+                # The narrative engine reads momentum, and momentum ALWAYS
+                # deteriorates during a healthy retracement -- that is what a
+                # retracement is. So a full "EXIT" fired mid-pullback closes
+                # trades whose structure is completely intact, right before
+                # the continuation the setup was taken for. The veto only
+                # blocks the discretionary EXIT/SCALE_OUT path, and only when
+                # market structure is still valid AND the retrace is inside a
+                # normal Fibonacci band; a hard stop, a target, an invalidated
+                # narrative (status CLOSED) and total confidence collapse all
+                # remain untouched below.
+                if exit_action in ("EXIT", "SCALE_OUT") and _df_mgmt is not None:
+                    try:
+                        _hold = st.should_hold_through_pullback(
+                            _df_mgmt, direction, entry_price, current_price,
+                            _atr_mgmt)
+                        if _hold.get('hold'):
+                            logger.info(
+                                f"[PULLBACK VETO] {symbol}: narrative wanted {exit_action} "
+                                f"but holding -- {_hold.get('reason')}"
+                            )
+                            exit_action = "HOLD"
+                    except Exception as _ve:
+                        logger.debug(f"[PULLBACK VETO] {symbol}: veto check failed: {_ve}")
+
                 if exit_action != "HOLD":
                     execute_narrative_action(exit_action, pos, pos_info, stack)
                     if exit_action == "EXIT" or exit_action == "SCALE_OUT":
