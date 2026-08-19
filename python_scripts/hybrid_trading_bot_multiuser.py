@@ -11998,6 +11998,15 @@ def ai_trading_session():
                 # THREE STRATEGIES RUN INDEPENDENTLY WITH THEIR OWN RULES
                 # ================================================================
                 setup = None
+                # ALL strategies scan every cycle and each contributes its own
+                # candidate -- no first-match-wins cascade. Each candidate then
+                # runs the full shared pipeline (regime/EdgeEngine/sizing/AI L3/
+                # lessons/risk) on its own, so one strategy being rejected no
+                # longer prevents the others from trading this symbol.
+                _candidates = []
+                _entries_this_symbol = 0
+                _max_sym_entries = max(1, int(getattr(
+                    config, 'MAX_ENTRIES_PER_SYMBOL_PER_CYCLE', 1)))
                 _trade_direction = 'BUY' if effective_trend == 'BULLISH' else 'SELL'
                 _cur_price = df_m5['close'].iloc[-1]
                 _atr_m5 = float(calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1])
@@ -12107,8 +12116,13 @@ def ai_trading_session():
                 # cross firing in both trending and ranging conditions with
                 # no regime filter) -- now expressed through the shared
                 # router instead of its own separate auction-state check.
-                if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _regime_ok:
+                if config.ENABLE_STRATEGY_EMA_SCALP and _regime_ok:
                     setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol, df_h1, _df_d1_liq)
+                # -- collect (independent scan): this detector's result is a
+                # candidate, it does not suppress the strategies below it.
+                if setup:
+                    _candidates.append(setup)
+                    setup = None
 
                 #
                 # STRATEGY A2: BANKO (SMC/ICT all-day scalping engine)
@@ -12126,9 +12140,14 @@ def ai_trading_session():
                 # extremes is precisely a balance-regime setup. Its own
                 # sweep + displacement + RR gates are the filter here.
                 #
-                if not setup and getattr(config, 'ENABLE_STRATEGY_BANKO', True):
+                if getattr(config, 'ENABLE_STRATEGY_BANKO', True):
                     setup = strategy_banko_smc(df_m15, df_m5, df_m1, _trade_direction,
                                                symbol, df_h1, _df_d1_liq)
+                # -- collect (independent scan): this detector's result is a
+                # candidate, it does not suppress the strategies below it.
+                if setup:
+                    _candidates.append(setup)
+                    setup = None
 
 
                 # 
@@ -12234,7 +12253,7 @@ def ai_trading_session():
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
                                                 f"at {_sw['stop_entry']:.4f} (near_support={_near_support} near_resist={_near_resist})")
                                     state.daily_trades += 1
-                                    continue  # pending order placed -- skip rest of pipeline this iteration
+                                    _entries_this_symbol += 1  # placed; other strategies still get to scan
                                 else:
                                     logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
                                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
@@ -12250,7 +12269,7 @@ def ai_trading_session():
                         _aox_executed = run_aox_layered_entry(
                             symbol, df_m5, df_m1, effective_trend, _acct_now_aox.equity)
                         if _aox_executed:
-                            continue  # AOX placed a layer, skip rest of pipeline this iteration
+                            _entries_this_symbol += 1  # placed; other strategies still get to scan
 
                 # STRATEGY B2: SWAPPY 3C REVERSAL (impulse -> stall -> confirmation)
                 #
@@ -12272,7 +12291,7 @@ def ai_trading_session():
                 # detects is a counter-trend push that stalled and reversed
                 # back INTO the higher-timeframe bias -- a reversal of the
                 # pullback, not a fight with the trend.
-                if not setup and getattr(config, 'ENABLE_SWAPPY_REVERSAL', False):
+                if getattr(config, 'ENABLE_SWAPPY_REVERSAL', False):
                     _swr = detect_swappy_reversal(df_m5, _trade_direction,
                                                   last_bar_closed=False)
                     if _swr['confirmed']:
@@ -12303,6 +12322,11 @@ def ai_trading_session():
                         else:
                             logger.warning(f"[SWAPPY REV] {symbol}: stop {_sl_swr:.5f} is on the "
                                            f"wrong side of {_cur_price:.5f} -- skipping")
+                # -- collect (independent scan): this detector's result is a
+                # candidate, it does not suppress the strategies below it.
+                if setup:
+                    _candidates.append(setup)
+                    setup = None
 
                 # STRATEGY F: SHAAKUNI MIDNIGHT / DAYLIGHT OPENING
                 # A distinct strategy, not a filter on SSM and not related to
@@ -12312,7 +12336,7 @@ def ai_trading_session():
                 # it -- fake push, sweep, structure shift, FVG/OB tap. Placed
                 # before SSM because when both qualify, the one anchored to a
                 # known clock price is the more specific read.
-                if not setup and getattr(config, 'ENABLE_STRATEGY_SSM_OPENING', True):
+                if getattr(config, 'ENABLE_STRATEGY_SSM_OPENING', True):
                     setup = strategy_shaakuni_opening(df_m5, _trade_direction, symbol,
                                                       df_m1, _atr_m5)
                     if setup:
@@ -12321,6 +12345,11 @@ def ai_trading_session():
                             f"{_trade_direction} @ {setup['entry_price']:.5f} "
                             f"(open {setup['session_open']:.5f}, fake push "
                             f"{setup['fake_side']})")
+                # -- collect (independent scan): this detector's result is a
+                # candidate, it does not suppress the strategies below it.
+                if setup:
+                    _candidates.append(setup)
+                    setup = None
 
                 # SHAAKUNI SSM: dedicated HTF sweep + extreme OB entry
                 # This replaces generic liquidity grab with proper Shaakuni rules.
@@ -12336,7 +12365,7 @@ def ai_trading_session():
                 # correct setup. SSM already has its own regime awareness
                 # via effective_trend (H4/H1) and the M30 CHoCH gate; a
                 # third, M5-only layer was redundant at best here.
-                if not setup and df_h1 is not None:
+                if df_h1 is not None:
                     _ssm_result = strategy_shaakuni_ssm(symbol, df_h1, df_h4, df_m5, effective_trend, _df_d1_liq)
                     if _ssm_result:
                         setup = {
@@ -12353,8 +12382,13 @@ def ai_trading_session():
                         }
                         logger.info(f"[SHAAKUNI] {symbol}: SSM setup found | "
                                    f"{_ssm_result['signal']} @ {_ssm_result.get('limit_entry',0):.4f}")
+                # -- collect (independent scan): this detector's result is a
+                # candidate, it does not suppress the strategies below it.
+                if setup:
+                    _candidates.append(setup)
+                    setup = None
 
-                if not setup:
+                if not _candidates:
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                     continue
 
@@ -12445,7 +12479,8 @@ def ai_trading_session():
                 
                 # Trade-per-candle penalty
                 current_candle_time = df_m5['time'].iloc[-1]
-                if symbol in state.last_trade_candle and state.last_trade_candle[symbol] == current_candle_time:
+                _candle_key = f"{symbol}|{setup.get('strategy_type', trigger_type)}"
+                if state.last_trade_candle.get(_candle_key) == current_candle_time:
                     state._rej['same_candle'] += 1
                     logger.debug(f"[SCAN] {symbol}: already traded this M5 candle")
                     continue
@@ -12859,7 +12894,8 @@ def ai_trading_session():
                 trade_result = place_ai_trade(local_signal, account_info.equity, state.daily_pnl)
                 if trade_result is True:
                     signals_found += 1
-                    state.last_trade_candle[symbol] = current_candle_time
+                    state.last_trade_candle[_candle_key] = current_candle_time
+                        _entries_this_symbol += 1
                 elif trade_result == "ORDER_FAILED":
                     state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=1)
                     logger.warning(f" [SPAM PREVENT] {symbol} MT5 order rejected. 1-min cooldown.")
