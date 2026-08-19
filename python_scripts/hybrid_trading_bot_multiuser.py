@@ -808,6 +808,27 @@ class AITradingConfig:
 
     # EMA SCALP (STRATEGY A) -- one of the four approved setups, enabled.
     ENABLE_STRATEGY_EMA_SCALP: bool = True
+    # BANKO -- the all-day SMC/ICT scalping engine (strategy_banko_smc).
+    # HTF bias -> M15 liquidity sweep -> displaced M5 MSS -> FVG retest,
+    # stop beyond the sweep extreme, target the next liquidity pool. It
+    # runs in every session on purpose (the mandate is continuous equity
+    # growth), and compensates outside the killzones by requiring a
+    # higher RR rather than by standing aside.
+    ENABLE_STRATEGY_BANKO: bool = True
+    # How far back on the structure timeframe to look for the raid.
+    BANKO_SWEEP_LOOKBACK: int = 14
+    # Minimum displacement behind the structure break, as an ATR multiple.
+    # Below this a break is drift, and drift retraces through the entry.
+    BANKO_DISPLACEMENT_ATR_MULT: float = 1.2
+    # How close to the FVG price must return before BANKO will enter. It
+    # never enters on the displacement candle itself -- no chasing.
+    BANKO_FVG_TOLERANCE_ATR_MULT: float = 0.20
+    # Widest invalidation BANKO will accept, ATR multiples. Beyond this
+    # the sweep is too far behind price for the trade to still be a scalp.
+    BANKO_MAX_SL_ATR_MULT: float = 3.5
+    # RR bar: inside a killzone vs outside one.
+    BANKO_MIN_RR: float = 2.0
+    BANKO_OFF_KILLZONE_MIN_RR: float = 2.5
     # Anchor the standard-deviation reference range on the NY session window
     # (midnight range, or the 08:30 / 09:30 / 10:00 leg) while one is open,
     # instead of the rolling 10-bar window. Outside those windows behaviour is
