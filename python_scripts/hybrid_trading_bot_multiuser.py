@@ -12392,517 +12392,527 @@ def ai_trading_session():
                     state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                     continue
 
-                logger.info(f"[SCAN] {symbol}: SETUP signal={setup['signal']} reason={setup['reason']} sl={setup['stop_loss']:.3f} trend={h1_trend}")
+                # Each candidate is evaluated on its own merits. `continue`
+                # inside this block now means "reject THIS setup, try the next
+                # strategy's" instead of abandoning the symbol for the cycle.
+                for setup in _candidates:
+                    if _entries_this_symbol >= _max_sym_entries:
+                        logger.debug(f"[SCAN] {symbol}: entry cap "
+                                     f"({_max_sym_entries}/cycle) reached -- "
+                                     f"remaining candidates deferred")
+                        break
 
-                # CRITICAL: Direction MUST agree with H4 macro trend
-                # setup.signal can suggest counter-trend (e.g. Swappy BEAR on BULL H4)
-                # but we only take WITH-TREND entries -- this was the #1 cause of all losses
-                _setup_signal = setup.get('signal', _trade_direction)
-                if _setup_signal != _trade_direction:
-                    logger.debug(f"[DIR GATE] {symbol}: setup={_setup_signal} vs H4={_trade_direction} -- counter-trend rejected")
-                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
-                    continue
-                direction    = _trade_direction  # always H4-aligned
-                trigger_type = setup.get('reason', 'UNKNOWN')
+                    logger.info(f"[SCAN] {symbol}: SETUP signal={setup['signal']} reason={setup['reason']} sl={setup['stop_loss']:.3f} trend={h1_trend}")
 
-                # -- H1 MOTHER CANDLE FIBONACCI ZONE ----------------------
-                _fib = get_h1_mother_candle_zone(df_h1, direction)
-                setup['fib_found']   = _fib['found']
-                setup['fib_in_zone'] = _fib['in_zone']
-                setup['fib_reason']  = _fib['reason']
-                setup['fib_zone_high'] = _fib.get('zone_high', 0.0)
-                setup['fib_zone_low']  = _fib.get('zone_low', 0.0)
-
-                # -- 3C MOMENTUM CONFIRMATION --------------------------------
-                # Verify the 3-candle sequence: Sweep -> Displacement -> Hold.
-                # Candle 3 must FAIL to close beyond the sweep candle extreme.
-                # Without this: bot enters fakeout bounces that reverse immediately.
-                _3c = detect_3c_setup(df_m5, direction)
-                setup['3c_confirmed'] = _3c['confirmed']
-                setup['3c_strength']  = _3c['strength']
-                setup['3c_reason']    = _3c['reason']
-                setup['ema_strength'] = _ema_m5['strength']
-                setup['ema_reason']   = _ema_m5['reason']
-
-                # QUOTA MODE: when AI quota exceeded, only strongest signals go through
-                _quota_active = hasattr(state, '_quota_resume') and datetime.now() < state._quota_resume
-                if _quota_active:
-                    # Quota mode: SSM/Shaakuni sweep = self-confirming, no AI needed
-                    _strat_t = setup.get('strategy_type', 'SSM')
-                    _reason  = setup.get('reason', '')
-                    _is_self_confirming = _strat_t in ('AOX', 'SSM') or _reason in (
-                        'AOX_SNIPER', 'SHAAKUNI_SSM')
-                    if not _is_self_confirming:
-                        # For EMA/Swappy in quota mode: need STRONG EMA or 3C
-                        _ema_ok = setup.get('ema_strength') == 'STRONG'
-                        _3c_ok  = setup.get('3c_confirmed', False)
-                        if not (_ema_ok or _3c_ok):
-                            logger.debug(f"[QUOTA MODE] {symbol}: EMA+3C weak, not self-confirming -- skip")
-                            continue
-                    logger.debug(f"[QUOTA MODE] {symbol}: {_strat_t}/{_reason} -- proceeding without AI")
-
-                _strat_type_early = setup.get('strategy_type', 'SSM')
-                if not _3c['confirmed'] and _strat_type_early == 'SSM':
-                    # SSM/ICT requires 3C sweep confirmation (the institutional sweep pattern)
-                    # EMA scalp and Swappy have their own confirmation built into detection
-                    _l1_str = getattr(state, 'ai_bias_strength', {}).get(symbol, 0)
-                    if _l1_str < 8:
-                        logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
-                        state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
+                    # CRITICAL: Direction MUST agree with H4 macro trend
+                    # setup.signal can suggest counter-trend (e.g. Swappy BEAR on BULL H4)
+                    # but we only take WITH-TREND entries -- this was the #1 cause of all losses
+                    _setup_signal = setup.get('signal', _trade_direction)
+                    if _setup_signal != _trade_direction:
+                        logger.debug(f"[DIR GATE] {symbol}: setup={_setup_signal} vs H4={_trade_direction} -- counter-trend rejected")
+                        state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
                         continue
-                elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'AOX'):
-                    # EMA, Swappy, AOX: don't require 3C (they have built-in confirmation)
-                    logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
+                    direction    = _trade_direction  # always H4-aligned
+                    trigger_type = setup.get('reason', 'UNKNOWN')
 
-                if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
-                    state._rej['banned'] += 1
-                    logger.info(f"[SCAN] {symbol}: blocked by strategy ban ('{trigger_type}')")
-                    continue
+                    # -- H1 MOTHER CANDLE FIBONACCI ZONE ----------------------
+                    _fib = get_h1_mother_candle_zone(df_h1, direction)
+                    setup['fib_found']   = _fib['found']
+                    setup['fib_in_zone'] = _fib['in_zone']
+                    setup['fib_reason']  = _fib['reason']
+                    setup['fib_zone_high'] = _fib.get('zone_high', 0.0)
+                    setup['fib_zone_low']  = _fib.get('zone_low', 0.0)
 
-                direction   = setup['signal']
-                signal_sl   = setup['stop_loss']
-                liquidity_distance  = setup.get('liquidity_distance', 0.5)
-                liquidity_strength  = setup.get('liquidity_strength', 0.5)
-                momentum_state      = setup.get('momentum_state', 0.5)
-                structure_alignment = setup.get('structure_alignment', 0.5)
-                
-                # Cooldown check
-                if symbol in state.symbol_cooldowns:
-                    if datetime.now(timezone.utc) < state.symbol_cooldowns[symbol]:
-                        state._rej['cooldown'] += 1
-                        _rem_secs = (state.symbol_cooldowns[symbol] - datetime.now(timezone.utc)).total_seconds()
-                        _rem_str  = f"{int(_rem_secs)}s" if _rem_secs < 60 else f"{int(_rem_secs//60)}m {int(_rem_secs%60)}s"
-                        logger.debug(f"[SCAN] {symbol}: cooldown active ({_rem_str} left)")
-                        continue
-                    else:
-                        del state.symbol_cooldowns[symbol]
-                
-                # Trade-per-candle penalty
-                current_candle_time = df_m5['time'].iloc[-1]
-                _candle_key = f"{symbol}|{setup.get('strategy_type', trigger_type)}"
-                if state.last_trade_candle.get(_candle_key) == current_candle_time:
-                    state._rej['same_candle'] += 1
-                    logger.debug(f"[SCAN] {symbol}: already traded this M5 candle")
-                    continue
+                    # -- 3C MOMENTUM CONFIRMATION --------------------------------
+                    # Verify the 3-candle sequence: Sweep -> Displacement -> Hold.
+                    # Candle 3 must FAIL to close beyond the sweep candle extreme.
+                    # Without this: bot enters fakeout bounces that reverse immediately.
+                    _3c = detect_3c_setup(df_m5, direction)
+                    setup['3c_confirmed'] = _3c['confirmed']
+                    setup['3c_strength']  = _3c['strength']
+                    setup['3c_reason']    = _3c['reason']
+                    setup['ema_strength'] = _ema_m5['strength']
+                    setup['ema_reason']   = _ema_m5['reason']
 
-                # =========================================================
-                # STEP 2: EDGE ENGINE -- LIQUIDITY PROBABILITY MODEL
-                # =========================================================
-                
-                try:
-                    atr_e = calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1]
-                    raw_spread_e = mt5.symbol_info_tick(symbol).ask - mt5.symbol_info_tick(symbol).bid
-                    volatility_state = 1.0 if atr_e > raw_spread_e * 2 else 0.5
-                except Exception:
-                    volatility_state = 0.5
-                    
-                session_str = get_current_session()
-                session_strength = 1.0 if session_str in ["LONDON", "NEW_YORK", "LONDON_NY"] else 0.5
-
-                try:
-                    # Regime from H4 (structural context) not M5 (too noisy)
-                    _df_h4_regime = get_market_data(symbol, mt5.TIMEFRAME_H4, 60)
-                    regime = regime_detector.detect_regime(symbol, _df_h4_regime) if _df_h4_regime is not None else regime_detector.detect_regime(symbol, df_m5)
-                except Exception:
-                    regime = "RANGING"
-
-                trade_ctx = TradeContext(
-                    liquidity_distance=liquidity_distance,
-                    liquidity_strength=liquidity_strength,
-                    momentum_state=momentum_state,
-                    structure_alignment=structure_alignment,
-                    session_strength=session_strength,
-                    volatility_state=volatility_state,
-                    session=session_str,
-                    regime=regime
-                )
-                
-                edge_result = EdgeEngine().calculate(trade_ctx)
-                
-                # EdgeEngine IGNORE only blocks if score is truly terrible (<25)
-                # EMA scalp naturally scores lower than SSM but is still valid
-                if (edge_result.state == "IGNORE" or not edge_result.allow_entry) and edge_result.score < 25:
-                    state._rej['edge_ignore'] += 1
-                    logger.debug(f"[SCAN] {symbol}: EdgeEngine hard block score={edge_result.score:.1f}")
-                    continue
-                elif edge_result.state == "IGNORE" or not edge_result.allow_entry:
-                    logger.debug(f"[SCAN] {symbol}: EdgeEngine soft ignore score={edge_result.score:.1f} -- proceeding (strategy has own validation)")
-
-                logger.debug(f"[SCAN] {symbol}: EdgeEngine PASS score={edge_result.score:.1f} regime={regime}")
-
-                # =========================================================
-                # STEP 3: CAPITAL CONTROLLER -- SOLE SIZING AUTHORITY
-                # =========================================================
-                cap_ctrl = CapitalController()
-
-                edge_score = edge_result.score
-
-                # BUG FIX: SymbolCorrelationTracker.should_allow_trade() had
-                # zero call sites anywhere in this file -- only its own def
-                # and the startup log line claiming "N groups defined". The
-                # bot could stack unlimited correlated positions (e.g.
-                # several EUR-major pairs, or XAUUSDm + XAGUSDm together)
-                # despite this component existing and looking active.
-                # Wired in here, at the same point allow_stacking/
-                # should_throttle_frequency already gate entries -- correct
-                # place for a "should we trade this at all" check, before
-                # spending any effort sizing a position we're about to
-                # reject. (See SymbolCorrelationTracker.get_correlation_group
-                # for the other half of this fix -- the group-matching logic
-                # itself never matched a single real symbol.)
-                _corr_allowed, _corr_reason = correlation_tracker.should_allow_trade(symbol)
-                if not _corr_allowed:
-                    state._rej['correlation'] = state._rej.get('correlation', 0) + 1
-                    logger.debug(f"[SCAN] {symbol}: correlation blocked ({_corr_reason})")
-                    continue
-
-                # Counts pending orders too: MAX_CONCURRENT_TRADES is a limit on
-                # exposure, and an unfilled stop order is exposure that has not
-                # arrived yet.
-                if _committed_count >= config.MAX_CONCURRENT_TRADES:
-                    if not cap_ctrl.allow_stacking(edge_score, regime, "EXPANSION"):
-                        logger.debug(f"[SCAN] {symbol}: stacking blocked "
-                                     f"(committed={_committed_count} edge={edge_score:.1f})")
-                        continue
-
-                if cap_ctrl.should_throttle_frequency(edge_score < 50):
-                    state._rej['throttle'] += 1
-                    logger.debug(f"[SCAN] {symbol}: frequency throttled (edge={edge_score:.1f})")
-                    continue
-
-                current_drawdown = 0.0
-                if state.daily_start_equity > 0:
-                    current_drawdown = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100.0
-                current_drawdown = max(0.0, current_drawdown)
-
-                # FIXED: Use CapitalController.calculate() for proper risk sizing
-                # Previously only used BASE_RISK * EdgeEngine multiplier -- ignored session,
-                # drawdown, and symbol volatility scaling entirely.
-                sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
-
-                # Historical pattern-match edge health for THIS symbol+direction,
-                # now actually reaching position sizing (see CapitalController.
-                # calculate's docstring -- this call existed already in the
-                # mid-trade management loop but its result was never wired
-                # anywhere, and nothing called it at entry time at all).
-                # Failure is non-fatal -- an unavailable/erroring pattern
-                # store degrades to 1.0 (neutral), never blocks a trade.
-                try:
-                    pattern_health = pattern_recognizer.get_edge_health_score(symbol, setup['signal'], {})
-                except Exception as _phe:
-                    logger.debug(f"[SCAN] {symbol}: pattern health lookup failed ({_phe}) -- using neutral 1.0")
-                    pattern_health = 1.0
-
-                final_risk = cap_ctrl.calculate(
-                    edge_score           = edge_score,
-                    symbol_metrics       = sym_metrics,
-                    session              = session_str,
-                    drawdown             = current_drawdown,
-                    symbol               = symbol,
-                    open_positions_count = len(my_bot_positions),
-                    account_equity       = account_info.equity,
-                    pattern_health       = pattern_health,
-                    df_for_vol_target    = df_m5,
-                )
-                final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 1.5% (was a no-op at the old 10.0 value -- see MAX_RISK_PERCENT's docstring)
-                logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
-                             f"pattern_health={pattern_health:.2f} dd={current_drawdown:.1f}% -> final_risk={final_risk:.2f}%")
-
-                # =========================================================
-                # STEP 4: BUILD SIGNAL AND EXECUTE
-                # =========================================================
-                # =========================================================
-                # LAYER 1 GATE: L1 Gemini bias filter
-                # If L1 has not run yet or returned NEUTRAL for this symbol,
-                # H4/H1 structural bias (effective_trend) is the fallback.
-                # Trading is NOT blocked when L1 is NEUTRAL -- H4 leads.
-                # =========================================================
-                if getattr(state, 'ai_avoid_symbols', {}).get(symbol, False):
-                    logger.debug(f"[AI L1] {symbol}: marked avoid -- skip")
-                    continue
-
-                if state.approved_bias:
-                    _l1_bias = state.approved_bias.get(symbol, 'NEUTRAL')
-                    if _l1_bias == 'SELL_ONLY' and direction == 'BUY':
-                        logger.debug(f"[AI L1] {symbol}: BUY blocked by L1 (SELL_ONLY)")
-                        continue
-                    if _l1_bias == 'BUY_ONLY' and direction == 'SELL':
-                        logger.debug(f"[AI L1] {symbol}: SELL blocked by L1 (BUY_ONLY)")
-                        continue
-                else:
-                    # L1 not yet run -- H4 structural bias is active
-                    logger.debug(f"[AI L1] {symbol}: no L1 bias yet, using H4 structural bias ({effective_trend})")
-
-                # =========================================================
-                # LAYER 3: AI TRADE VALIDATION (per-candidate Gemini score)
-                # Only the best setups (score >= 7) proceed to execution
-                # =========================================================
-                #  LAYER 3: AI VALIDATION 
-                _l3_result = {}  # safe default
-                _l3_score = 5; _l3_risk_mod = 1.0
-                _quota_resume = getattr(state, '_quota_resume', None)
-                _quota_ok = not (_quota_resume and datetime.now() < _quota_resume)
-
-                if not _quota_ok:
-                    # Quota exceeded: trade on H4+L1 structural bias only
-                    _mins_left = int((_quota_resume - datetime.now()).total_seconds() // 60)
-                    logger.debug(f"[AI L3] {symbol}: quota paused ({_mins_left}m). Using H4 bias only.")
-                    _bias_ok = state.approved_bias.get(symbol, 'NEUTRAL') in ('NEUTRAL', f'{direction}_ONLY')
-                    if not _bias_ok:
-                        continue
-                    # Skip L3 -- proceed to execution with H4 structural bias
-                else:
-                    try:
-                        _l3_last = state.l3_last_call.get(symbol, 0)
-                        _l3_age  = time.time() - _l3_last
-
-                        _strat_type   = setup.get('strategy_type', 'SSM')
-                        _l3_cache_key = f"{symbol}_{direction}_{_strat_type}"
-                        _is_ssm_call  = _strat_type in ('SSM','AOX')
-                        _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
-                        _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
-
-                        # BUG FIX: _l3_min_score used to only be computed much
-                        # further down (after this if/else, using _h4_regime /
-                        # ema_strength / 3c_confirmed), but the cached-score
-                        # branch immediately below reads it right away -- a
-                        # guaranteed NameError on every cache hit (which is
-                        # the common case; that's the entire point of caching
-                        # the L3 Gemini score for 15/5 minutes). Caught by
-                        # this block's own except, which silently falls back
-                        # to H4-structural-bias-only and skips the AI score
-                        # gate entirely -- so on every cached call, Layer 3's
-                        # "only the best setups (score >= 7) proceed" check
-                        # was never actually being enforced. `regime` is
-                        # already computed earlier in the scan loop (see the
-                        # identical `_h4_regime = regime` alias re-done below
-                        # for the non-cached branch, left in place -- same
-                        # inputs, so recomputing it there too is harmless),
-                        # so this only needed hoisting, no new data.
-                        _h4_regime_early = regime
-                        if _strat_type in ('AOX', 'SSM'):
-                            _l3_min_score = 5
-                        elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime_early == 'TRENDING':
-                            _l3_min_score = 7
-                        else:
-                            _l3_min_score = 6
-
-                        if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
-                            _l3_score    = _l3_cached_score
-                            _l3_approved = _l3_score >= _l3_min_score
-                            _l3_reason   = f"cached ({_l3_age:.0f}s ago)"
-                            _l3_risk_mod = 1.0
-                            logger.debug(f"[AI L3] {symbol}: cached score={_l3_score}/10")
-                        else:
-                            _3c_tag     = f" | 3C:{setup.get('3c_strength',0):.0%}" if setup.get('3c_confirmed') else " | 3C:NO"
-                            _ema_tag    = f" | EMA:{setup.get('ema_strength','?')}"
-                            _fib_tag    = " | FIB:IN-ZONE" if setup.get('fib_in_zone') else (" | FIB:FOUND" if setup.get('fib_found') else "")
-                            _swappy_tag = " | SWAPPY" if "SWAPPY" in str(setup.get('reason','')) else ""
-                            _htf_rsn    = setup.get('htf_reason', '')
-                            _setup_name = (f"{trigger_type}{_3c_tag}{_ema_tag}{_fib_tag}{_swappy_tag} | HTF:{_htf_rsn}"
-                                           if _htf_rsn else f"{trigger_type}{_3c_tag}{_ema_tag}{_fib_tag}{_swappy_tag}")
-                            _l3_result = ai_validate_trade(
-                                symbol=symbol, direction=direction,
-                                setup_name=_setup_name,
-                                entry=df_m5['close'].iloc[-1], sl=signal_sl,
-                                tp=df_m5['close'].iloc[-1] + (abs(df_m5['close'].iloc[-1] - signal_sl) * 1.5) * (1 if direction == 'BUY' else -1),  # 1.5x fallback (structural TP set at order placement)
-                                df_m5=df_m5, df_m1=df_m1,
-                            )
-                            _l3_score    = _l3_result.get('score', 5)
-                            _l3_approved = _l3_result.get('approved', False)
-                            _l3_reason   = _l3_result.get('reason', '')
-                            _l3_risk_mod = _l3_result.get('risk_modifier', 1.0)
-                            state.l3_last_call[symbol]  = time.time()
-                            state.l3_last_score[symbol] = _l3_score  # backward compat
-                            state.l3_last_score[_l3_cache_key] = _l3_score  # new keyed cache
-
-                        #  MULTI-TIMEFRAME REGIME FILTER 
-                        # H4 = macro context (sets TP strategy)
-                        # M5 = local entry context (must be TRENDING to enter)
-                        #
-                        # Decision table:
-                        #   H4:TRENDING + M5:TRENDING  full trend trade
-                        #   H4:RANGING  + M5:TRENDING  range scalp (TP = range boundary)
-                        #   H4:TRENDING + M5:RANGING   skip (wait for M5 breakout)
-                        #   H4:RANGING  + M5:RANGING   skip
-                        #   H4:CHOPPY   + any          skip
-                        #
-                        # Note: H4 RANGING does NOT block trades.
-                        # A 400-500 pip Gold H4 range = M15 can trend 150 pips inside it.
-                        # 
-
-                        _ema_str  = setup.get('ema_strength', 'WEAK')
-                        _3c_conf  = setup.get('3c_confirmed', False)
-
-                        # Step 1: M5 local regime -- is there actually a local trend?
-                        _m5_regime = regime_detector.detect_regime(symbol, df_m5)
-
-                        if _m5_regime == 'RANGING':
-                            # No local trend on M5 -- skip regardless of H4
-                            logger.debug(f"[REGIME] {symbol}: M5=RANGING -- no local trend, skip")
-                            state._rej['m5_ranging'] = state._rej.get('m5_ranging', 0) + 1
-                            continue
-
-                        # Step 2: H4 context from `regime` variable (already computed above)
-                        _h4_regime = regime  # H4 regime (set earlier in the scan loop)
-
-                        if _h4_regime == 'CHOPPY':
-                            logger.debug(f"[REGIME] {symbol}: H4=CHOPPY -- skip")
-                            state._rej['h4_choppy'] = state._rej.get('h4_choppy', 0) + 1
-                            continue
-
-                        # Step 3: Set trade mode based on combined regime
-                        if _h4_regime == 'RANGING' and _m5_regime == 'TRENDING':
-                            # Range scalp mode: valid trade, but TP must be range boundary
-                            # not a trend extension -- mark for constrained TP
-                            setup['_range_scalp_mode'] = True
-                            logger.debug(f"[REGIME] {symbol}: H4=RANGING M5=TRENDING  range scalp mode")
-                        else:
-                            setup['_range_scalp_mode'] = False
-
-                        # Step 4: Quality gate based on strategy type
-                        # EMA/SWAPPY in TRENDING H4: require STRONG or 3C -- no weak signals in trend
-                        # EMA/SWAPPY in RANGING H4: EMA:WEAK allowed (range scalp, confirmed by M5 trend)
-                        if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
-                            if _ema_str == 'WEAK' and not _3c_conf:
-                                logger.debug(f"[WEAK+NO3C] {symbol}: TRENDING H4 + EMA:WEAK + no 3C -- skip")
-                                state._rej['weak_no3c'] = state._rej.get('weak_no3c', 0) + 1
+                    # QUOTA MODE: when AI quota exceeded, only strongest signals go through
+                    _quota_active = hasattr(state, '_quota_resume') and datetime.now() < state._quota_resume
+                    if _quota_active:
+                        # Quota mode: SSM/Shaakuni sweep = self-confirming, no AI needed
+                        _strat_t = setup.get('strategy_type', 'SSM')
+                        _reason  = setup.get('reason', '')
+                        _is_self_confirming = _strat_t in ('AOX', 'SSM') or _reason in (
+                            'AOX_SNIPER', 'SHAAKUNI_SSM')
+                        if not _is_self_confirming:
+                            # For EMA/Swappy in quota mode: need STRONG EMA or 3C
+                            _ema_ok = setup.get('ema_strength') == 'STRONG'
+                            _3c_ok  = setup.get('3c_confirmed', False)
+                            if not (_ema_ok or _3c_ok):
+                                logger.debug(f"[QUOTA MODE] {symbol}: EMA+3C weak, not self-confirming -- skip")
                                 continue
+                        logger.debug(f"[QUOTA MODE] {symbol}: {_strat_t}/{_reason} -- proceeding without AI")
 
-                        # PULLBACK GATE: if HTF is bearish but M5 signal is BUY,
-                        # only allow if price is at a valid H1 support level (not just any pullback)
-                        _m5_dir  = setup.get('signal', '')
-                        _h4_bias = h4_bias  # H4 macro direction (BULLISH/BEARISH/NEUTRAL)
-                        if _m5_dir == 'BUY' and _h4_bias == 'BEARISH':
-                            # Counter-trend BUY in bearish HTF -- needs structural support
-                            # Check if we have FVG or OB confluence, not just EMA cross
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
-                            if not _has_struct:
-                                logger.debug(f"[HTF GATE] {symbol}: BUY rejected in BEARISH H4 -- no structural confluence")
-                                continue
-                        elif _m5_dir == 'SELL' and _h4_bias == 'BULLISH':
-                            _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
-                            if not _has_struct:
-                                logger.debug(f"[HTF GATE] {symbol}: SELL rejected in BULLISH H4 -- no structural confluence")
-                                continue
-
-                        # L3 minimum score by strategy type
-                        # AOX/SSM: sweep + macro-window/OB confluence is already strong structural
-                        # evidence -- allow a lower AI bar (5/10)
-                        # EMA/SWAPPY: need Gemini to have an opinion (6+)
-                        # EMA:WEAK + no 3C in trending: need strong AI conviction (7)
-                        if _strat_type in ('AOX', 'SSM'):
-                            _l3_min_score = 5
-                        elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime == 'TRENDING':
-                            _l3_min_score = 7
-                        else:
-                            _l3_min_score = 6
-
-                        if _l3_score < _l3_min_score or (_l3_score <= 5 and not _l3_approved):
+                    _strat_type_early = setup.get('strategy_type', 'SSM')
+                    if not _3c['confirmed'] and _strat_type_early == 'SSM':
+                        # SSM/ICT requires 3C sweep confirmation (the institutional sweep pattern)
+                        # EMA scalp and Swappy have their own confirmation built into detection
+                        _l1_str = getattr(state, 'ai_bias_strength', {}).get(symbol, 0)
+                        if _l1_str < 8:
+                            logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
                             state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
-                            # Cooldown based on score (prevents retry spam)
-                            if _l3_score <= 3:
-                                _cd_mins = 30
-                            elif _l3_score == 4:
-                                _cd_mins = 15
-                            else:  # score = 5
-                                _cd_mins = 5   # wait 5 min before retrying this symbol
-                            state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=_cd_mins)
-                            logger.info(f"[AI L3] {symbol}: score={_l3_score}/{_l3_min_score} -- skip ({_cd_mins}min cooldown). {_l3_reason}")
                             continue
+                    elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'AOX'):
+                        # EMA, Swappy, AOX: don't require 3C (they have built-in confirmation)
+                        logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
 
-                        logger.info(f"[AI L3] {symbol}: score={_l3_score}/10 APPROVED. {_l3_reason}")
-                        final_risk = min(final_risk * _l3_risk_mod, config.MAX_RISK_PERCENT)
-
-                    except Exception as _l3_err:
-                        _l3_err_str = str(_l3_err)
-                        if '429' in _l3_err_str or 'quota' in _l3_err_str.lower():
-                            # Mark quota as exceeded -- tighten all filters
-                            if not hasattr(state, '_quota_resume') or datetime.now() > state._quota_resume:
-                                state._quota_resume = datetime.now() + timedelta(hours=1)
-                                logger.critical(f"[QUOTA] L3 quota exceeded for {symbol}. Tightening filters for 1h.")
-                        logger.warning(f"[AI L3] Validation error for {symbol}: {_l3_err_str[:80]}")
-                        _bias_fb = state.approved_bias.get(symbol, 'NEUTRAL')
-                        if _bias_fb not in ('NEUTRAL', f'{direction}_ONLY'):
-                            continue
-
-
-                # GATING-POWER FIX: this used to log a match at debug level and
-                # trade anyway no matter what it found -- a lesson the bot had
-                # explicitly written down could be violated on the very next
-                # matching setup. Graduated response now, based on how many
-                # DISTINCT lessons corroborate this exact setup (see check_
-                # trade_against_lessons' docstring for why the match itself
-                # was tightened before trusting it with real power): one
-                # match could be a single AI-hallucinated or unlucky lesson,
-                # so trade smaller instead of betting full size on it; two or
-                # more is a real, repeated pattern -- block it, the same way
-                # a trader who's been burned twice the same way actually
-                # stops taking that setup. Real ADX (not the old default-100
-                # placeholder the call site never actually supplied) via
-                # capture_entry_market_context() -- same helper the loss-
-                # analysis entry-context fix already introduced.
-                _lesson_ctx = capture_entry_market_context(symbol)
-                _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
-                if _lesson_ctx['entry_adx'] is not None:
-                    _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
-                _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
-                if not _lesson_ok:
-                    if _lesson_matches >= 2:
-                        logger.warning(
-                            f"[AI LESSON] {symbol} {direction}: blocked -- {_lesson_matches} "
-                            f"corroborated past losses. {_lesson_warn[:150]}"
-                        )
-                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=30)
+                    if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
+                        state._rej['banned'] += 1
+                        logger.info(f"[SCAN] {symbol}: blocked by strategy ban ('{trigger_type}')")
                         continue
-                    else:
-                        logger.info(f"[AI LESSON] {symbol} {direction}: single match, halving size -- {_lesson_warn[:150]}")
-                        final_risk = final_risk * 0.5
 
-                # PORTFOLIO RISK CHECK: total risk across all open + this trade
-                # Prevent portfolio wipeout even if individual trades are sized correctly
-                _total_risk_pct = _committed_count * config.BASE_RISK_PERCENT + final_risk
-                _max_portfolio_risk = 25.0  # Never exceed 3% total equity at risk
-                if _total_risk_pct > _max_portfolio_risk:
-                    logger.warning(
-                        f"[PORTFOLIO] {symbol} skipped: total risk would be {_total_risk_pct:.1f}% "
-                        f"(max {_max_portfolio_risk}%). Open positions: {len(my_bot_positions)}."
+                    direction   = setup['signal']
+                    signal_sl   = setup['stop_loss']
+                    liquidity_distance  = setup.get('liquidity_distance', 0.5)
+                    liquidity_strength  = setup.get('liquidity_strength', 0.5)
+                    momentum_state      = setup.get('momentum_state', 0.5)
+                    structure_alignment = setup.get('structure_alignment', 0.5)
+                
+                    # Cooldown check
+                    if symbol in state.symbol_cooldowns:
+                        if datetime.now(timezone.utc) < state.symbol_cooldowns[symbol]:
+                            state._rej['cooldown'] += 1
+                            _rem_secs = (state.symbol_cooldowns[symbol] - datetime.now(timezone.utc)).total_seconds()
+                            _rem_str  = f"{int(_rem_secs)}s" if _rem_secs < 60 else f"{int(_rem_secs//60)}m {int(_rem_secs%60)}s"
+                            logger.debug(f"[SCAN] {symbol}: cooldown active ({_rem_str} left)")
+                            continue
+                        else:
+                            del state.symbol_cooldowns[symbol]
+                
+                    # Trade-per-candle penalty
+                    current_candle_time = df_m5['time'].iloc[-1]
+                    _candle_key = f"{symbol}|{setup.get('strategy_type', trigger_type)}"
+                    if state.last_trade_candle.get(_candle_key) == current_candle_time:
+                        state._rej['same_candle'] += 1
+                        logger.debug(f"[SCAN] {symbol}: already traded this M5 candle")
+                        continue
+
+                    # =========================================================
+                    # STEP 2: EDGE ENGINE -- LIQUIDITY PROBABILITY MODEL
+                    # =========================================================
+                
+                    try:
+                        atr_e = calculate_atr(df_m5['high'], df_m5['low'], df_m5['close'], 14).iloc[-1]
+                        raw_spread_e = mt5.symbol_info_tick(symbol).ask - mt5.symbol_info_tick(symbol).bid
+                        volatility_state = 1.0 if atr_e > raw_spread_e * 2 else 0.5
+                    except Exception:
+                        volatility_state = 0.5
+                    
+                    session_str = get_current_session()
+                    session_strength = 1.0 if session_str in ["LONDON", "NEW_YORK", "LONDON_NY"] else 0.5
+
+                    try:
+                        # Regime from H4 (structural context) not M5 (too noisy)
+                        _df_h4_regime = get_market_data(symbol, mt5.TIMEFRAME_H4, 60)
+                        regime = regime_detector.detect_regime(symbol, _df_h4_regime) if _df_h4_regime is not None else regime_detector.detect_regime(symbol, df_m5)
+                    except Exception:
+                        regime = "RANGING"
+
+                    trade_ctx = TradeContext(
+                        liquidity_distance=liquidity_distance,
+                        liquidity_strength=liquidity_strength,
+                        momentum_state=momentum_state,
+                        structure_alignment=structure_alignment,
+                        session_strength=session_strength,
+                        volatility_state=volatility_state,
+                        session=session_str,
+                        regime=regime
                     )
-                    continue
+                
+                    edge_result = EdgeEngine().calculate(trade_ctx)
+                
+                    # EdgeEngine IGNORE only blocks if score is truly terrible (<25)
+                    # EMA scalp naturally scores lower than SSM but is still valid
+                    if (edge_result.state == "IGNORE" or not edge_result.allow_entry) and edge_result.score < 25:
+                        state._rej['edge_ignore'] += 1
+                        logger.debug(f"[SCAN] {symbol}: EdgeEngine hard block score={edge_result.score:.1f}")
+                        continue
+                    elif edge_result.state == "IGNORE" or not edge_result.allow_entry:
+                        logger.debug(f"[SCAN] {symbol}: EdgeEngine soft ignore score={edge_result.score:.1f} -- proceeding (strategy has own validation)")
 
-                logger.info(f"[SCAN] {symbol}: ALL GATES PASSED -> placing {direction} risk={final_risk:.2f}% "
-                            f"(total portfolio risk: {_total_risk_pct:.1f}%)")
+                    logger.debug(f"[SCAN] {symbol}: EdgeEngine PASS score={edge_result.score:.1f} regime={regime}")
 
-                local_signal = {
-                    'symbol': symbol,
-                    'direction': direction,
-                    'setup_type': setup.get('setup_type', trigger_type),
-                    'l3_score': _l3_result.get('score', 0) if isinstance(_l3_result, dict) else 0,
-                    'htf_reason': setup.get('htf_reason', ''),
-                    'htf_confluence': setup.get('htf_confluence', 0),
-                    'regime': regime,
-                    'edge_score': edge_score,
-                    'edge_state': edge_result.state,
-                    'risk_percent_override': final_risk,
-                    'runner_eligible': edge_result.runner_eligible,
-                    'exit_aggressiveness': edge_result.exit_aggressiveness,
-                    'narrative_reason': f"SMC_ENTRY|R:{final_risk:.1f}%",
-                    'stop_loss': signal_sl,
-                    'key_level': setup.get('entry_price', 0.0),
-                }
+                    # =========================================================
+                    # STEP 3: CAPITAL CONTROLLER -- SOLE SIZING AUTHORITY
+                    # =========================================================
+                    cap_ctrl = CapitalController()
 
-                trade_result = place_ai_trade(local_signal, account_info.equity, state.daily_pnl)
-                if trade_result is True:
-                    signals_found += 1
-                    state.last_trade_candle[_candle_key] = current_candle_time
-                        _entries_this_symbol += 1
-                elif trade_result == "ORDER_FAILED":
-                    state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=1)
-                    logger.warning(f" [SPAM PREVENT] {symbol} MT5 order rejected. 1-min cooldown.")
-                else:
-                    # Pre-execution gate rejected -- 2min cooldown prevents spam
-                    state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=2)
-                    logger.debug(f"[SCAN] {symbol}: pre-execution gate blocked. 2-min cooldown.")
+                    edge_score = edge_result.score
+
+                    # BUG FIX: SymbolCorrelationTracker.should_allow_trade() had
+                    # zero call sites anywhere in this file -- only its own def
+                    # and the startup log line claiming "N groups defined". The
+                    # bot could stack unlimited correlated positions (e.g.
+                    # several EUR-major pairs, or XAUUSDm + XAGUSDm together)
+                    # despite this component existing and looking active.
+                    # Wired in here, at the same point allow_stacking/
+                    # should_throttle_frequency already gate entries -- correct
+                    # place for a "should we trade this at all" check, before
+                    # spending any effort sizing a position we're about to
+                    # reject. (See SymbolCorrelationTracker.get_correlation_group
+                    # for the other half of this fix -- the group-matching logic
+                    # itself never matched a single real symbol.)
+                    _corr_allowed, _corr_reason = correlation_tracker.should_allow_trade(symbol)
+                    if not _corr_allowed:
+                        state._rej['correlation'] = state._rej.get('correlation', 0) + 1
+                        logger.debug(f"[SCAN] {symbol}: correlation blocked ({_corr_reason})")
+                        continue
+
+                    # Counts pending orders too: MAX_CONCURRENT_TRADES is a limit on
+                    # exposure, and an unfilled stop order is exposure that has not
+                    # arrived yet.
+                    if _committed_count >= config.MAX_CONCURRENT_TRADES:
+                        if not cap_ctrl.allow_stacking(edge_score, regime, "EXPANSION"):
+                            logger.debug(f"[SCAN] {symbol}: stacking blocked "
+                                         f"(committed={_committed_count} edge={edge_score:.1f})")
+                            continue
+
+                    if cap_ctrl.should_throttle_frequency(edge_score < 50):
+                        state._rej['throttle'] += 1
+                        logger.debug(f"[SCAN] {symbol}: frequency throttled (edge={edge_score:.1f})")
+                        continue
+
+                    current_drawdown = 0.0
+                    if state.daily_start_equity > 0:
+                        current_drawdown = ((state.daily_start_equity - account_info.equity) / state.daily_start_equity) * 100.0
+                    current_drawdown = max(0.0, current_drawdown)
+
+                    # FIXED: Use CapitalController.calculate() for proper risk sizing
+                    # Previously only used BASE_RISK * EdgeEngine multiplier -- ignored session,
+                    # drawdown, and symbol volatility scaling entirely.
+                    sym_metrics = max(0.1, symbol_tracker.get_symbol_metrics(symbol).get('trade_score', 1.0))
+
+                    # Historical pattern-match edge health for THIS symbol+direction,
+                    # now actually reaching position sizing (see CapitalController.
+                    # calculate's docstring -- this call existed already in the
+                    # mid-trade management loop but its result was never wired
+                    # anywhere, and nothing called it at entry time at all).
+                    # Failure is non-fatal -- an unavailable/erroring pattern
+                    # store degrades to 1.0 (neutral), never blocks a trade.
+                    try:
+                        pattern_health = pattern_recognizer.get_edge_health_score(symbol, setup['signal'], {})
+                    except Exception as _phe:
+                        logger.debug(f"[SCAN] {symbol}: pattern health lookup failed ({_phe}) -- using neutral 1.0")
+                        pattern_health = 1.0
+
+                    final_risk = cap_ctrl.calculate(
+                        edge_score           = edge_score,
+                        symbol_metrics       = sym_metrics,
+                        session              = session_str,
+                        drawdown             = current_drawdown,
+                        symbol               = symbol,
+                        open_positions_count = len(my_bot_positions),
+                        account_equity       = account_info.equity,
+                        pattern_health       = pattern_health,
+                        df_for_vol_target    = df_m5,
+                    )
+                    final_risk = min(final_risk, config.MAX_RISK_PERCENT)  # up to 1.5% (was a no-op at the old 10.0 value -- see MAX_RISK_PERCENT's docstring)
+                    logger.debug(f"[SCAN] {symbol}: sizing inputs edge={edge_score:.1f} sym_perf={sym_metrics:.2f} "
+                                 f"pattern_health={pattern_health:.2f} dd={current_drawdown:.1f}% -> final_risk={final_risk:.2f}%")
+
+                    # =========================================================
+                    # STEP 4: BUILD SIGNAL AND EXECUTE
+                    # =========================================================
+                    # =========================================================
+                    # LAYER 1 GATE: L1 Gemini bias filter
+                    # If L1 has not run yet or returned NEUTRAL for this symbol,
+                    # H4/H1 structural bias (effective_trend) is the fallback.
+                    # Trading is NOT blocked when L1 is NEUTRAL -- H4 leads.
+                    # =========================================================
+                    if getattr(state, 'ai_avoid_symbols', {}).get(symbol, False):
+                        logger.debug(f"[AI L1] {symbol}: marked avoid -- skip")
+                        continue
+
+                    if state.approved_bias:
+                        _l1_bias = state.approved_bias.get(symbol, 'NEUTRAL')
+                        if _l1_bias == 'SELL_ONLY' and direction == 'BUY':
+                            logger.debug(f"[AI L1] {symbol}: BUY blocked by L1 (SELL_ONLY)")
+                            continue
+                        if _l1_bias == 'BUY_ONLY' and direction == 'SELL':
+                            logger.debug(f"[AI L1] {symbol}: SELL blocked by L1 (BUY_ONLY)")
+                            continue
+                    else:
+                        # L1 not yet run -- H4 structural bias is active
+                        logger.debug(f"[AI L1] {symbol}: no L1 bias yet, using H4 structural bias ({effective_trend})")
+
+                    # =========================================================
+                    # LAYER 3: AI TRADE VALIDATION (per-candidate Gemini score)
+                    # Only the best setups (score >= 7) proceed to execution
+                    # =========================================================
+                    #  LAYER 3: AI VALIDATION 
+                    _l3_result = {}  # safe default
+                    _l3_score = 5; _l3_risk_mod = 1.0
+                    _quota_resume = getattr(state, '_quota_resume', None)
+                    _quota_ok = not (_quota_resume and datetime.now() < _quota_resume)
+
+                    if not _quota_ok:
+                        # Quota exceeded: trade on H4+L1 structural bias only
+                        _mins_left = int((_quota_resume - datetime.now()).total_seconds() // 60)
+                        logger.debug(f"[AI L3] {symbol}: quota paused ({_mins_left}m). Using H4 bias only.")
+                        _bias_ok = state.approved_bias.get(symbol, 'NEUTRAL') in ('NEUTRAL', f'{direction}_ONLY')
+                        if not _bias_ok:
+                            continue
+                        # Skip L3 -- proceed to execution with H4 structural bias
+                    else:
+                        try:
+                            _l3_last = state.l3_last_call.get(symbol, 0)
+                            _l3_age  = time.time() - _l3_last
+
+                            _strat_type   = setup.get('strategy_type', 'SSM')
+                            _l3_cache_key = f"{symbol}_{direction}_{_strat_type}"
+                            _is_ssm_call  = _strat_type in ('SSM','AOX')
+                            _l3_cache_ttl = 900 if _is_ssm_call else 300  # SSM=15min, others=5min
+                            _l3_cached_score = state.l3_last_score.get(_l3_cache_key)
+
+                            # BUG FIX: _l3_min_score used to only be computed much
+                            # further down (after this if/else, using _h4_regime /
+                            # ema_strength / 3c_confirmed), but the cached-score
+                            # branch immediately below reads it right away -- a
+                            # guaranteed NameError on every cache hit (which is
+                            # the common case; that's the entire point of caching
+                            # the L3 Gemini score for 15/5 minutes). Caught by
+                            # this block's own except, which silently falls back
+                            # to H4-structural-bias-only and skips the AI score
+                            # gate entirely -- so on every cached call, Layer 3's
+                            # "only the best setups (score >= 7) proceed" check
+                            # was never actually being enforced. `regime` is
+                            # already computed earlier in the scan loop (see the
+                            # identical `_h4_regime = regime` alias re-done below
+                            # for the non-cached branch, left in place -- same
+                            # inputs, so recomputing it there too is harmless),
+                            # so this only needed hoisting, no new data.
+                            _h4_regime_early = regime
+                            if _strat_type in ('AOX', 'SSM'):
+                                _l3_min_score = 5
+                            elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime_early == 'TRENDING':
+                                _l3_min_score = 7
+                            else:
+                                _l3_min_score = 6
+
+                            if _l3_age < _l3_cache_ttl and _l3_cached_score is not None:
+                                _l3_score    = _l3_cached_score
+                                _l3_approved = _l3_score >= _l3_min_score
+                                _l3_reason   = f"cached ({_l3_age:.0f}s ago)"
+                                _l3_risk_mod = 1.0
+                                logger.debug(f"[AI L3] {symbol}: cached score={_l3_score}/10")
+                            else:
+                                _3c_tag     = f" | 3C:{setup.get('3c_strength',0):.0%}" if setup.get('3c_confirmed') else " | 3C:NO"
+                                _ema_tag    = f" | EMA:{setup.get('ema_strength','?')}"
+                                _fib_tag    = " | FIB:IN-ZONE" if setup.get('fib_in_zone') else (" | FIB:FOUND" if setup.get('fib_found') else "")
+                                _swappy_tag = " | SWAPPY" if "SWAPPY" in str(setup.get('reason','')) else ""
+                                _htf_rsn    = setup.get('htf_reason', '')
+                                _setup_name = (f"{trigger_type}{_3c_tag}{_ema_tag}{_fib_tag}{_swappy_tag} | HTF:{_htf_rsn}"
+                                               if _htf_rsn else f"{trigger_type}{_3c_tag}{_ema_tag}{_fib_tag}{_swappy_tag}")
+                                _l3_result = ai_validate_trade(
+                                    symbol=symbol, direction=direction,
+                                    setup_name=_setup_name,
+                                    entry=df_m5['close'].iloc[-1], sl=signal_sl,
+                                    tp=df_m5['close'].iloc[-1] + (abs(df_m5['close'].iloc[-1] - signal_sl) * 1.5) * (1 if direction == 'BUY' else -1),  # 1.5x fallback (structural TP set at order placement)
+                                    df_m5=df_m5, df_m1=df_m1,
+                                )
+                                _l3_score    = _l3_result.get('score', 5)
+                                _l3_approved = _l3_result.get('approved', False)
+                                _l3_reason   = _l3_result.get('reason', '')
+                                _l3_risk_mod = _l3_result.get('risk_modifier', 1.0)
+                                state.l3_last_call[symbol]  = time.time()
+                                state.l3_last_score[symbol] = _l3_score  # backward compat
+                                state.l3_last_score[_l3_cache_key] = _l3_score  # new keyed cache
+
+                            #  MULTI-TIMEFRAME REGIME FILTER 
+                            # H4 = macro context (sets TP strategy)
+                            # M5 = local entry context (must be TRENDING to enter)
+                            #
+                            # Decision table:
+                            #   H4:TRENDING + M5:TRENDING  full trend trade
+                            #   H4:RANGING  + M5:TRENDING  range scalp (TP = range boundary)
+                            #   H4:TRENDING + M5:RANGING   skip (wait for M5 breakout)
+                            #   H4:RANGING  + M5:RANGING   skip
+                            #   H4:CHOPPY   + any          skip
+                            #
+                            # Note: H4 RANGING does NOT block trades.
+                            # A 400-500 pip Gold H4 range = M15 can trend 150 pips inside it.
+                            # 
+
+                            _ema_str  = setup.get('ema_strength', 'WEAK')
+                            _3c_conf  = setup.get('3c_confirmed', False)
+
+                            # Step 1: M5 local regime -- is there actually a local trend?
+                            _m5_regime = regime_detector.detect_regime(symbol, df_m5)
+
+                            if _m5_regime == 'RANGING':
+                                # No local trend on M5 -- skip regardless of H4
+                                logger.debug(f"[REGIME] {symbol}: M5=RANGING -- no local trend, skip")
+                                state._rej['m5_ranging'] = state._rej.get('m5_ranging', 0) + 1
+                                continue
+
+                            # Step 2: H4 context from `regime` variable (already computed above)
+                            _h4_regime = regime  # H4 regime (set earlier in the scan loop)
+
+                            if _h4_regime == 'CHOPPY':
+                                logger.debug(f"[REGIME] {symbol}: H4=CHOPPY -- skip")
+                                state._rej['h4_choppy'] = state._rej.get('h4_choppy', 0) + 1
+                                continue
+
+                            # Step 3: Set trade mode based on combined regime
+                            if _h4_regime == 'RANGING' and _m5_regime == 'TRENDING':
+                                # Range scalp mode: valid trade, but TP must be range boundary
+                                # not a trend extension -- mark for constrained TP
+                                setup['_range_scalp_mode'] = True
+                                logger.debug(f"[REGIME] {symbol}: H4=RANGING M5=TRENDING  range scalp mode")
+                            else:
+                                setup['_range_scalp_mode'] = False
+
+                            # Step 4: Quality gate based on strategy type
+                            # EMA/SWAPPY in TRENDING H4: require STRONG or 3C -- no weak signals in trend
+                            # EMA/SWAPPY in RANGING H4: EMA:WEAK allowed (range scalp, confirmed by M5 trend)
+                            if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
+                                if _ema_str == 'WEAK' and not _3c_conf:
+                                    logger.debug(f"[WEAK+NO3C] {symbol}: TRENDING H4 + EMA:WEAK + no 3C -- skip")
+                                    state._rej['weak_no3c'] = state._rej.get('weak_no3c', 0) + 1
+                                    continue
+
+                            # PULLBACK GATE: if HTF is bearish but M5 signal is BUY,
+                            # only allow if price is at a valid H1 support level (not just any pullback)
+                            _m5_dir  = setup.get('signal', '')
+                            _h4_bias = h4_bias  # H4 macro direction (BULLISH/BEARISH/NEUTRAL)
+                            if _m5_dir == 'BUY' and _h4_bias == 'BEARISH':
+                                # Counter-trend BUY in bearish HTF -- needs structural support
+                                # Check if we have FVG or OB confluence, not just EMA cross
+                                _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
+                                if not _has_struct:
+                                    logger.debug(f"[HTF GATE] {symbol}: BUY rejected in BEARISH H4 -- no structural confluence")
+                                    continue
+                            elif _m5_dir == 'SELL' and _h4_bias == 'BULLISH':
+                                _has_struct = setup.get('fib_in_zone') or setup.get('3c_confirmed')
+                                if not _has_struct:
+                                    logger.debug(f"[HTF GATE] {symbol}: SELL rejected in BULLISH H4 -- no structural confluence")
+                                    continue
+
+                            # L3 minimum score by strategy type
+                            # AOX/SSM: sweep + macro-window/OB confluence is already strong structural
+                            # evidence -- allow a lower AI bar (5/10)
+                            # EMA/SWAPPY: need Gemini to have an opinion (6+)
+                            # EMA:WEAK + no 3C in trending: need strong AI conviction (7)
+                            if _strat_type in ('AOX', 'SSM'):
+                                _l3_min_score = 5
+                            elif setup.get('ema_strength') == 'WEAK' and not setup.get('3c_confirmed') and _h4_regime == 'TRENDING':
+                                _l3_min_score = 7
+                            else:
+                                _l3_min_score = 6
+
+                            if _l3_score < _l3_min_score or (_l3_score <= 5 and not _l3_approved):
+                                state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
+                                # Cooldown based on score (prevents retry spam)
+                                if _l3_score <= 3:
+                                    _cd_mins = 30
+                                elif _l3_score == 4:
+                                    _cd_mins = 15
+                                else:  # score = 5
+                                    _cd_mins = 5   # wait 5 min before retrying this symbol
+                                state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=_cd_mins)
+                                logger.info(f"[AI L3] {symbol}: score={_l3_score}/{_l3_min_score} -- skip ({_cd_mins}min cooldown). {_l3_reason}")
+                                continue
+
+                            logger.info(f"[AI L3] {symbol}: score={_l3_score}/10 APPROVED. {_l3_reason}")
+                            final_risk = min(final_risk * _l3_risk_mod, config.MAX_RISK_PERCENT)
+
+                        except Exception as _l3_err:
+                            _l3_err_str = str(_l3_err)
+                            if '429' in _l3_err_str or 'quota' in _l3_err_str.lower():
+                                # Mark quota as exceeded -- tighten all filters
+                                if not hasattr(state, '_quota_resume') or datetime.now() > state._quota_resume:
+                                    state._quota_resume = datetime.now() + timedelta(hours=1)
+                                    logger.critical(f"[QUOTA] L3 quota exceeded for {symbol}. Tightening filters for 1h.")
+                            logger.warning(f"[AI L3] Validation error for {symbol}: {_l3_err_str[:80]}")
+                            _bias_fb = state.approved_bias.get(symbol, 'NEUTRAL')
+                            if _bias_fb not in ('NEUTRAL', f'{direction}_ONLY'):
+                                continue
+
+
+                    # GATING-POWER FIX: this used to log a match at debug level and
+                    # trade anyway no matter what it found -- a lesson the bot had
+                    # explicitly written down could be violated on the very next
+                    # matching setup. Graduated response now, based on how many
+                    # DISTINCT lessons corroborate this exact setup (see check_
+                    # trade_against_lessons' docstring for why the match itself
+                    # was tightened before trusting it with real power): one
+                    # match could be a single AI-hallucinated or unlucky lesson,
+                    # so trade smaller instead of betting full size on it; two or
+                    # more is a real, repeated pattern -- block it, the same way
+                    # a trader who's been burned twice the same way actually
+                    # stops taking that setup. Real ADX (not the old default-100
+                    # placeholder the call site never actually supplied) via
+                    # capture_entry_market_context() -- same helper the loss-
+                    # analysis entry-context fix already introduced.
+                    _lesson_ctx = capture_entry_market_context(symbol)
+                    _lesson_query_ctx = {'session': _lesson_ctx['entry_session'], 'hour': _lesson_ctx['entry_hour']}
+                    if _lesson_ctx['entry_adx'] is not None:
+                        _lesson_query_ctx['adx'] = _lesson_ctx['entry_adx']
+                    _lesson_ok, _lesson_warn, _lesson_matches = check_trade_against_lessons(symbol, direction, _lesson_query_ctx)
+                    if not _lesson_ok:
+                        if _lesson_matches >= 2:
+                            logger.warning(
+                                f"[AI LESSON] {symbol} {direction}: blocked -- {_lesson_matches} "
+                                f"corroborated past losses. {_lesson_warn[:150]}"
+                            )
+                            state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=30)
+                            continue
+                        else:
+                            logger.info(f"[AI LESSON] {symbol} {direction}: single match, halving size -- {_lesson_warn[:150]}")
+                            final_risk = final_risk * 0.5
+
+                    # PORTFOLIO RISK CHECK: total risk across all open + this trade
+                    # Prevent portfolio wipeout even if individual trades are sized correctly
+                    _total_risk_pct = _committed_count * config.BASE_RISK_PERCENT + final_risk
+                    _max_portfolio_risk = 25.0  # Never exceed 3% total equity at risk
+                    if _total_risk_pct > _max_portfolio_risk:
+                        logger.warning(
+                            f"[PORTFOLIO] {symbol} skipped: total risk would be {_total_risk_pct:.1f}% "
+                            f"(max {_max_portfolio_risk}%). Open positions: {len(my_bot_positions)}."
+                        )
+                        continue
+
+                    logger.info(f"[SCAN] {symbol}: ALL GATES PASSED -> placing {direction} risk={final_risk:.2f}% "
+                                f"(total portfolio risk: {_total_risk_pct:.1f}%)")
+
+                    local_signal = {
+                        'symbol': symbol,
+                        'direction': direction,
+                        'setup_type': setup.get('setup_type', trigger_type),
+                        'l3_score': _l3_result.get('score', 0) if isinstance(_l3_result, dict) else 0,
+                        'htf_reason': setup.get('htf_reason', ''),
+                        'htf_confluence': setup.get('htf_confluence', 0),
+                        'regime': regime,
+                        'edge_score': edge_score,
+                        'edge_state': edge_result.state,
+                        'risk_percent_override': final_risk,
+                        'runner_eligible': edge_result.runner_eligible,
+                        'exit_aggressiveness': edge_result.exit_aggressiveness,
+                        'narrative_reason': f"SMC_ENTRY|R:{final_risk:.1f}%",
+                        'stop_loss': signal_sl,
+                        'key_level': setup.get('entry_price', 0.0),
+                    }
+
+                    trade_result = place_ai_trade(local_signal, account_info.equity, state.daily_pnl)
+                    if trade_result is True:
+                        signals_found += 1
+                        state.last_trade_candle[_candle_key] = current_candle_time
+                            _entries_this_symbol += 1
+                    elif trade_result == "ORDER_FAILED":
+                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=1)
+                        logger.warning(f" [SPAM PREVENT] {symbol} MT5 order rejected. 1-min cooldown.")
+                    else:
+                        # Pre-execution gate rejected -- 2min cooldown prevents spam
+                        state.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=2)
+                        logger.debug(f"[SCAN] {symbol}: pre-execution gate blocked. 2-min cooldown.")
 
 
             # Log cycle performance + rejection summary every 20 iterations
