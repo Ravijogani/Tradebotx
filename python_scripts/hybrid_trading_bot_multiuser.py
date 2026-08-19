@@ -12110,6 +12110,27 @@ def ai_trading_session():
                 if not setup and config.ENABLE_STRATEGY_EMA_SCALP and _regime_ok:
                     setup = strategy_ema_scalp_cross(df_m5, _trade_direction, symbol, df_h1, _df_d1_liq)
 
+                #
+                # STRATEGY A2: BANKO (SMC/ICT all-day scalping engine)
+                # HTF bias -> M15 liquidity sweep -> displaced M5 MSS ->
+                # FVG retest. Placed AFTER EMA Scalp and BEFORE Swappy so
+                # the cheap indicator cross keeps first refusal, but BANKO
+                # gets its shot before the momentum-continuation setups --
+                # the two would otherwise compete for the same M5 bar and
+                # Swappy (a continuation pattern) would routinely win the
+                # bar right after a sweep reversal, which is exactly the
+                # bar BANKO exists to trade.
+                #
+                # Deliberately NOT gated by _regime_ok: the regime router
+                # stands aside in BALANCE, and a sweep-and-reverse at range
+                # extremes is precisely a balance-regime setup. Its own
+                # sweep + displacement + RR gates are the filter here.
+                #
+                if not setup and getattr(config, 'ENABLE_STRATEGY_BANKO', True):
+                    setup = strategy_banko_smc(df_m15, df_m5, df_m1, _trade_direction,
+                                               symbol, df_h1, _df_d1_liq)
+
+
                 # 
                 # STRATEGY B: SWAPPY 3C (momentum continuation)
                 # Rules: H4 bias  + 2 trend candles + 1 failed pullback on M5
