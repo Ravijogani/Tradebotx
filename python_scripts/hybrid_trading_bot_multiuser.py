@@ -8325,7 +8325,35 @@ def weekend_state(now_ny: Optional[datetime] = None) -> str:
     return 'OPEN'
 
 
+def order_delete_compat(ticket) -> bool:
+    """
+    Cancel a pending order.
+
+    The MetaTrader5 python package has no mt5.order_delete() -- pending orders
+    are removed with an order_send(TRADE_ACTION_REMOVE) request. Calling the
+    non-existent attribute raised:
+        module 'MetaTrader5' has no attribute 'order_delete'
+    """
+    try:
+        fn = getattr(mt5, 'order_delete', None)
+        if callable(fn):
+            return bool(fn(ticket))
+        res = mt5.order_send({
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": int(ticket),
+        })
+        ok = bool(res) and getattr(res, 'retcode', None) == mt5.TRADE_RETCODE_DONE
+        if not ok:
+            logger.warning(f"[CANCEL] could not remove pending order #{ticket}: "
+                           f"{getattr(res, 'comment', 'no result')}")
+        return ok
+    except Exception as e:
+        logger.error(f"[CANCEL] order removal failed for #{ticket}: {e}")
+        return False
+
+
 def flatten_for_weekend() -> int:
+
     """
     Close every position this bot owns, and cancel its resting orders.
 
@@ -8362,7 +8390,7 @@ def flatten_for_weekend() -> int:
         for order in (mt5.orders_get() or []):
             if getattr(order, 'magic', None) != MAGIC_NUMBER:
                 continue
-            mt5.order_delete(order.ticket)
+            order_delete_compat(order.ticket)
             closed += 1
             logger.info(f"[WEEKEND] cancelled resting order {order.symbol} #{order.ticket}")
     except Exception as e:
@@ -10841,11 +10869,11 @@ def check_swappy_expirations():
         cur  = tick.bid
         if info['direction'] == 'BUY' and cur < info['setup_low']:
             logger.info(f"[SWAPPY CANCEL] {sym} BUY invalidated @ {cur:.4f} < setup_low {info['setup_low']:.4f}")
-            mt5.order_delete(ticket)
+            order_delete_compat(ticket)
             to_remove.append(ticket)
         elif info['direction'] == 'SELL' and cur > info['setup_high']:
             logger.info(f"[SWAPPY CANCEL] {sym} SELL invalidated @ {cur:.4f} > setup_high {info['setup_high']:.4f}")
-            mt5.order_delete(ticket)
+            order_delete_compat(ticket)
             to_remove.append(ticket)
 
     # pos_ids computed once, up at the top of this function now (see the FILLED
