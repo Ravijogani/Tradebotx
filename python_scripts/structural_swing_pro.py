@@ -1172,7 +1172,8 @@ def manage_open_positions() -> None:
         if pos_info is None:
             continue
 
-        direction = pos_info['direction']
+        symbol_name = pos.symbol
+        direction = pos_info["direction"]
         entry = pos_info['entry_price']
         sl_dist = abs(entry - pos_info['stop_loss'])
         if sl_dist <= 0:
