@@ -12161,7 +12161,10 @@ def ai_trading_session():
                 # worse ones -- Swappy's own 3rd-candle pullback is a valid
                 # in-trend consolidation the M5 auction read can score as
                 # BALANCE even in a correct setup.
-                if not setup:
+                # Self-executing (places its own pending order). Gated on the
+                # per-cycle entry cap instead of `not setup` -- it no longer
+                # competes with the candidate strategies for a single slot.
+                if _entries_this_symbol < _max_sym_entries:
                     # last_bar_closed=False: df_m5 comes from
                     # copy_rates_from_pos(..., 0, N), so its final row is the
                     # bar still forming. See detect_swappy_3c's own comment --
@@ -12263,7 +12266,8 @@ def ai_trading_session():
                 # Layer 2 (25%): SMT + FPFVG Turtle Soup confirmation
                 # Layer 3 (50%): Hippo/Mitigation block
                 # This runs independently and manages its own state -- no `setup` needed
-                if df_m1 is not None and state.daily_trades < config.MAX_DAILY_TRADES:
+                if (df_m1 is not None and state.daily_trades < config.MAX_DAILY_TRADES
+                        and _entries_this_symbol < _max_sym_entries):
                     _acct_now_aox = mt5.account_info()
                     if _acct_now_aox:
                         _aox_executed = run_aox_layered_entry(
