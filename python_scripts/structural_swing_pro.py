@@ -105,6 +105,7 @@ import market_intelligence as mi
 import bot_control
 import risk_limits
 import decision_journal as dj
+import structure_tools as st
 
 # =============================================================================
 # CLI ARGUMENTS -- identical contract to hybrid_trading_bot_multiuser.py /
@@ -1171,7 +1172,8 @@ def manage_open_positions() -> None:
         if pos_info is None:
             continue
 
-        direction = pos_info['direction']
+        symbol_name = pos.symbol
+        direction = pos_info["direction"]
         entry = pos_info['entry_price']
         sl_dist = abs(entry - pos_info['stop_loss'])
         if sl_dist <= 0:
@@ -1189,13 +1191,90 @@ def manage_open_positions() -> None:
         pos_info['mfe_r'] = max(pos_info.get('mfe_r', 0.0) or 0.0, r_multiple)
         pos_info['mae_r'] = min(pos_info.get('mae_r', 0.0) or 0.0, r_multiple)
 
-        if ticket not in state.be_moved and r_multiple >= config.BREAKEVEN_TRIGGER_R:
-            if modify_position_sl(pos, entry):
+        # STRUCTURE CONTEXT -- H4, the timeframe this setup was actually read on.
+        _df_mgmt = get_market_data(symbol_name, config.ENTRY_TF, 150)
+        _atr_mgmt = 0.0
+        _spread_mgmt = 0.0
+        if _df_mgmt is not None and len(_df_mgmt) > 20:
+            try:
+                _atr_mgmt = float(calculate_atr(_df_mgmt['high'], _df_mgmt['low'],
+                                                _df_mgmt['close']).iloc[-1])
+            except Exception:
+                _atr_mgmt = 0.0
+        _tick = mt5.symbol_info_tick(symbol_name)
+        if _tick:
+            _spread_mgmt = float(_tick.ask - _tick.bid)
+        _digits = mt5.symbol_info(symbol_name).digits if mt5.symbol_info(symbol_name) else 5
+        _initial_sl = pos_info.get('initial_sl') or pos_info['stop_loss']
+        _current_sl = float(pos.sl) if pos.sl else _initial_sl
+
+        # BREAKEVEN -- STRUCTURAL, AND NOT AT LITERAL ENTRY.
+        #
+        # The previous behaviour moved the stop to the exact entry price at
+        # 1R. On a swing trade held for days that is worse than it sounds:
+        # "entry" does not account for the spread paid on the way in or the
+        # swap accrued overnight, so a "breakeven" stop-out is a small loss,
+        # and a D1/H4 position routinely retraces well past its entry before
+        # continuing -- the whole premise of a structural swing entry is that
+        # the level holds, not that price never revisits it.
+        #
+        # breakeven_plan() only acts once a confirmed higher low (BUY) /
+        # lower high (SELL) exists above entry and parks the stop behind that
+        # swing, includes a cost buffer over entry when it must use entry as
+        # the reference, and refuses any level inside the noise band.
+        if ticket not in state.be_moved:
+            _be = None
+            if _df_mgmt is not None:
+                _be = st.breakeven_plan(
+                    _df_mgmt, direction, entry, _initial_sl, current_price,
+                    _current_sl, _atr_mgmt, _spread_mgmt,
+                    trigger_r=config.BREAKEVEN_TRIGGER_R, digits=_digits)
+            if _be and modify_position_sl(pos, _be['sl']):
                 state.be_moved.add(ticket)
-                _record_management(pos_info, 'moved_to_breakeven',
-                                   f'reached {r_multiple:.2f}R -- stop moved to entry',
-                                   trigger_r=round(r_multiple, 2))
-                logger.info(f"[BREAKEVEN] {pos.symbol} ticket {ticket} moved to entry at {r_multiple:.2f}R")
+                pos_info['stop_loss'] = _be['sl']
+                _record_management(pos_info, 'moved_to_breakeven', _be['reason'],
+                                   trigger_r=_be['r'], new_sl=_be['sl'])
+                logger.info(
+                    f"[BREAKEVEN] {symbol_name} ticket {ticket} -> {_be['sl']:.{_digits}f} "
+                    f"at {_be['r']:.2f}R -- {_be['reason']}"
+                )
+            elif r_multiple >= config.BREAKEVEN_TRIGGER_R:
+                logger.debug(
+                    f"[BREAKEVEN] {symbol_name} at {r_multiple:.2f}R but no confirmed "
+                    f"swing above entry yet -- holding the structural stop."
+                )
+
+        # STRUCTURAL TRAIL FROM 2R -- previously absent entirely.
+        #
+        # Without a trail, a swing that ran to +4R and then reversed gave the
+        # whole move back to a stop still sitting at entry. Trailing behind
+        # each newly confirmed H4 swing keeps the trade alive for the trend
+        # it was opened for while making sure a completed leg is banked.
+        # The ratchet floor rises with the move (2R -> +0.5R locked,
+        # 3R -> +1.5R, 5R -> +3.0R) and is noise-band checked like every
+        # other stop this engine sets.
+        elif r_multiple >= 2.0:
+            if r_multiple >= 5.0:
+                _lock_floor = 3.0
+            elif r_multiple >= 3.0:
+                _lock_floor = 1.5
+            else:
+                _lock_floor = 0.5
+            _tr = None
+            if _df_mgmt is not None:
+                _tr = st.structural_trail(
+                    _df_mgmt, direction, entry, _initial_sl, current_price,
+                    _current_sl, _atr_mgmt, _spread_mgmt,
+                    min_lock_r=_lock_floor, digits=_digits)
+            if _tr and modify_position_sl(pos, _tr['sl']):
+                pos_info['stop_loss'] = _tr['sl']
+                _record_management(pos_info, 'structural_trail', _tr['reason'],
+                                   trigger_r=round(r_multiple, 2), new_sl=_tr['sl'],
+                                   swing=_tr.get('swing'))
+                logger.info(
+                    f"[TRAIL] {symbol_name} ticket {ticket}: SL -> {_tr['sl']:.{_digits}f} "
+                    f"at {r_multiple:.2f}R -- {_tr['reason']}"
+                )
 
         open_time = state.position_open_times.get(ticket)
         if open_time:

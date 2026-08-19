@@ -29,6 +29,7 @@ import google.generativeai as genai
 import market_intelligence as mi
 import bot_control
 import risk_limits
+import structure_tools as st
 import decision_journal as dj
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
@@ -3694,35 +3695,63 @@ def manage_intraday_positions():
         except Exception as e:
             logger.error(f"[DB ERROR] Running P&L update failed for {symbol}: {e}")
         
-        # 2. === BREAKEVEN LOGIC ===
-        # Trigger: Profit >= 1.0 R (Configurable)
+        # === STRUCTURE CONTEXT FOR MANAGEMENT ===
+        # One fetch per position per cycle, reused by breakeven, the trail and
+        # the pullback veto. ENTRY_TF is the timeframe the setup was read on,
+        # so it is the timeframe whose swings actually define this trade.
+        _df_mgmt = None
+        _atr_mgmt = 0.0
+        _spread_mgmt = 0.0
+        try:
+            _df_mgmt = get_market_data(symbol, config.ENTRY_TF, 150)
+            if _df_mgmt is not None and len(_df_mgmt) > 20:
+                _atr_mgmt = float(calculate_atr(_df_mgmt['high'], _df_mgmt['low'],
+                                                _df_mgmt['close'], config.ATR_PERIOD).iloc[-1])
+            _spread_mgmt = float(tick.ask - tick.bid)
+        except Exception as _se:
+            logger.debug(f"[MANAGE] {symbol}: structure context unavailable: {_se}")
+
+        # 2. === BREAKEVEN LOGIC -- STRUCTURAL ===
+        # BREAKEVEN_TRIGGER_R is now the EARLIEST the stop may come off risk,
+        # not the tick at which it does. A flat "entry + 2 pips" at exactly
+        # 1.0R sits inside the retracement that follows practically every
+        # impulse leg -- this bot was scratching trades on the pullback its
+        # own continuation setups are built to hold through, then watching
+        # the original target print. structure_tools.breakeven_plan() instead
+        # requires a confirmed higher low (BUY) / lower high (SELL) above
+        # entry and puts the stop behind THAT, or, if no swing has formed
+        # yet, a CLOSED bar beyond the trigger plus 0.3R of extension before
+        # falling back to entry + a volatility buffer. It never returns a
+        # level inside the noise band of current price.
         if config.ENABLE_BREAKEVEN and not pos_info.get('breakeven_done', False):
-            if r_multiple >= config.BREAKEVEN_TRIGGER_R:
-                logger.info(f"[MANAGE] {symbol} hit {r_multiple:.2f}R (> {config.BREAKEVEN_TRIGGER_R}R). Moving to Breakeven.")
-                
-                # Calculate BreakEven Price with Buffer
-                buffer_size = config.BREAKEVEN_BUFFER_PIPS * point # e.g. 2 pips * point
-                
-                if direction == "BUY":
-                    new_sl = entry_price + buffer_size
-                    # Condition: New SL must be > Current SL
-                    should_update = new_sl > current_sl
+            _be_plan = None
+            if _df_mgmt is not None:
+                _be_plan = st.breakeven_plan(
+                    _df_mgmt, direction, entry_price, initial_sl, current_price,
+                    current_sl, _atr_mgmt, _spread_mgmt,
+                    trigger_r=config.BREAKEVEN_TRIGGER_R,
+                    digits=mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5)
+            if _be_plan:
+                new_sl = _be_plan['sl']
+                logger.info(f"[MANAGE] {symbol} at {_be_plan['r']:.2f}R -- {_be_plan['reason']}")
+                if modify_position_sl(pos, new_sl):
+                    pos_info['stop_loss'] = new_sl
+                    pos_info['breakeven_done'] = True
+                    _record_management(pos_info, 'moved_to_breakeven',
+                                       _be_plan['reason'],
+                                       trigger_r=_be_plan['r'])
+                    logger.info(f"[OK] Breakeven Set: {symbol} @ {new_sl:.5f} (behind structure)")
+                    send_telegram_message(
+                        f" Risk removed: {symbol} (+{_be_plan['r']:.1f}R)\n{_be_plan['reason']}")
                 else:
-                    new_sl = entry_price - buffer_size
-                    # Condition: New SL must be < Current SL
-                    should_update = new_sl < current_sl
-                
-                if should_update:
-                    if modify_position_sl(pos, new_sl):
-                        pos_info['stop_loss'] = new_sl
-                        pos_info['breakeven_done'] = True
-                        _record_management(pos_info, 'moved_to_breakeven',
-                                           f'reached {r_multiple:.2f}R -- stop moved to protect the position',
-                                           trigger_r=round(r_multiple, 2))
-                        logger.info(f"[OK] Breakeven Set: {symbol} @ {new_sl:.5f} (Locking fees)")
-                        send_telegram_message(f" Breakeven Secure: {symbol} (+{r_multiple:.1f}R)")
-                    else:
-                        logger.error(f"[FAIL] Could not set Breakeven for {symbol}")
+                    logger.error(f"[FAIL] Could not set Breakeven for {symbol}")
+            elif r_multiple >= config.BREAKEVEN_TRIGGER_R:
+                logger.debug(
+                    f"[MANAGE] {symbol} at {r_multiple:.2f}R but the move is not "
+                    f"structurally confirmed yet -- holding the original stop "
+                    f"rather than scratching on a retrace."
+                )
+
 
         # 3. === TRAILING STOP LOGIC ===
         if config.ENABLE_TRAILING_STOP:
@@ -3742,33 +3771,58 @@ def manage_intraday_positions():
                     pos_info['trailing_active'] = True
                     logger.info(f"[RUNNER MGR] {symbol} Runner Trailing Mode: {stack['runner_trail_mode']} | New SL: {new_sl:.5f}")
             elif r_multiple >= config.TRAILING_START_R:
-                # 3-STAGE STRUCTURAL TRAILING (R-based, progressively tighter)
-                # Stage 1 (2-3R):  trail at 1.5R distance -- wide, lets winner run
-                # Stage 2 (3-5R):  trail at 1.0R distance -- locks more profit
-                # Stage 3 (5R+):   trail at 0.5R distance -- maximum lock
+                # SWING-BASED TRAIL WITH AN R-RATCHET FLOOR.
+                #
+                # The old version trailed a fixed R-distance measured from the
+                # CURRENT PRICE (1.5R / 1.0R / 0.5R by stage). Anchoring to the
+                # last tick means the stop marches up through the middle of an
+                # impulse leg and then sits there -- a price nobody is
+                # defending -- so an ordinary retrace of that leg takes it out
+                # while the trade's actual structure is still perfectly intact.
+                #
+                # It now trails behind the newest CONFIRMED swing on the entry
+                # timeframe (the higher low / lower high price is genuinely
+                # leaning on), with the progressive tightening preserved as a
+                # one-way ratchet on locked profit instead of as a distance
+                # from price:
+                #   >= 2R -> never give back below +0.5R
+                #   >= 3R -> never give back below +1.5R
+                #   >= 5R -> never give back below +3.0R
+                # Both the swing level and the ratchet are rejected if they
+                # would land inside the noise band (max(0.75*ATR, 3*spread)).
                 if r_multiple >= 5.0:
-                    trail_distance = risk_dist * 0.5   # Stage 3: tight
-                    stage = "STAGE3"
+                    _lock_floor, stage = 3.0, "STAGE3"
                 elif r_multiple >= 3.0:
-                    trail_distance = risk_dist * 1.0   # Stage 2: medium
-                    stage = "STAGE2"
+                    _lock_floor, stage = 1.5, "STAGE2"
                 else:
-                    trail_distance = risk_dist * 1.5   # Stage 1: wide
-                    stage = "STAGE1"
+                    _lock_floor, stage = 0.5, "STAGE1"
 
-                if direction == "BUY":
-                    new_sl       = current_price - trail_distance
-                    should_update = new_sl > current_sl
-                else:
-                    new_sl       = current_price + trail_distance
-                    should_update = new_sl < current_sl
+                _tr = None
+                if _df_mgmt is not None:
+                    _tr = st.structural_trail(
+                        _df_mgmt, direction, entry_price, initial_sl, current_price,
+                        current_sl, _atr_mgmt, _spread_mgmt, min_lock_r=_lock_floor,
+                        digits=mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5)
 
-                if should_update:
+                if _tr:
+                    new_sl = _tr['sl']
                     if modify_position_sl(pos, new_sl):
                         pos_info['stop_loss']      = new_sl
                         pos_info['trailing_active'] = True
                         locked_r = (new_sl - entry_price)/risk_dist if direction=="BUY" else (entry_price-new_sl)/risk_dist
-                        logger.info(f"[TRAIL {stage}] {symbol}: {r_multiple:.1f}R | SL={new_sl:.5f} | Locked {locked_r:.1f}R")
+                        _record_management(pos_info, 'structural_trail', _tr['reason'],
+                                           trigger_r=round(r_multiple, 2), new_sl=new_sl,
+                                           swing=_tr.get('swing'))
+                        logger.info(
+                            f"[TRAIL {stage}] {symbol}: {r_multiple:.1f}R | SL={new_sl:.5f} | "
+                            f"Locked {locked_r:.1f}R -- {_tr['reason']}"
+                        )
+                else:
+                    logger.debug(
+                        f"[TRAIL {stage}] {symbol}: {r_multiple:.1f}R but no confirmed swing "
+                        f"outside the noise band yet -- leaving the stop where it is."
+                    )
+
         
         # 3.5 === PARTIAL TP EXECUTION ===
         # Close 50% of position when price hits TP1 distance
@@ -3841,6 +3895,33 @@ def manage_intraday_positions():
                 
                 # GAP 2: Narrative Exit Engine
                 exit_action = NarrativeExitEngine.evaluate_exit(lifecycle, narrative_conf, expansion_prob, liquidity_distance, False)
+
+                # PULLBACK VETO ON DISCRETIONARY EXITS.
+                #
+                # The narrative engine reads momentum, and momentum ALWAYS
+                # deteriorates during a healthy retracement -- that is what a
+                # retracement is. So a full "EXIT" fired mid-pullback closes
+                # trades whose structure is completely intact, right before
+                # the continuation the setup was taken for. The veto only
+                # blocks the discretionary EXIT/SCALE_OUT path, and only when
+                # market structure is still valid AND the retrace is inside a
+                # normal Fibonacci band; a hard stop, a target, an invalidated
+                # narrative (status CLOSED) and total confidence collapse all
+                # remain untouched below.
+                if exit_action in ("EXIT", "SCALE_OUT") and _df_mgmt is not None:
+                    try:
+                        _hold = st.should_hold_through_pullback(
+                            _df_mgmt, direction, entry_price, current_price,
+                            _atr_mgmt)
+                        if _hold.get('hold'):
+                            logger.info(
+                                f"[PULLBACK VETO] {symbol}: narrative wanted {exit_action} "
+                                f"but holding -- {_hold.get('reason')}"
+                            )
+                            exit_action = "HOLD"
+                    except Exception as _ve:
+                        logger.debug(f"[PULLBACK VETO] {symbol}: veto check failed: {_ve}")
+
                 if exit_action != "HOLD":
                     execute_narrative_action(exit_action, pos, pos_info, stack)
                     if exit_action == "EXIT" or exit_action == "SCALE_OUT":

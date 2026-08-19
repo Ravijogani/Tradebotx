@@ -98,6 +98,7 @@ import session_opens
 import midnight_sd
 import decision_journal as dj
 import risk_limits
+import structure_tools as st
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
@@ -6081,13 +6082,45 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
             else:
                 raise ValueError("structural TP invalid or RR too low")
         except Exception:
-            # Fallback: RR-based TP (always works)
-            if direction == 'BUY':
-                tp1 = entry_price + (risk * config.TP_PRIMARY_RR)
-                tp2 = entry_price + (risk * config.TP_RUNNER_RR)
-            else:
-                tp1 = entry_price - (risk * config.TP_PRIMARY_RR)
-                tp2 = entry_price - (risk * config.TP_RUNNER_RR)
+            # SECOND CHANCE BEFORE ARITHMETIC: liquidity pools.
+            #
+            # get_structural_sl_tp() looks for H1 swing pivots; when it comes
+            # back empty (thin structure, a fresh breakout with nothing above,
+            # a symbol with few clean pivots in the window) the old code went
+            # straight to a fixed RR multiple -- a price the market has no
+            # reason to react at, which is how a target ends up sitting just
+            # beyond a stop cluster that reverses price 2 pips short of it.
+            #
+            # Equal highs / equal lows ARE the reason price travels: they are
+            # resting stop orders. structure_tools.liquidity_targets() aims at
+            # the NEAREST pool that still clears the RR floor, and only falls
+            # through to the RR multiple when the structure genuinely offers
+            # nothing.
+            tp1 = tp2 = 0.0
+            try:
+                _liq = st.liquidity_targets(df, direction, entry_price,
+                                            abs(entry_price - sl), atr,
+                                            min_rr=config.TP_PRIMARY_RR * 0.75)
+                if _liq.get('tp1'):
+                    tp1 = _liq['tp1']
+                    tp2 = _liq['tp2'] or (
+                        entry_price + (risk * config.TP_RUNNER_RR) if direction == 'BUY'
+                        else entry_price - (risk * config.TP_RUNNER_RR))
+                    logger.info(
+                        f"[TP] {symbol}: liquidity target TP1={tp1:.5f} "
+                        f"(RR{_liq['rr1']:.2f}, {_liq['source']})"
+                    )
+            except Exception:
+                tp1 = 0.0
+
+            if not tp1:
+                # Fallback: RR-based TP (always works)
+                if direction == 'BUY':
+                    tp1 = entry_price + (risk * config.TP_PRIMARY_RR)
+                    tp2 = entry_price + (risk * config.TP_RUNNER_RR)
+                else:
+                    tp1 = entry_price - (risk * config.TP_PRIMARY_RR)
+                    tp2 = entry_price - (risk * config.TP_RUNNER_RR)
         
         return {
             'sl': sl, 'tp1': tp1, 'tp2': tp2,
@@ -6666,6 +6699,43 @@ def manage_all_positions():
                 )
                 exit_decision = "HOLD"
 
+            # ---------------------------------------------------------
+            # PULLBACK VETO OVER THE EXIT ENGINE.
+            #
+            # ScalpingExitEngine reads momentum, and momentum is negative
+            # BY DEFINITION during a retracement -- which is exactly the
+            # moment a continuation trade must be held, not closed. This
+            # bot was therefore market-closing healthy trades on the very
+            # pullback its entry models are built around, and the trade
+            # would then run to target without it (the MFE/MAE numbers on
+            # closed trades show this pattern directly: EXIT_ENGINE closes
+            # with a high MFE and a target subsequently reached).
+            #
+            # The veto is narrow on purpose: it only holds while the swing
+            # sequence is INTACT and the retrace is inside the normal band
+            # for this leg (see structure_tools.should_hold_through_pullback).
+            # Once structure actually breaks, the exit engine gets its
+            # authority back immediately. The structural stop -- not a
+            # momentum reading -- is what is entitled to end a trade whose
+            # premise is still valid.
+            # ---------------------------------------------------------
+            if exit_decision == "EXIT" and df_m5_m is not None:
+                try:
+                    _hold, _hold_why = st.should_hold_through_pullback(
+                        df_m5_m, "BUY" if pos.type == 0 else "SELL",
+                        entry_price, current_price, m_atr)
+                    if _hold:
+                        logger.info(
+                            f"[PULLBACK HOLD] {symbol} #{ticket}: exit engine wanted out "
+                            f"(edge={edge_score:.1f}) but {_hold_why} (r={r_multiple:.2f}R)"
+                        )
+                        _record_management(params, 'exit_vetoed',
+                                           f'exit engine wanted out -- {_hold_why}',
+                                           trigger_r=round(r_multiple, 2))
+                        exit_decision = "HOLD"
+                except Exception as _pbe:
+                    logger.debug(f"[PULLBACK HOLD] {symbol}: check failed: {_pbe}")
+
             if exit_decision != "HOLD":
                 if exit_decision == "EXIT":
                     logger.info(f" [EXIT ENGINE] Hard Exit {symbol} #{ticket} (score={edge_score:.1f}, held {duration_mins:.1f}m)")
@@ -6869,81 +6939,109 @@ def manage_all_positions():
             current_profit_dist = (current_price - entry_price) if is_buy else (entry_price - current_price)
 
             _strategy_type = params.get('strategy_type', 'GENERIC')
+            _dir_m = "BUY" if is_buy else "SELL"
+            _dig_m = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
+            _init_sl_m = params.get('initial_sl', sl) or sl
+            _df_struct = df_m5_m   # already fetched above for the edge re-score
+
+            # =========================================================
+            # STRUCTURE-AWARE MANAGEMENT HELPERS
+            #
+            # Every branch below used to act on a raw tick-level
+            # r_multiple: breakeven the instant price PRINTED 1.0R, then
+            # trail a fixed percentage of the open gain. Both triggers
+            # sit exactly where a normal retracement goes, so the bot
+            # was scratching trades on the pullback its own entry models
+            # expect, and the trade would then reach target without it.
+            #
+            # These two wrappers route the same decisions through
+            # structure_tools: nothing moves until a bar has CLOSED
+            # beyond the level, the stop goes BEHIND a confirmed swing
+            # rather than onto a round number, and no stop is ever
+            # parked inside the instrument's own noise band
+            # (max(0.75*ATR, 3*spread)). When structure hasn't formed
+            # yet they return None -- and "don't touch the stop" is the
+            # correct answer then, not a percentage fallback.
+            # =========================================================
+            def _try_structural_be(_trigger_r: float, _label: str, _extra_note: str = '') -> bool:
+                """BE via structure. True if the stop was moved (or is now
+                provably unnecessary to move), False to leave it alone."""
+                if _df_struct is None:
+                    return False
+                _plan = st.breakeven_plan(
+                    _df_struct, _dir_m, entry_price, _init_sl_m, current_price, sl,
+                    m_atr, _spread_trail, trigger_r=_trigger_r, digits=_dig_m)
+                if not _plan:
+                    return False
+                logger.info(
+                    f"[{_label} BE] {symbol} #{ticket}: SL {sl:.{_dig_m}f} -> "
+                    f"{_plan['sl']:.{_dig_m}f} at {_plan['r']:.2f}R -- {_plan['reason']}"
+                )
+                if modify_position(ticket, _plan['sl'], tp):
+                    state.be_moved.add(ticket)
+                    _record_management(params, 'moved_to_breakeven',
+                                       f"{_plan['reason']}{_extra_note}",
+                                       trigger_r=_plan['r'], new_sl=_plan['sl'])
+                    try: trade_db.update_metadata(ticket, {'be_moved': True})
+                    except Exception: pass
+                    return True
+                return False
+
+            def _try_structural_trail(_label: str, _min_lock_r: float = 0.0,
+                                      _tp_override: float = 0.0) -> bool:
+                """Trail behind the newest confirmed swing. Optional
+                one-way ratchet floor for late-stage trades."""
+                if _df_struct is None:
+                    return False
+                _tr = st.structural_trail(
+                    _df_struct, _dir_m, entry_price, _init_sl_m, current_price, sl,
+                    m_atr, _spread_trail, min_lock_r=_min_lock_r, digits=_dig_m)
+                if not _tr:
+                    return False
+                _tp_use2 = _tp_override if _tp_override else tp
+                logger.info(
+                    f"[{_label} TRAIL] {symbol} #{ticket}: SL {sl:.{_dig_m}f} -> "
+                    f"{_tr['sl']:.{_dig_m}f} at {r_multiple:.2f}R -- {_tr['reason']}"
+                )
+                if modify_position(ticket, _tr['sl'], _tp_use2):
+                    _record_management(params, 'structural_trail', _tr['reason'],
+                                       trigger_r=round(r_multiple, 2), new_sl=_tr['sl'],
+                                       swing=_tr.get('swing'))
+                    return True
+                return False
 
             # -- AOX: SD-based TPs were set at entry; do NOT trail-stop them early.
-            # The MT5 TP handles partial exits; we only protect with BE at 1R.
-            # DEAD-CONFIG FIX: ENABLE_BREAKEVEN previously gated nothing anywhere
-            # -- now a real global kill switch across all three BE branches
-            # (this one, SWAPPY's below, and generic Stage 1 further down).
-            # AOX's own 1.0R trigger is a deliberate strategy-specific choice
-            # (documented above, distinct from the generic BREAKEVEN_TRIGGER_RR)
-            # and is left untouched -- only the on/off flag is wired in here.
+            # The MT5 TP handles partial exits; we only take it off risk once the
+            # move is structurally confirmed. AOX's 1.0R reference is unchanged --
+            # what changed is that 1.0R is now the EARLIEST the stop may move, not
+            # the instant it moves: it still needs a confirmed swing above entry
+            # (or a closed bar beyond 1R plus a 0.3R cushion) before the SD-level
+            # target loses its full structural stop to a routine retrace.
             if _strategy_type == 'AOX':
-                if config.ENABLE_BREAKEVEN and r_multiple >= 1.0 and ticket not in state.be_moved:
-                    _dig_aox = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    _be_aox  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_aox)
-                    _be_aox_rounded = round(_be_aox, _dig_aox)
-                    _sl_rounded = round(sl, _dig_aox)
-                    _can_be = (is_buy and _be_aox_rounded > _sl_rounded) or (not is_buy and _be_aox_rounded < _sl_rounded)
-                    if _can_be:
-                        logger.info(f"[AOX TRAIL] {symbol} #{ticket}: BE only -- SD TPs handle profit target (r={r_multiple:.2f}R)")
-                        if modify_position(ticket, _be_aox, tp):
-                            state.be_moved.add(ticket)
-                            _record_management(params, 'moved_to_breakeven',
-                                               f'reached {r_multiple:.2f}R -- AOX protects at 1R, SD levels handle the target',
-                                               trigger_r=round(r_multiple, 2), new_sl=_be_aox)
-                            try: trade_db.update_metadata(ticket, {'be_moved': True})
-                            except Exception: pass
-                    else:
-                        state.be_moved.add(ticket)
-                        try: trade_db.update_metadata(ticket, {'be_moved': True})
-                        except Exception: pass
+                if config.ENABLE_BREAKEVEN and ticket not in state.be_moved:
+                    _try_structural_be(1.0, 'AOX',
+                                       ' -- SD levels still handle the profit target')
                 continue  # AOX exits via MT5 TP levels set on entry, not trailing
 
-            # -- SWAPPY: Must hold to minimum 3R. No Stage 1/2 tightening.
-            # BE at BREAKEVEN_TRIGGER_RR (1.0R), same as everywhere else.
+            # -- SWAPPY: Must hold to minimum 3R. No early tightening.
+            # BE at BREAKEVEN_TRIGGER_RR (1.0R) -- but structurally, behind the
+            # confirmed higher low / lower high rather than flat at entry. The
+            # 3-candle Swappy stop is tight by construction, which made a flat
+            # entry-price BE especially fragile: the pullback that follows the
+            # displacement leg is part of the pattern, and it was scratching the
+            # trade before the 3R target could be reached.
             #
-            # This was a hardcoded 2.0R, and it was a live gap rather than a
-            # preference: find_swappy_structural_tp has a 1.5R floor, so a
-            # Swappy trade targeting 1.5-2.0R had its breakeven trigger BEYOND
-            # its own take-profit. Those trades carried full structural risk
-            # from entry to exit -- and since the 3R trail below requires
-            # `ticket in state.be_moved`, they had no trail either.
-            #
-            # The "hold to 3R" intent is unchanged: there is still no Stage 1/2
-            # tightening here, only the stop coming off risk once the trade has
-            # paid for itself.
+            # The "hold to 3R" intent is unchanged: no Stage 1/2 tightening, only
+            # the stop coming off risk once the trade has paid for itself, then a
+            # swing-based trail past 3R with a 2R ratchet floor replacing the old
+            # 85%-of-open-gain lock (which sat mid-leg, where price has no reason
+            # to respect it).
             if _strategy_type == 'SWAPPY':
-                if (config.ENABLE_BREAKEVEN and r_multiple >= config.BREAKEVEN_TRIGGER_RR
-                        and ticket not in state.be_moved):
-                    _dig_sw = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    _be_sw  = round((entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer), _dig_sw)
-                    _be_sw_r = round(_be_sw, _dig_sw)
-                    _sl_r_sw = round(sl, _dig_sw)
-                    _can_sw = (is_buy and _be_sw_r > _sl_r_sw) or (not is_buy and _be_sw_r < _sl_r_sw)
-                    if _can_sw:
-                        logger.info(f"[SWAPPY TRAIL] {symbol} #{ticket}: BE at {config.BREAKEVEN_TRIGGER_RR}R -- holding to 3R+ min (r={r_multiple:.2f}R)")
-                        if modify_position(ticket, _be_sw, tp):
-                            state.be_moved.add(ticket)
-                            _record_management(params, 'moved_to_breakeven',
-                                               f'reached {r_multiple:.2f}R -- stop moved to protect the position',
-                                               trigger_r=round(r_multiple, 2))
-                            try: trade_db.update_metadata(ticket, {'be_moved': True})
-                            except Exception: pass
-                    else:
-                        state.be_moved.add(ticket)
-                        try: trade_db.update_metadata(ticket, {'be_moved': True})
-                        except Exception: pass
+                if (config.ENABLE_BREAKEVEN and ticket not in state.be_moved):
+                    _try_structural_be(config.BREAKEVEN_TRIGGER_RR, 'SWAPPY',
+                                       ' -- holding for the 3R+ structural target')
                 elif r_multiple >= 3.0 and ticket in state.be_moved:
-                    # At 3R+ trail tightly at 85% to protect the minimum target
-                    locked_dist = current_profit_dist * 0.85
-                    trail_sl = (entry_price + locked_dist) if is_buy else (entry_price - locked_dist)
-                    trail_sl_safe = (trail_sl - _min_buffer) if is_buy else (trail_sl + _min_buffer)
-                    _dig_sw3 = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    can_adv = (is_buy and trail_sl_safe > sl) or (not is_buy and trail_sl_safe < sl)
-                    if can_adv:
-                        logger.info(f"[SWAPPY TRAIL3R] {symbol} #{ticket}: 85% lock at r={r_multiple:.2f}R (holding 3R+)")
-                        modify_position(ticket, round(trail_sl_safe, _dig_sw3), tp)
+                    _try_structural_trail('SWAPPY3R', _min_lock_r=2.0)
                 continue  # SWAPPY uses above logic only
 
             sl_dist = abs(entry_price - params.get('initial_sl', sl))
@@ -6957,33 +7055,43 @@ def manage_all_positions():
             # AOX/SWAPPY branches) -- no longer recomputed here.
 
             # ------------------------------------------------------------------
-            # STAGE 1: BREAKEVEN (first time r_multiple hits BREAKEVEN_TRIGGER_RR)
-            # DEAD-CONFIG FIX: this used to hardcode 1.0 regardless of
-            # BREAKEVEN_TRIGGER_RR (config default 1.5) and ENABLE_BREAKEVEN
-            # (neither had a live read site anywhere in this file). Both now
-            # actually control this stage -- same flag AOX/SWAPPY's dedicated
-            # BE branches above respect, but this is the only branch whose
-            # *trigger R-multiple* is the configurable one, since AOX/SWAPPY's
-            # 1.0R/2.0R are deliberate strategy-specific choices, not this
-            # generic default.
+            # STAGE 1: BREAKEVEN -- STRUCTURAL, NOT ARITHMETIC
+            #
+            # BREAKEVEN_TRIGGER_RR is still the gate, and ENABLE_BREAKEVEN is
+            # still the kill switch. What changed is what the trigger MEANS:
+            # it is now the EARLIEST point the stop may come off risk, not the
+            # instant it does. structure_tools.breakeven_plan() additionally
+            # requires either a confirmed higher low / lower high on the
+            # profitable side of entry (and then places the stop behind THAT
+            # swing, which is a real invalidation level rather than a round
+            # number), or -- if no swing has formed yet -- a CLOSED bar beyond
+            # the trigger plus a further 0.3R of extension.
+            #
+            # This is the fix for the single most expensive management failure
+            # in the closed-trade record: BE set on a tick print at exactly
+            # +1.0R, the ordinary retrace of the impulse that just made that
+            # 1.0R scratches the trade, and the original target is then reached
+            # without us. A stop is also never placed inside the noise band
+            # (max(0.75*ATR, 3*spread)) of current price.
             # ------------------------------------------------------------------
-            if config.ENABLE_BREAKEVEN and r_multiple >= config.BREAKEVEN_TRIGGER_RR and ticket not in state.be_moved:
-                be_price = (entry_price + _min_buffer) if is_buy else (entry_price - _min_buffer)
-                _dig_be = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                be_price_rounded = round(be_price, _dig_be)
-                sl_rounded = round(sl, _dig_be)
-                # Only move if new SL is meaningfully better AFTER rounding (prevents MT5 "No changes" spam)
-                can_move = (is_buy and be_price_rounded > sl_rounded) or (not is_buy and be_price_rounded < sl_rounded)
-                if can_move:
+            if config.ENABLE_BREAKEVEN and ticket not in state.be_moved:
+                _be_plan = None
+                if _df_struct is not None:
+                    _be_plan = st.breakeven_plan(
+                        _df_struct, _dir_m, entry_price, _init_sl_m, current_price, sl,
+                        m_atr, _spread_trail, trigger_r=config.BREAKEVEN_TRIGGER_RR,
+                        digits=_dig_m)
+                if _be_plan:
                     logger.info(
                         f"[TRAIL STAGE1] {symbol} #{ticket}: BREAKEVEN "
-                        f"SL {sl:.5f} -> {be_price_rounded:.5f} (r={r_multiple:.2f}R)"
+                        f"SL {sl:.{_dig_m}f} -> {_be_plan['sl']:.{_dig_m}f} "
+                        f"(r={_be_plan['r']:.2f}R) -- {_be_plan['reason']}"
                     )
-                    if modify_position(ticket, be_price_rounded, tp):
+                    if modify_position(ticket, _be_plan['sl'], tp):
                         state.be_moved.add(ticket)
                         _record_management(params, 'moved_to_breakeven',
-                                           f'reached {r_multiple:.2f}R -- stop moved to protect the position',
-                                           trigger_r=round(r_multiple, 2))
+                                           _be_plan['reason'],
+                                           trigger_r=_be_plan['r'], new_sl=_be_plan['sl'])
                         params['initial_sl'] = params.get('initial_sl', sl)
                         state.open_positions[ticket]['params'] = params
                         try:
@@ -6992,93 +7100,94 @@ def manage_all_positions():
                             pass
                         send_telegram_notification(
                             f"[BREAKEVEN] {symbol} #{ticket}\n"
-                            f"SL moved to entry -- ZERO RISK now\n"
-                            f"Profit locked: $0 minimum | R achieved: {r_multiple:.1f}R"
+                            f"SL moved behind structure -- risk removed\n"
+                            f"{_be_plan['reason']}\n"
+                            f"R achieved: {_be_plan['r']:.1f}R"
                         )
                     else:
-                        # Modify failed (SL already at BE after rounding) -- mark done to stop spam
-                        logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: modify failed, SL already at BE, marking done")
+                        logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: modify failed, marking done")
                         state.be_moved.add(ticket)
                         try:
                             trade_db.update_metadata(ticket, {'be_moved': True})
                         except Exception:
                             pass
-                else:
-                    # SL already at or past BE (restored without flag, or tiny float diff)
-                    logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: SL already past BE ({sl_rounded}), marking done silently")
+                elif (r_multiple >= config.BREAKEVEN_TRIGGER_RR and
+                      ((is_buy and round(sl, _dig_m) >= round(entry_price, _dig_m)) or
+                       ((not is_buy) and 0 < round(sl, _dig_m) <= round(entry_price, _dig_m)))):
+                    # Stop is already at/past entry (restored after a restart, or
+                    # a previous cycle moved it) -- record it and stop re-checking.
+                    logger.debug(f"[TRAIL STAGE1] {symbol} #{ticket}: SL already risk-free, marking done")
                     state.be_moved.add(ticket)
-                    _record_management(params, 'moved_to_breakeven',
-                                       f'reached {r_multiple:.2f}R -- stop moved to protect the position',
-                                       trigger_r=round(r_multiple, 2))
                     try:
                         trade_db.update_metadata(ticket, {'be_moved': True})
                     except Exception:
                         pass
 
             # ------------------------------------------------------------------
-            # STAGE 3 checked FIRST: TIGHT TRAIL AT 70% OF GAINS (>= 2.0R)
-            # MUST be before Stage 2 -- elif chain evaluates top-down, so
-            # if Stage 2 (>=1.5R) came first it would always fire at 2.0R+
-            # meaning Stage 3 (>=2.0R) would be unreachable dead code.
+            # STAGE 2/3: SWING-BASED TRAIL (>= 1.5R, once risk is off)
+            #
+            # Replaces the old "lock 50% of the open gain at 1.5R / 70% at 2.0R".
+            # A percentage of the open gain lands wherever the maths says --
+            # typically mid-impulse, a price no other participant is defending,
+            # so the first ordinary retrace takes it out. The stop now trails
+            # behind the newest CONFIRMED swing instead, which is the level whose
+            # break is genuine evidence the leg is finished.
+            #
+            # A one-way ratchet keeps the old intent of "the further this runs,
+            # the more is banked" without re-introducing the noise problem:
+            #   >= 2.0R -> never give back more than 0.5R of locked profit
+            #   >= 3.0R -> never give back below +1.0R
+            #   >= 4.0R -> never give back below +2.0R
+            # The ratchet is itself noise-band checked, so it can tighten the
+            # swing level but can never place the stop where price is already
+            # brushing it.
+            #
+            # Target extension at 2R+ is unchanged in intent: once the trail is
+            # doing the protecting, a TP still sitting at 2R would close the
+            # trade before the trail can ever matter, so it moves out to the
+            # runner target (tp2).
             # ------------------------------------------------------------------
-            elif r_multiple >= 2.0 and ticket in state.be_moved:
-                locked_dist = current_profit_dist * 0.70   # Lock 70% of current gain
-                trail_sl = (entry_price + locked_dist) if is_buy else (entry_price - locked_dist)
-                trail_sl_safe = (trail_sl - _min_buffer) if is_buy else (trail_sl + _min_buffer)
+            elif r_multiple >= 1.5 and ticket in state.be_moved:
+                if r_multiple >= 4.0:
+                    _lock_floor = 2.0
+                elif r_multiple >= 3.0:
+                    _lock_floor = 1.0
+                elif r_multiple >= 2.0:
+                    _lock_floor = 0.5
+                else:
+                    _lock_floor = 0.0
 
-                # EXTEND THE TARGET WHEN THE TRAIL TAKES OVER.
-                #
-                # Trailing a stop while the take-profit sits at 2R is a
-                # contradiction -- the TP closes the trade at 2R whatever the
-                # stop does, so the trail can only ever run for the few ticks
-                # before the fill. Once Stage 3 owns the stop, the target moves
-                # to the runner TP (TP_RUNNER_RR, default 3.0R) that
-                # get_dynamic_trade_params has always computed and place_ai_trade
-                # has always discarded. The trail is what protects the trade
-                # from here; the TP is no longer the thing doing that job.
-                #
-                # Only ever pushed FURTHER away, and only for strategies on
-                # this generic path -- AOX and SWAPPY own their targets and
-                # `continue` above without reaching this branch.
                 _tp_use = tp
-                _tp2 = params.get('tp2', 0.0)
-                if _tp2 and ((is_buy and _tp2 > tp) or (not is_buy and _tp2 < tp)):
-                    _tp_use = _tp2
+                if r_multiple >= 2.0:
+                    _tp2 = params.get('tp2', 0.0)
+                    if _tp2 and ((is_buy and _tp2 > tp) or (not is_buy and _tp2 < tp)):
+                        _tp_use = _tp2
 
-                can_advance = (is_buy and trail_sl_safe > sl) or (not is_buy and trail_sl_safe < sl)
-                if can_advance or _tp_use != tp:
-                    sym_digits = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    _new_sl = round(trail_sl_safe, sym_digits) if can_advance else sl
+                _trail = None
+                if _df_struct is not None:
+                    _trail = st.structural_trail(
+                        _df_struct, _dir_m, entry_price, _init_sl_m, current_price, sl,
+                        m_atr, _spread_trail, min_lock_r=_lock_floor, digits=_dig_m)
+
+                if _trail or _tp_use != tp:
+                    _new_sl = _trail['sl'] if _trail else sl
                     logger.info(
-                        f"[TRAIL STAGE3] {symbol} #{ticket}: 70% lock "
-                        f"SL {sl:.{sym_digits}f} -> {_new_sl:.{sym_digits}f}"
-                        + (f", TP {tp:.{sym_digits}f} -> {_tp_use:.{sym_digits}f} (runner target)"
+                        f"[TRAIL STRUCT] {symbol} #{ticket}: "
+                        + (f"SL {sl:.{_dig_m}f} -> {_new_sl:.{_dig_m}f} -- {_trail['reason']}"
+                           if _trail else "SL held (no confirmed swing to trail behind yet)")
+                        + (f", TP {tp:.{_dig_m}f} -> {_tp_use:.{_dig_m}f} (runner target)"
                            if _tp_use != tp else "")
                         + f" (r={r_multiple:.2f}R)"
                     )
-                    if modify_position(ticket, _new_sl, _tp_use) and _tp_use != tp:
-                        _record_management(params, 'target_extended',
-                                           f'trail took over at {r_multiple:.2f}R -- target moved to the runner TP',
-                                           trigger_r=round(r_multiple, 2), new_tp=_tp_use)
-
-            # ------------------------------------------------------------------
-            # STAGE 2: TRAIL AT 50% OF GAINS (1.5R to 2.0R)
-            # Only reached when r_multiple is between 1.5 and 2.0
-            # ------------------------------------------------------------------
-            elif r_multiple >= 1.5 and ticket in state.be_moved:
-                locked_dist = current_profit_dist * 0.50   # Lock 50% of current gain
-                trail_sl = (entry_price + locked_dist) if is_buy else (entry_price - locked_dist)
-                trail_sl_safe = (trail_sl - _min_buffer) if is_buy else (trail_sl + _min_buffer)
-
-                can_advance = (is_buy and trail_sl_safe > sl) or (not is_buy and trail_sl_safe < sl)
-                if can_advance:
-                    sym_digits = mt5.symbol_info(symbol).digits if mt5.symbol_info(symbol) else 5
-                    logger.info(
-                        f"[TRAIL STAGE2] {symbol} #{ticket}: 50% lock "
-                        f"SL {sl:.{sym_digits}f} -> {trail_sl_safe:.{sym_digits}f} "
-                        f"(r={r_multiple:.2f}R, locking ${locked_dist:.{sym_digits}f}pts)"
-                    )
-                    modify_position(ticket, round(trail_sl_safe, sym_digits), tp)
+                    if modify_position(ticket, _new_sl, _tp_use):
+                        if _trail:
+                            _record_management(params, 'structural_trail', _trail['reason'],
+                                               trigger_r=round(r_multiple, 2),
+                                               new_sl=_new_sl, swing=_trail.get('swing'))
+                        if _tp_use != tp:
+                            _record_management(params, 'target_extended',
+                                               f'trail took over at {r_multiple:.2f}R -- target moved to the runner TP',
+                                               trigger_r=round(r_multiple, 2), new_tp=_tp_use)
 
     except Exception as e:
         logger.error(f"[ERROR] Position management failed: {e}", exc_info=True)
