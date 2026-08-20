@@ -6437,7 +6437,21 @@ def get_structural_sl_tp(symbol: str, direction: str, df_m5, df_m15, df_h1,
 
 
 def modify_position(ticket: int, sl: float, tp: float, max_retries: int = 3) -> bool:
-    """Modify SL/TP with Retry Logic"""
+    """
+    Modify SL/TP with retry logic.
+
+    "No changes" is treated as SUCCESS, not failure. MT5 returns
+    TRADE_RETCODE_NO_CHANGES when the requested SL/TP already equal the
+    current ones -- the position is exactly where the caller wants it, which
+    is the desired end state. Retrying cannot change that.
+
+    Before this, such a request logged three WARNINGs and slept 0.5s between
+    each, so every management cycle for that position burned 1.5 seconds and
+    filled the log with failures that were not failures. Worse, it buried the
+    real ones: a genuine rejection (invalid stops, market closed, position
+    gone) looked identical to a no-op.
+    """
+    _NO_CHANGES = getattr(mt5, 'TRADE_RETCODE_NO_CHANGES', 10025)
     for i in range(max_retries):
         try:
             request = {
@@ -6449,7 +6463,10 @@ def modify_position(ticket: int, sl: float, tp: float, max_retries: int = 3) -> 
             result = mt5.order_send(request)
             if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                 return True
-            
+            if result and result.retcode == _NO_CHANGES:
+                logger.debug(f"[MODIFY] {ticket}: already at the requested SL/TP -- nothing to do")
+                return True
+
             logger.warning(f"Modify failed for {ticket} (Attempt {i+1}/{max_retries}): {result.comment if result else 'Unknown'}")
             time.sleep(0.5)
             
@@ -8841,6 +8858,17 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
                 f"lot={lot_size} ({risk_fraction:.0%} risk) "
                 f"entry={price:.4f} sl={sl:.4f} tp={tp:.4f}"
             )
+            # AOX self-executes too, and had no Telegram alert on any of its
+            # three layers -- a 25/25/50 scale-in could build a full position
+            # in silence. Named per layer so the scaling is visible as it
+            # happens rather than only in the terminal afterwards.
+            send_telegram_notification(
+                f"<b>TRADE OPENED</b>\n\n"
+                f"<b>{symbol}</b> {direction} | Strategy: AOX ({layer_name})\n"
+                f"Entry: <code>{price:.5f}</code>\n"
+                f"SL: <code>{sl:.5f}</code>\n"
+                f"TP: <code>{tp:.5f}</code>\n"
+                f"Lot: {lot_size} ({risk_fraction:.0%} of the AOX allocation)")
             state.daily_trades += 1
             # Store strategy_type in open_positions so manage_all_positions routes correctly
             if not hasattr(state, 'open_positions'): state.open_positions = {}
@@ -9666,7 +9694,26 @@ def strategy_shaakuni_ssm(symbol: str, df_h1: 'pd.DataFrame', df_h4: 'pd.DataFra
                 f'RR {rr:.2f} clears the {min_rr:.1f} bar for this setup quality')
         _j.decide(True, f'sweep + OB confirmed, RR {rr:.2f}')
 
-        logger.info(
+        # ONCE PER SETUP, NOT ONCE PER SCAN.
+        #
+        # This ran at INFO on every successful detection, and detection runs
+        # every scan cycle -- roughly twice a second. A single unfilled setup
+        # therefore wrote the same line ~7,000 times an hour, which is why the
+        # log reads as if SSM is the only strategy in the file: every other
+        # strategy logs its detections at DEBUG and only speaks up at INFO
+        # when it actually places something.
+        #
+        # Keyed on the OB level so a genuinely NEW setup still announces
+        # itself immediately, while the same one being re-detected drops to
+        # DEBUG. The rate limit is deliberately not time-based: a new setup
+        # at a new level is news whenever it happens.
+        _ssm_key = (symbol, direction, round(float(ob['entry']), 5))
+        if getattr(state, '_ssm_logged', None) != _ssm_key:
+            state._ssm_logged = _ssm_key
+            _ssm_log = logger.info
+        else:
+            _ssm_log = logger.debug
+        _ssm_log(
             f"[SSM] {symbol} {direction}: HTF sweep confirmed. "
             f"Extreme OB={ob['entry']:.4f} SL={ob['sl']:.4f} TP={tp:.4f} RR={rr:.1f}x "
             f"Liquidity={'YES(' + str(confluence['matched_level']) + ')' if confluence['confluent'] else 'no'} "
@@ -11436,6 +11483,16 @@ def check_swappy_expirations():
                     'stop_loss': info.get('sl', 0.0), 'take_profit': info.get('tp', 0.0),
                     'lot_size': info.get('lot_size', 0.0), 'strategy_name': 'SWAPPY_3C',
                 })
+                # The order actually FILLED -- this is the one that matters, and
+                # it had no alert at all. A Swappy position could open, run and
+                # close without a single Telegram message about it.
+                send_telegram_notification(
+                    f"<b>TRADE OPENED</b>\n\n"
+                    f"<b>{info['symbol']}</b> {info['direction']} | Strategy: SWAPPY_3C\n"
+                    f"Entry: <code>{info.get('entry_price', 0.0):.5f}</code>\n"
+                    f"SL: <code>{info.get('sl', 0.0):.5f}</code>\n"
+                    f"TP: <code>{info.get('tp', 0.0):.5f}</code>\n"
+                    f"Lot: {info.get('lot_size', 0.0)}")
             continue
         sym  = info['symbol']
         tick = mt5.symbol_info_tick(sym)
@@ -12403,6 +12460,18 @@ def ai_trading_session():
                                         state.swappy_last_setup[symbol] = _sw_ct
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
                                                 f"at {_sw['stop_entry']:.4f} (near_support={_near_support} near_resist={_near_resist})")
+                                    # Swappy self-executes, so it never reached
+                                    # place_ai_trade's Telegram alert. Every
+                                    # "TRADE OPENED" message you have ever had came
+                                    # from the shared pipeline -- which is exactly
+                                    # why they all name SSM. A resting stop order is
+                                    # committed risk and deserves to be announced.
+                                    send_telegram_notification(
+                                        f"<b>PENDING ORDER PLACED</b>\n\n"
+                                        f"<b>{symbol}</b> {_trade_direction} | Strategy: SWAPPY_3C\n"
+                                        f"Trigger: <code>{_sw['stop_entry']:.5f}</code> ({_sw['pattern']})\n"
+                                        f"SL: <code>{_sl_sw:.5f}</code>\n"
+                                        f"Expires in 25 minutes if it does not trigger.")
                                     state.daily_trades += 1
                                     _entries_this_symbol += 1  # placed; other strategies still get to scan
                                 else:

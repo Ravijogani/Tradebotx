@@ -343,12 +343,15 @@ def breakeven_plan(df, direction: str, entry_price: float, initial_sl: float,
         # early to be risk-free. Wait.
         if (is_buy and candidate < entry_price) or ((not is_buy) and candidate > entry_price):
             return None
-        # Only ever an improvement.
-        if current_sl and ((is_buy and candidate <= current_sl) or
-                           ((not is_buy) and candidate >= current_sl)):
+        # Only ever an improvement -- measured at tick resolution, for the
+        # reason spelled out in structural_trail: a sub-tick "improvement"
+        # rounds back onto the current stop and becomes a rejected no-op.
+        candidate = round(float(candidate), digits)
+        if current_sl and ((is_buy and candidate <= round(float(current_sl), digits)) or
+                           ((not is_buy) and candidate >= round(float(current_sl), digits))):
             return None
 
-        return {'sl': round(float(candidate), digits), 'reason': reason, 'r': round(r_mult, 2)}
+        return {'sl': candidate, 'reason': reason, 'r': round(r_mult, 2)}
     except Exception:
         return None
 
@@ -411,13 +414,24 @@ def structural_trail(df, direction: str, entry_price: float, initial_sl: float,
 
         if candidate is None:
             return None
-        if current_sl and ((is_buy and candidate <= current_sl) or
-                           ((not is_buy) and candidate >= current_sl)):
+        # ROUND FIRST, THEN COMPARE. The improvement test used to run on the
+        # unrounded candidate, so a "better" stop that differed by less than
+        # half a tick passed the check and then rounded back to exactly the
+        # current SL. The caller sent that to MT5, which answered
+        # TRADE_RETCODE_NO_CHANGES -- logged live as
+        #   [TRAIL STRUCT] AUDUSDm #4939419030: SL 0.71231 -> 0.71231
+        #   Modify failed for 4939419030 (Attempt 1/3): No changes
+        # three times per cycle, half a second apart, for the life of the
+        # position. Comparing at tick resolution is what makes "is this
+        # actually an improvement?" the same question the broker asks.
+        candidate = round(float(candidate), digits)
+        if current_sl and ((is_buy and candidate <= round(float(current_sl), digits)) or
+                           ((not is_buy) and candidate >= round(float(current_sl), digits))):
             return None
         if (is_buy and candidate >= current_price) or ((not is_buy) and candidate <= current_price):
             return None
 
-        return {'sl': round(float(candidate), digits), 'reason': reason,
+        return {'sl': candidate, 'reason': reason,
                 'swing': round(float(swing), digits) if swing is not None else None}
     except Exception:
         return None
