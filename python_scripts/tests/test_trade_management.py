@@ -193,12 +193,18 @@ check("the weekend check runs before the entry scan and latches its flatten", t1
 # ---------- the runner target ----------
 def t16():
     # Trailing while the TP sits at 2R is a contradiction: the TP closes the
-    # trade whatever the stop does. Stage 3 must extend the target it was
-    # given to the runner TP that was previously computed and discarded.
-    i = SRC.find('TRAIL STAGE3')
-    assert i > 0, "Stage 3 trail not found"
-    body = SRC[max(0, i - 1800):i + 900]
-    assert "params.get('tp2'" in body, "Stage 3 never reaches for the runner target"
+    # trade whatever the stop does. Once the trail owns the stop, the target
+    # must extend to the runner TP that was previously computed and discarded.
+    #
+    # Asserted on BEHAVIOUR, not on the log label. The arithmetic Stage 1/2/3
+    # ladder this originally guarded has since been replaced by
+    # structure_tools' structural trail; the target extension survived that
+    # rewrite, and pinning the old "TRAIL STAGE3" string would fail on a
+    # rename while a genuine regression slipped past.
+    i = SRC.find('runner target')
+    assert i > 0, "nothing extends the target when the trail takes over"
+    body = SRC[max(0, i - 1500):i + 900]
+    assert "params.get('tp2'" in body, "the trail never reaches for the runner target"
     assert "'tp2':           params.get('tp2', 0.0)," in SRC, \
         "tp2 is still discarded at entry, so there is nothing to extend to"
 check("the trail extends the target instead of trailing into a fixed TP", t16)

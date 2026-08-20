@@ -196,6 +196,23 @@ def is_normal_pullback(df, direction: str, entry_price: float, current_price: fl
             return False
         swing = last_protective_swing(df, direction, current_price, pivot_n, lookback)
         if swing is None:
+            # No protective swing has TWO very different causes and they need
+            # opposite answers:
+            #
+            #   (a) no confirmed swings exist yet -- a fresh trade, or a frame
+            #       too short. Nothing disproves the pullback, so assume normal.
+            #   (b) swings exist but price has traded below EVERY one of them
+            #       (above every one, for a short). That is not a pullback, it
+            #       is a complete structural collapse.
+            #
+            # Both used to land on `return True`, so the exit veto was at its
+            # strongest exactly when the trade had failed most completely: a
+            # long entered at 100 sitting at 50 reported "structure intact --
+            # holding through it", because there was no swing left below price
+            # to lean on.
+            lows, highs = find_pivots(df, pivot_n=pivot_n, lookback=lookback)
+            if (lows if direction.upper() == 'BUY' else highs):
+                return False
             return True
         data = df.iloc[-lookback:]
         if direction.upper() == 'BUY':
