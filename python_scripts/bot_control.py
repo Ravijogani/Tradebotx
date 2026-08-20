@@ -47,6 +47,7 @@ DESIGN NOTES
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, NamedTuple, Optional
@@ -321,10 +322,39 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
 
     status = (rows[0].get('status') or '').strip().lower()
 
-    # ALREADY RUNNING: stop instantly, no questions, no grace. An emergency
-    # stop on an open position must never wait, and once we have been running
-    # a false here can only mean somebody turned us off.
+    # ALREADY RUNNING. A false here USUALLY means somebody pressed Stop, and
+    # an emergency stop on an open position must never wait -- so this path
+    # stays instant. But "somebody turned us off" was not the only writer of
+    # that false, and the other one killed a live bot at the same time every
+    # single day.
+    #
+    # monitor-bot-health reconciles bots whose heartbeat has gone stale: it
+    # sets is_running=false, status='crashed', and logs action='crash'. That
+    # is a statement ABOUT this process, not an instruction TO it -- and when
+    # the process is demonstrably alive (it is the one reading this row) the
+    # reconciliation is simply wrong. Obeying it made the bot kill itself on
+    # the strength of a false report of its own death.
+    #
+    # status is the discriminator, and it comes from the same read, so this
+    # costs nothing:
+    #
+    #   'crashed'  -> a health sweep guessed. We are alive; say so and carry
+    #                 on. The caller re-asserts is_running=true.
+    #   anything   -> a human or an admin control. Stop, instantly.
+    #     else
+    #
+    # Deliberately NOT resolved by looking for an explicit stop audit row:
+    # that read can fail, and failing it must not turn a real Stop into a
+    # "keep trading". The status field is already in hand and cannot fail.
     if key in _confirmed_running:
+        if status == 'crashed':
+            return StopSignal(
+                reason='false_crash_report',
+                detail=('user_strategies says crashed, but this process is alive and '
+                        'reading the row -- a health sweep marked it stale (most often '
+                        'because the heartbeat was starved, not because the bot died). '
+                        'Re-asserting is_running=true and continuing.'),
+            )
         return StopSignal(
             reason='remote_stop',
             detail=('user_strategies.is_running is false -- stopped from the '
@@ -368,6 +398,36 @@ def check_remote_stop(supabase, user_id: str, strategy_id: str,
                 'that confirm_bot_started() ran and that trigger-bot reached '
                 'the bot manager.'),
     )
+
+
+def reassert_running(supabase, user_id: str, strategy_id: str) -> bool:
+    """
+    Undo a false crash report: this process is alive, so put the row back.
+
+    The counterpart to mark_bot_stopped. A health sweep that declares a live
+    bot dead leaves three lies behind -- is_running=false, status='crashed'
+    and a cleared bot_pid -- and the dashboard shows the account as
+    unmanaged while the bot is in fact managing it.
+
+    Writes bot_pid from this process so the row identifies the thing that is
+    actually running, rather than restoring whatever stale value was there.
+
+    Returns True if the write landed. Failure is not fatal: the bot keeps
+    trading either way, and the next heartbeat gives the monitor another
+    chance to see it is alive.
+    """
+    try:
+        res = (supabase.table('user_strategies')
+               .update({'is_running': True,
+                        'status': 'running',
+                        'bot_pid': os.getpid()})
+               .eq('user_id', user_id)
+               .eq('strategy_id', strategy_id)
+               .execute())
+        _confirmed_running.add((user_id, strategy_id))
+        return bool(res.data)
+    except Exception:
+        return False
 
 
 def mark_bot_stopped(supabase, user_id: str, strategy_id: str,

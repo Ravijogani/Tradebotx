@@ -11609,6 +11609,19 @@ def ai_trading_session():
             # user_strategies.is_running=false and this process never looked
             # at it again. Checked every cycle now, before any market work.
             _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+            if _stop is not None and _stop.reason == 'false_crash_report':
+                # NOT a stop. A health sweep declared this process dead while
+                # it is demonstrably alive -- it is the thing reading the row.
+                # Put the row back and keep trading. Rate-limited so a
+                # persistent disagreement does not spam the write or the log.
+                _now_fc = time.time()
+                if _now_fc - getattr(state, '_last_reassert', 0) > 60:
+                    state._last_reassert = _now_fc
+                    logger.warning(f"[FALSE CRASH] {_stop.detail}")
+                    bot_control.reassert_running(supabase, USER_ID, STRATEGY_ID)
+                    send_heartbeat(status='running', mt5_connected=True)
+                _stop = None
+
             if _stop is not None:
                 logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- shutting down.")
                 send_heartbeat(status='stopped', error_message=f"remote stop: {_stop.reason}")
@@ -11711,13 +11724,34 @@ def ai_trading_session():
                 current_hour == 21 and current_minute >= 30  # 21:30-22:00 UTC
                 or current_hour == 22                         # 22:00-23:00 UTC
             )
+            # BLOCKS NEW ENTRIES ONLY. This used to `continue`, which skipped
+            # the whole rest of the loop for the full 90 minutes -- and that
+            # killed the bot at the same time every single day:
+            #
+            #   21:30 UTC  guard fires, `continue` skips the heartbeat
+            #   21:35 UTC  monitor-bot-health sees a 5-minute stale heartbeat,
+            #              declares the bot crashed, sets is_running=false
+            #   21:35 UTC  check_remote_stop -- which runs BEFORE this guard
+            #              and so never stopped running -- reads that false
+            #              and exits the process
+            #
+            # The bot spent 90 minutes a day asking "should I stop?" while
+            # starving the only signal that proved it was alive.
+            #
+            # Skipping the loop was also wrong on its own terms. The guard's
+            # own message says "blocking new entries", but the `continue`
+            # also skipped position management -- no trailing, no breakeven,
+            # no exit engine and no SPREAD SPIKE GUARD -- through the highest-
+            # spread window of the day, which is exactly when that guard is
+            # the thing you want running. The Friday weekend-flatten check
+            # (16:30 NY = 21:30 UTC under EST) fell inside the blackout too,
+            # so in winter it could never fire.
             if _in_rollover:
                 if not hasattr(state, '_rollover_logged') or state._rollover_logged != current_hour:
                     logger.warning(f" [ROLLOVER GUARD] {current_hour}:{current_minute:02d} UTC -- "
-                                   f"High-spread period (US close). Blocking new entries.")
+                                   f"High-spread period (US close). Blocking new entries; "
+                                   f"heartbeat and position management continue.")
                     state._rollover_logged = current_hour
-                time.sleep(5)
-                continue
             
             # --- 0. EMERGENCY CIRCUIT BREAKER (throttled: max every 30s) ---
             if not hasattr(state, '_last_emergency_time'): state._last_emergency_time = 0.0
@@ -11926,11 +11960,12 @@ def ai_trading_session():
                 state._rej = {k: 0 for k in ['no_data','no_setup','banned','cooldown',
                                                'same_candle','edge_ignore','throttle','position_exists']}
 
-            # No new entries once Friday's cut-off has passed. Checked here
-            # rather than only at the top of the cycle because the scan below
-            # is the one thing that can open a position, and management above
-            # must keep running either way.
-            if _wk == 'NO_NEW':
+            # No new entries once Friday's cut-off has passed, or inside the
+            # rollover blackout. Checked here rather than at the top of the
+            # cycle because the scan below is the one thing that can open a
+            # position, and everything above -- heartbeat, remote-stop check,
+            # position management -- must keep running either way.
+            if _wk == 'NO_NEW' or _in_rollover:
                 time.sleep(5)
                 continue
 
@@ -13093,7 +13128,26 @@ def ai_trading_session():
         except Exception as e:
             logger.error(f" Critical error: {e}", exc_info=True)
             send_heartbeat(status='error', mt5_connected=True, error_message=str(e))
-            send_telegram_notification(f" <b>Critical Error</b>\n\nBot encountered an error: {e}")
+            # The loop recovers and retries, so a persistent fault would send
+            # one Telegram message every 60 seconds -- 1440 a day, which is
+            # how an alert channel gets muted and the next real alert missed.
+            # First occurrence of each distinct error goes out immediately;
+            # the same error repeats at most hourly, with a count so the
+            # message says how long it has been going on.
+            _err_key = str(e)[:200]
+            _now_err = time.time()
+            if not hasattr(state, '_err_alerts'):
+                state._err_alerts = {}
+            _last_sent, _count = state._err_alerts.get(_err_key, (0.0, 0))
+            _count += 1
+            if _now_err - _last_sent > 3600:
+                state._err_alerts[_err_key] = (_now_err, 0)
+                send_telegram_notification(
+                    f"\u26A0\uFE0F <b>Bot error</b>\n\n{e}\n\n"
+                    + (f"Seen {_count} times in the last hour. " if _count > 1 else "")
+                    + "The bot is still running and retrying.")
+            else:
+                state._err_alerts[_err_key] = (_last_sent, _count)
             time.sleep(60)
     
     # EVERY exit path lands here -- emergency breaker, remote stop, keyboard
@@ -13128,14 +13182,25 @@ def main():
 
     logger.info(f"Initializing Hybrid AI Trading Bot for USER: {USER_ID}...")
     
+    # A startup failure is the one the user is least likely to notice: the
+    # dashboard shows "starting", nothing ever trades, and there is no
+    # notification anywhere. Both of these exits used to be silent.
     if not ai_provider.api_key:
         logger.error(f" {config.AI_PROVIDER.upper()} API key not set!")
         send_heartbeat(status='error', mt5_connected=False, error_message="GEMINI_API_KEY not set")
+        send_telegram_notification(
+            f"\u26A0\uFE0F <b>Bot could not start</b>\n\n"
+            f"{config.AI_PROVIDER.upper()} API key is not set. No trading will happen "
+            f"until it is configured.")
         sys.exit(1)
-    
+
     if not initialize_mt5():
         logger.error("Failed to initialize MT5")
         send_heartbeat(status='error', mt5_connected=False, error_message="MT5 initialization failed")
+        send_telegram_notification(
+            "\u26A0\uFE0F <b>Bot could not start</b>\n\n"
+            "MetaTrader 5 would not initialise -- the terminal may be closed, "
+            "or the login/server details may be wrong. Nothing is being traded.")
         sys.exit(1)
 
     trade_db.sync_account_history(days_back=30)

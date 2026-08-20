@@ -4571,6 +4571,17 @@ def intraday_trading_session():
             # once-an-hour DEBUG line about the table "maybe not existing"
             # was the only trace. See bot_control.py's module docstring.
             _stop = bot_control.check_remote_stop(supabase, USER_ID, STRATEGY_ID)
+            if _stop is not None and _stop.reason == 'false_crash_report':
+                # NOT a stop -- see hybrid_trading_bot_multiuser.py. A health
+                # sweep declared this process dead while it is alive and
+                # reading the row. Put the row back and keep trading.
+                _now_fc = time.time()
+                if _now_fc - getattr(state, '_last_reassert', 0) > 60:
+                    state._last_reassert = _now_fc
+                    logger.warning(f"[FALSE CRASH] {_stop.detail}")
+                    bot_control.reassert_running(supabase, USER_ID, STRATEGY_ID)
+                _stop = None
+
             if _stop is not None:
                 logger.critical(f"[REMOTE STOP] {_stop.reason}: {_stop.detail} -- stopping.")
                 break
