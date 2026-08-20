@@ -11554,9 +11554,18 @@ def can_take_swappy_entry(symbol: str, direction: str, setup_low: float, setup_h
 
 
 
-def _reject(symbol: str, reason: str) -> None:
+def _reject(symbol: str, reason: str, terminal: bool = True) -> None:
     """
     Record WHY a symbol was skipped this cycle, per symbol.
+
+    `terminal` says whether this actually ENDED the symbol's scan. Five of
+    these call sites do not: they record that a gate had an opinion and then
+    carry on to the strategies below. The regime router is the clearest case
+    -- it deliberately gates only EMA Scalp, because real-data testing showed
+    it removed better-than-average SSM and Swappy trades -- so counting it as
+    a blocker reports a symbol as stopped by something it sailed straight
+    past. Advisory notes are tallied separately and never named as the
+    reason a symbol did not trade.
 
     The counters were global, so "no-setup:412" told you 412 rejections
     happened somewhere across thirteen symbols and nothing about which. The
@@ -11572,7 +11581,13 @@ def _reject(symbol: str, reason: str) -> None:
         state._rej_sym = {}
     state._rej[reason] = state._rej.get(reason, 0) + 1
     state._rej_sym.setdefault(symbol, {})
-    state._rej_sym[symbol][reason] = state._rej_sym[symbol].get(reason, 0) + 1
+    if terminal:
+        state._rej_sym[symbol][reason] = state._rej_sym[symbol].get(reason, 0) + 1
+    else:
+        if not hasattr(state, '_rej_note'):
+            state._rej_note = {}
+        state._rej_note.setdefault(symbol, {})
+        state._rej_note[symbol][reason] = state._rej_note[symbol].get(reason, 0) + 1
 
 
 def ai_trading_session():
@@ -12287,7 +12302,7 @@ def ai_trading_session():
                         f"favorable per M5 auction state ({_regime['reason']}) -- "
                         f"only gates EMA Scalp below, not SSM/Swappy (see comment)."
                     )
-                    _reject(symbol, 'regime_stand_aside')
+                    _reject(symbol, 'regime_stand_aside', terminal=False)
 
                 # PDH/PDL liquidity reference -- small, cheap fetch (10 D1
                 # bars), not part of the async fetcher's cached timeframe
@@ -12418,14 +12433,14 @@ def ai_trading_session():
                                 # and should not be blocked by Swappy's latch.
                                 logger.debug(f"[SWAPPY 3C] {symbol}: setup already actioned "
                                              f"for candle {_sw_ct} -- not re-placing")
-                                _reject(symbol, 'same_candle')
+                                _reject(symbol, 'same_candle', terminal=False)
                                 _sw_allowed, _sw_reason = False, 'already actioned this candle'
                             else:
                                 _sw_allowed, _sw_reason = can_take_swappy_entry(
                                     symbol, _trade_direction, _sw_low, _sw_high)
                                 if not _sw_allowed:
                                     logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_trade_direction} blocked -- {_sw_reason}")
-                                    _reject(symbol, 'no_setup')
+                                    _reject(symbol, 'no_setup', terminal=False)
 
                             if _sw_allowed:
                                 if _sw_reason != 'first_setup':
@@ -12476,7 +12491,7 @@ def ai_trading_session():
                                     _entries_this_symbol += 1  # placed; other strategies still get to scan
                                 else:
                                     logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
-                                    _reject(symbol, 'no_setup')
+                                    _reject(symbol, 'no_setup', terminal=False)
 
                 # STRATEGY D: AOX MODEL -- 25/25/50 Layered Execution
                 # Layer 1 (25%): SD zone tap
@@ -13030,7 +13045,7 @@ def ai_trading_session():
                                 _l3_min_score = 6
 
                             if _l3_score < _l3_min_score or (_l3_score <= 5 and not _l3_approved):
-                                _reject(symbol, 'edge_ignore')
+                                _reject(symbol, 'edge_ignore', terminal=False)
                                 # Cooldown based on score (prevents retry spam)
                                 if _l3_score <= 3:
                                     _cd_mins = 30
@@ -13206,14 +13221,26 @@ def ai_trading_session():
                 # all, which is a different problem and worth knowing.
                 try:
                     _sym_rej = getattr(state, '_rej_sym', {}) or {}
+                    _sym_note = getattr(state, '_rej_note', {}) or {}
                     _blocked = []
                     for _s in actual_symbols:
                         _counts = _sym_rej.get(_s, {})
-                        if not _counts:
+                        if _counts:
+                            # The biggest TERMINAL reason -- the thing that
+                            # actually ended the scan for this symbol.
+                            _top, _n = max(_counts.items(), key=lambda kv: kv[1])
+                            _blocked.append(f"{_s}={_REJ_LABEL.get(_top, _top)}x{_n}")
+                        elif _sym_note.get(_s):
+                            # Gates had opinions but none of them stopped the
+                            # symbol: it was evaluated all the way down and
+                            # simply produced no qualifying setup. Naming an
+                            # advisory gate here would be a lie -- it reported
+                            # symbols as blocked by a filter they sailed past.
+                            _n2 = sum(_sym_note[_s].values())
+                            _blocked.append(f"{_s}=scanned-no-entry (advisory: "
+                                            + ",".join(sorted(_sym_note[_s])) + f")x{_n2}")
+                        else:
                             _blocked.append(f"{_s}=NOT-SCANNED")
-                            continue
-                        _top, _n = max(_counts.items(), key=lambda kv: kv[1])
-                        _blocked.append(f"{_s}={_REJ_LABEL.get(_top, _top)}x{_n}")
                     if _blocked:
                         logger.info(f"[WHY-NO-TRADE] {' | '.join(_blocked)}")
                 except Exception as _wnt:
@@ -13222,6 +13249,7 @@ def ai_trading_session():
                 # Reset counters after logging
                 state._rej = {k: 0 for k in state._rej}
                 state._rej_sym = {}
+                state._rej_note = {}
             
             # Scalping Lightning: Speed is key. Short sleep.
             time.sleep(0.1)

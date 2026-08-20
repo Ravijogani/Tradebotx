@@ -119,5 +119,77 @@ def t8():
 check("SYMBOL_MIN_EQUITY is still dead config (known, documented)", t8)
 
 
+def t9():
+    # THE BUG THIS CAUGHT. Five of the call sites record a gate's opinion and
+    # then KEEP SCANNING -- the regime router most importantly, which
+    # deliberately gates only EMA Scalp because real-data testing showed it
+    # removed better-than-average SSM and Swappy trades. Reporting those as
+    # blockers told the operator XAUUSD was stopped by a filter it had sailed
+    # straight past.
+    import re
+    src_lines = SRC.split('\n')
+    unmarked = []
+    for i, l in enumerate(src_lines):
+        m = re.search(r"_reject\(symbol,\s*'([a-z0-9_]+)'", l)
+        if not m:
+            continue
+        indent = len(l) - len(l.lstrip())
+        terminal = False
+        for nxt in src_lines[i + 1:i + 6]:
+            if not nxt.strip():
+                continue
+            ni = len(nxt) - len(nxt.lstrip())
+            if nxt.strip() in ("continue", "break"):
+                terminal = True
+                break
+            if ni < indent:
+                break
+        if not terminal and "terminal=False" not in l:
+            unmarked.append((i + 1, m.group(1)))
+    assert not unmarked, (
+        f"these sites keep scanning but are counted as blockers: {unmarked}")
+check("a gate that does not stop the scan is not counted as a blocker", t9)
+
+def t10():
+    # And the inverse: a site that DOES stop the scan must not be demoted to
+    # advisory, or a real blocker would vanish from the report entirely.
+    import re
+    src_lines = SRC.split('\n')
+    mislabelled = []
+    for i, l in enumerate(src_lines):
+        if "terminal=False" not in l:
+            continue
+        indent = len(l) - len(l.lstrip())
+        for nxt in src_lines[i + 1:i + 6]:
+            if not nxt.strip():
+                continue
+            ni = len(nxt) - len(nxt.lstrip())
+            if nxt.strip() in ("continue", "break"):
+                mislabelled.append(i + 1)
+                break
+            if ni < indent:
+                break
+    assert not mislabelled, f"real blockers marked advisory at lines {mislabelled}"
+check("a gate that does stop the scan is never demoted to advisory", t10)
+
+def t11():
+    # A symbol evaluated end-to-end with no qualifying setup must say exactly
+    # that, and must stay distinguishable from one never scanned at all.
+    i = SRC.find('scanned-no-entry')
+    assert i > 0, "no wording for 'evaluated fully, produced nothing'"
+    body = SRC[max(0, i - 2000):i + 1200]
+    assert 'NOT-SCANNED' in body, "the two cases are no longer distinguished"
+    assert '_rej_note' in body, "advisory gates are not surfaced at all"
+check("'scanned, no entry' reads differently from 'never scanned'", t11)
+
+def t12():
+    # The RESET site, not the lazy-init inside _reject.
+    i = SRC.find('state._rej = {k: 0 for k in state._rej}')
+    assert i > 0, "the counter reset vanished"
+    assert '_rej_note = {}' in SRC[i:i + 300], \
+        "the advisory tally never resets -- the summary would go stale"
+check("the advisory tally resets with the others", t12)
+
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
