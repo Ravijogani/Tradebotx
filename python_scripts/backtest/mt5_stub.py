@@ -123,6 +123,25 @@ def order_send(request):
     return SimpleNamespace(retcode=-1, order=0, comment="blocked by backtest mt5_stub")
 
 
+def order_calc_profit(order_type, symbol, volume, price_open, price_close):
+    """
+    P&L for `volume` lots moving from price_open to price_close.
+
+    The live bot sizes positions from this rather than from tick_value /
+    tick_size, because it is the broker's own answer and it is available when
+    those fields are not. The stub mirrors the sign convention (a BUY that
+    falls loses) so a test can tell a correctly-sized lot from a wrong one.
+
+    Contract size 100 matches the metals/CFDs where the real mis-sizing
+    happened; FX majors differ, but nothing here depends on the exact figure.
+    """
+    contract = 100.0
+    delta = float(price_close) - float(price_open)
+    if order_type == ORDER_TYPE_SELL:
+        delta = -delta
+    return delta * float(volume) * contract
+
+
 def order_calc_margin(*args, **kwargs):
     return 0.0
 

@@ -8165,26 +8165,73 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         tick_value = spec.get('trade_tick_value')
         tick_size  = spec.get('trade_tick_size')
 
-        if tick_value and tick_size and tick_size > 0 and tick_value > 0:
+        # ASK THE BROKER WHAT ONE LOT LOSES AT THIS STOP.
+        #
+        # order_calc_profit returns the real P&L for a given volume between two
+        # prices, in account currency, using the broker's own contract spec.
+        # It is the authoritative answer and it works when the tick fields do
+        # not, which is exactly when sizing used to go wrong.
+        #
+        # WHAT THIS REPLACES, and why it mattered: when tick_value/tick_size
+        # were unavailable the code fell back to
+        #     lot_raw = risk_money / (margin_per_lot * sl_dist_price)
+        # whose units are dollars / (dollars x points) -- dimensionally
+        # meaningless. On a broker offering very high leverage the margin for
+        # one lot is small, so that denominator collapses and the lot explodes.
+        # Live on 2026-08-20: XAUUSDm sized at 0.15 lots on a $161.48 account
+        # with a 3.08-point stop -- $46.22 at risk, 28.6% of the account, on a
+        # trade the sizing engine intended to risk 1.5%. Nineteen times the
+        # intended size, and fifteen times the minimum lot. Every non-gold
+        # position that day was 0.01-0.02, because those symbols had usable
+        # tick data and took the correct branch.
+        _order_type_calc = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        _risk_per_lot = None
+        try:
+            _p = mt5.order_calc_profit(_order_type_calc, symbol, 1.0, entry_price, sl)
+            if _p is not None and abs(float(_p)) > 0:
+                _risk_per_lot = abs(float(_p))
+        except Exception as _rpl_err:
+            logger.debug(f"[LOT SIZING] {symbol}: order_calc_profit unavailable ({_rpl_err})")
+
+        if _risk_per_lot:
+            lot_raw = risk_money / _risk_per_lot
+        elif tick_value and tick_size and tick_size > 0 and tick_value > 0:
             lot_raw = risk_money / (sl_dist_price / tick_size * tick_value)
+            _risk_per_lot = (sl_dist_price / tick_size) * tick_value
         else:
-            logger.warning(f"[LOT SIZING] tick_value/tick_size unavailable for {symbol}. Using margin fallback.")
-            try:
-                margin_per_lot = mt5.order_calc_margin(
-                    mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL,
-                    symbol, 1.0, entry_price) or 1.0
-                lot_raw = risk_money / max(margin_per_lot * sl_dist_price, 0.001)
-            except Exception:
-                lot_raw = 0.01
+            # FAIL CLOSED. There is no third estimate worth making: if neither
+            # the broker nor the tick spec can say what this position risks,
+            # any lot chosen here is a guess, and the guess that used to live
+            # in this branch put 28.6% of the account on one trade. "Cannot
+            # verify" means "do not place" -- the same rule the pending-order
+            # duplicate check already follows.
+            logger.error(
+                f"[LOT SIZING] {symbol}: cannot determine risk per lot -- "
+                f"order_calc_profit and tick_value/tick_size both unavailable. "
+                f"Refusing to size this trade blind.")
+            send_telegram_notification(
+                f"\u26A0\uFE0F <b>Trade skipped</b>\n\n{symbol}: the broker did not "
+                f"report contract values, so position size could not be calculated "
+                f"safely. No order was placed.")
+            return False
 
         # Validate and snap to lot step
         lot_size = validate_lot_size(symbol, lot_raw)
         sym_info_ls = mt5.symbol_info(symbol)
         min_lot = sym_info_ls.volume_min if sym_info_ls else 0.01
 
-        # Recalculate ACTUAL risk after lot clamping
-        if tick_value and tick_size and tick_size > 0 and tick_value > 0:
-            actual_risk_dollars = lot_size * (sl_dist_price / tick_size) * tick_value
+        # ACTUAL risk after clamping, measured the same authoritative way.
+        #
+        # The old fallback here was
+        #     actual_risk_dollars = risk_money * (lot_size / lot_raw)
+        # which is circular: it scales the INTENDED risk by the lot rounding,
+        # so it returns roughly the intended figure no matter how wrong
+        # lot_raw was. On the 0.15-lot XAUUSDm trade it reported 1.5% for a
+        # position risking 28.6%, and the hard cap below duly passed it. A
+        # safety check computed from the same broken assumption as the thing
+        # it is checking cannot fail -- it can only confirm.
+        if _risk_per_lot:
+            actual_risk_dollars = lot_size * _risk_per_lot
         else:
             actual_risk_dollars = risk_money * (lot_size / max(lot_raw, 0.0001))
         # Guarded: this runs inside position sizing, where a zero equity would
@@ -8823,13 +8870,32 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
         sl_dist     = abs(entry_price - sl)
         if sl_dist <= 0: return 0
 
+        # Same authoritative sizing as place_ai_trade -- ask the broker what
+        # one lot loses at this stop. See that function for why the old
+        # fallbacks were dangerous: `sl_dist * 10` here assumed a $10/point
+        # instrument, which is right for nothing this bot trades and would
+        # have mis-sized gold by an order of magnitude the moment the tick
+        # fields were unavailable.
+        _aox_type = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        _aox_risk_per_lot = None
+        try:
+            _ap = mt5.order_calc_profit(_aox_type, symbol, 1.0, entry_price, sl)
+            if _ap is not None and abs(float(_ap)) > 0:
+                _aox_risk_per_lot = abs(float(_ap))
+        except Exception:
+            pass
+
         tick_val  = sym_info.trade_tick_value
         tick_size = sym_info.trade_tick_size
-        if tick_val and tick_val > 0 and tick_size > 0:
-            pip_value = (tick_val / tick_size) * sym_info.point
-            lot_raw   = risk_amount / max(sl_dist * (pip_value / sym_info.point), 0.001)
+        if _aox_risk_per_lot:
+            lot_raw = risk_amount / _aox_risk_per_lot
+        elif tick_val and tick_val > 0 and tick_size > 0:
+            lot_raw = risk_amount / max(sl_dist / tick_size * tick_val, 0.001)
         else:
-            lot_raw = risk_amount / max(sl_dist * 10, 0.001)
+            # Fail closed, for the same reason as the shared pipeline.
+            logger.error(f"[AOX {layer_name}] {symbol}: cannot determine risk per lot "
+                         f"-- refusing to size this layer blind.")
+            return 0
 
         lot_step = sym_info.volume_step
         lot_size = max(sym_info.volume_min, min(
