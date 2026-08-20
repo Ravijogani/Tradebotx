@@ -2,46 +2,28 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveData } from "@/hooks/useLiveData";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 
 export const TradesList = () => {
   const [trades, setTrades] = useState<Tables<"trades">[]>([]);
 
+  // Closed trades arrive as an UPDATE from the bot. Realtime carries them
+  // when the socket is up; polling and tab-focus cover it when it is not.
+  const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
-    loadTrades();
-
-    // Add realtime subscription for live updates
-    const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const channel = supabase
-        .channel('trades-list-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'trades',
-            filter: `user_id=eq.${user.id}`
-          },
-          () => loadTrades()
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    };
-
-    const cleanup = setupRealtime();
-    return () => {
-      cleanup.then(fn => fn?.());
-    };
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
   }, []);
 
-  const loadTrades = async () => {
+  useLiveData(loadTrades, {
+    tables: ["trades"],
+    userId,
+    channel: "trades-list-changes",
+    enabled: !!userId,
+  });
+
+  async function loadTrades() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
@@ -54,7 +36,7 @@ export const TradesList = () => {
       .limit(10);
 
     setTrades(data || []);
-  };
+  }
 
   return (
     <Card className="p-6 border-border/50 bg-card/50 backdrop-blur-sm">

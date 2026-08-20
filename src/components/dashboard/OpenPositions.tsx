@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, TrendingDown, Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Tables } from "@/integrations/supabase/types";
+import { useLiveData } from "@/hooks/useLiveData";
 
 type Trade = Tables<"trades">;
 // metadata is JSONB — this is the shape the bot writes into it for a live
@@ -20,71 +21,30 @@ export const OpenPositions = () => {
   const [totalPnL, setTotalPnL] = useState(0);
   const { toast } = useToast();
 
+  // Realtime when the socket is up, polling when it is not, and always a
+  // refetch when the tab wakes. The old code subscribed and hoped; if the
+  // channel never joined, this panel showed the positions you had at page
+  // load and nothing else, with nothing to say so.
+  const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
-    loadPositions();
-    
-    // Set up realtime subscription for trade updates (running P&L)
-    const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const channel = supabase
-        .channel('open-positions-realtime')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'trades',
-            filter: `user_id=eq.${user.id}`
-          },
-          (payload) => {
-            const newRecord = payload.new as Trade;
-            const oldRecord = payload.old as Partial<Trade>;
-
-            if (payload.eventType === 'INSERT' && newRecord?.status === 'open') {
-              // New open position
-              setPositions(prev => [newRecord, ...prev.filter(p => p.id !== newRecord.id)]);
-              toast({
-                title: "New Position Opened",
-                description: `${newRecord.symbol} - ${newRecord.trade_type}`,
-              });
-            } else if (payload.eventType === 'UPDATE') {
-              if (newRecord?.status === 'open' || newRecord?.status === 'OPEN') {
-                // Update existing open position (running P&L update)
-                setPositions(prev =>
-                  prev.map(p => p.id === newRecord.id ? newRecord : p)
-                );
-              } else if ((newRecord?.status === 'closed') && (oldRecord?.status === 'open' || oldRecord?.status === 'OPEN')) {
-                // Position closed - remove from open list
-                setPositions(prev => prev.filter(p => p.id !== newRecord.id));
-              }
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    };
-
-    const cleanup = setupRealtime();
-
-    return () => {
-      cleanup.then(fn => fn?.());
-    };
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
   }, []);
 
-  const loadPositions = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      console.log('[OpenPositions] No user found');
-      return;
-    }
+  const live = useLiveData(loadPositions, {
+    tables: ["trades"],
+    userId,
+    channel: "open-positions-realtime",
+    // Running P&L moves every few seconds, so a stale panel is obvious and
+    // annoying here in a way it is not elsewhere -- poll harder.
+    healthyPollMs: 30_000,
+    degradedPollMs: 5_000,
+    enabled: !!userId,
+  });
 
-    console.log('[OpenPositions] Loading positions for user:', user.id);
-    
+  async function loadPositions() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const { data, error } = await supabase
       .from("trades")
       .select("*")
@@ -92,15 +52,27 @@ export const OpenPositions = () => {
       .in("status", ["open", "OPEN"])
       .order("opened_at", { ascending: false });
 
-    console.log('[OpenPositions] Query result:', { data, error, count: data?.length });
-
     if (error) {
       console.error('[OpenPositions] Error loading positions:', error);
       return;
     }
 
-    setPositions(data || []);
-  };
+    // Announce genuinely new positions. This used to hang off the realtime
+    // INSERT event, so it never fired when the socket was down -- and a
+    // silently-opened position is exactly what you want to be told about.
+    setPositions((prev) => {
+      const seen = new Set(prev.map((p) => p.id));
+      for (const row of data || []) {
+        if (prev.length && !seen.has(row.id)) {
+          toast({
+            title: "New Position Opened",
+            description: `${row.symbol} - ${row.trade_type}`,
+          });
+        }
+      }
+      return data || [];
+    });
+  }
 
   // Recalculate total P&L whenever positions change
   useEffect(() => {
@@ -127,6 +99,17 @@ export const OpenPositions = () => {
               </CardDescription>
             </div>
             <div className="text-right">
+              <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+                {/* Say which mode the panel is in. A dashboard that has quietly
+                    stopped updating is worse than one that admits it. */}
+                <span
+                  aria-hidden
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    live === "live" ? "bg-emerald-500" : "bg-amber-500"
+                  }`}
+                />
+                <span>{live === "live" ? "Live" : "Updating"}</span>
+              </div>
               <div className="text-xs text-muted-foreground">Total P&L</div>
               <div className={`text-lg sm:text-2xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-destructive'}`}>
                 {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}

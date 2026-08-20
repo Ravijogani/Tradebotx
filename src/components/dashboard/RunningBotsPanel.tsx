@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveData } from "@/hooks/useLiveData";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,35 +56,22 @@ export const RunningBotsPanel = () => {
   const [setupApproved, setSetupApproved] = useState(false);
   const { toast } = useToast();
 
+  // One channel covering both tables instead of two unfiltered ones. The
+  // old pair received every strategy and heartbeat change for every user on
+  // the project and reloaded on all of them.
+  const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
-    loadBots();
-
-    // Realtime subscription for both user_strategies and heartbeats
-    const strategiesChannel = supabase
-      .channel('running-bots-strategies')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'user_strategies' },
-        () => loadBots()
-      )
-      .subscribe();
-
-    const heartbeatsChannel = supabase
-      .channel('running-bots-heartbeats')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'bot_heartbeats' },
-        () => loadBots()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(strategiesChannel);
-      supabase.removeChannel(heartbeatsChannel);
-    };
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
   }, []);
 
-  const loadBots = async () => {
+  useLiveData(loadBots, {
+    tables: ["user_strategies", "bot_heartbeats"],
+    userId,
+    channel: "running-bots-live",
+    enabled: !!userId,
+  });
+
+  async function loadBots() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -156,7 +144,7 @@ export const RunningBotsPanel = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const handleStartStop = async (botId: string, strategyId: string, isRunning: boolean) => {
     const currentBot = bots.find(b => b.id === botId);

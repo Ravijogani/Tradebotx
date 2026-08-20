@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { TrendingUp, DollarSign, Activity, Target } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveData } from "@/hooks/useLiveData";
 import type { Tables } from "@/integrations/supabase/types";
 
 // trades.metadata is JSONB — this is the shape the bot writes for a live
@@ -19,47 +20,23 @@ export const StatsOverview = () => {
     totalTrades: 0,
   });
 
+  // Note the old subscription filtered on user_id in JS, not in the
+  // subscription -- so this client received every trade change for every
+  // user on the project and discarded them. Filtering server-side is both
+  // correct and a lot less traffic.
+  const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
-    loadStats();
-
-    // Realtime subscription with debounce to prevent excessive reloads
-    let debounceTimer: ReturnType<typeof setTimeout>;
-    
-    const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const channel = supabase
-        .channel('stats-overview')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'trades' },
-          async (payload) => {
-            // Only reload if this trade belongs to the current user
-            const tradeUserId = (payload.new as Partial<Tables<"trades">>)?.user_id || (payload.old as Partial<Tables<"trades">>)?.user_id;
-            if (tradeUserId === user.id) {
-              // Debounce stats reload to once every 2 seconds
-              clearTimeout(debounceTimer);
-              debounceTimer = setTimeout(() => loadStats(), 2000);
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
-        clearTimeout(debounceTimer);
-        supabase.removeChannel(channel);
-      };
-    };
-
-    const cleanup = setupRealtime();
-
-    return () => {
-      cleanup.then(fn => fn?.());
-    };
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
   }, []);
 
-  const loadStats = async () => {
+  useLiveData(loadStats, {
+    tables: ["trades"],
+    userId,
+    channel: "stats-overview",
+    enabled: !!userId,
+  });
+
+  async function loadStats() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
@@ -112,7 +89,7 @@ export const StatsOverview = () => {
         totalTrades: trades.length,
       });
     }
-  };
+  }
 
   const statCards = [
     {
