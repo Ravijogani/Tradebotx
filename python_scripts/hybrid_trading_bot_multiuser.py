@@ -6109,7 +6109,26 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
             _all_cd = async_data_fetcher.get_all_data().get(symbol, {})
             _df_m15 = _all_cd.get('M15')
             _df_h1  = _all_cd.get('H1')
-            _struct = get_structural_sl_tp(symbol, direction, df, _df_m15, _df_h1, entry_price)
+            # FORWARD THE HINTS. get_dynamic_trade_params accepted
+            # `ema50_tp_hint` and `range_scalp_mode` and then never passed
+            # either one on, so both were silently discarded on every call.
+            #
+            # That quietly threw away the best target either strategy had.
+            # BANKO does more work than anything else in this file to find
+            # its target -- next opposing liquidity pool, RR floor 2.0 in a
+            # killzone and 2.5 outside one, falling back to structural swings
+            # -- hands it over as `ema50_tp`, and it landed nowhere. EMA
+            # Scalp's 50-EMA target went the same way. Both then fell through
+            # to whatever the generic path produced.
+            #
+            # get_structural_sl_tp already had the parameter and its own RR
+            # sanity check on top (see its docstring, which documents an
+            # EARLIER fix to the same feature) -- the only missing link was
+            # this call passing it.
+            _struct = get_structural_sl_tp(symbol, direction, df, _df_m15, _df_h1,
+                                           entry_price,
+                                           range_scalp_mode=range_scalp_mode,
+                                           ema50_tp_hint=ema50_tp_hint)
             if _struct and _struct.get('tp1') and _struct.get('rr1', 0) >= 1.5:
                 tp1 = _struct['tp1']
                 tp2 = _struct['tp2']
@@ -10741,17 +10760,36 @@ def _banko_in_killzone(ts) -> Tuple[bool, str]:
     noise rather than a real algorithmic delivery. So this returns a
     label rather than acting as a gate.
     """
+    # DST-AWARE. The NY killzones are New York clock times (07:00-10:00 and
+    # 12:00-14:00 ET), and their UTC hours therefore SHIFT by one between EDT
+    # and EST. Hardcoding 12-15 / 17-19 UTC put them an hour out for roughly
+    # four months of every year -- so from November to March the bot applied
+    # the killzone RR bar (2.0) to the hour before the New York killzone and
+    # the stricter off-killzone bar (2.5) to its first hour.
+    #
+    # ny_now() already owns this conversion for the weekend guard; reusing it
+    # keeps one DST rule in the file instead of two that can drift apart.
     try:
-        hour = int(getattr(ts, 'hour', datetime.now(timezone.utc).hour))
+        if ts is not None and getattr(ts, 'hour', None) is not None:
+            # A bar timestamp is UTC; shift it onto the NY clock the same way.
+            _off = (datetime.now(timezone.utc) - ny_now()).total_seconds() / 3600.0
+            hour = int((int(ts.hour) - round(_off)) % 24)
+        else:
+            hour = ny_now().hour
     except Exception:
-        hour = datetime.now(timezone.utc).hour
-    if 0 <= hour < 4:
+        hour = ny_now().hour
+
+    # Asia is quoted on the Tokyo clock, not New York, and does not follow US
+    # DST -- kept in UTC deliberately (19:00-23:00 NY would drift with it).
+    _utc_hour = (datetime.now(timezone.utc).hour if ts is None
+                 else int(getattr(ts, 'hour', datetime.now(timezone.utc).hour)))
+    if 0 <= _utc_hour < 4:
         return True, 'ASIA'
+    if 2 <= hour < 5:
+        return True, 'LONDON'      # 07:00-10:00 London == 02:00-05:00 NY
     if 7 <= hour < 10:
-        return True, 'LONDON'
-    if 12 <= hour < 15:
         return True, 'NY_AM'
-    if 17 <= hour < 19:
+    if 12 <= hour < 14:
         return True, 'NY_PM'
     return False, 'OFF_KILLZONE'
 
