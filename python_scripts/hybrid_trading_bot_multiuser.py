@@ -11457,6 +11457,28 @@ def can_take_swappy_entry(symbol: str, direction: str, setup_low: float, setup_h
         return True,  "third_setup_allowed (level reset)"
 
 
+
+def _reject(symbol: str, reason: str) -> None:
+    """
+    Record WHY a symbol was skipped this cycle, per symbol.
+
+    The counters were global, so "no-setup:412" told you 412 rejections
+    happened somewhere across thirteen symbols and nothing about which. The
+    question people actually ask -- "why has XAUUSD not traded in two days?"
+    -- was unanswerable from the bot's own output, which is how a symbol can
+    sit silently blocked for days.
+
+    Keeps the global tally too, so the existing [STATUS] line is unchanged.
+    """
+    if not hasattr(state, '_rej'):
+        state._rej = {}
+    if not hasattr(state, '_rej_sym'):
+        state._rej_sym = {}
+    state._rej[reason] = state._rej.get(reason, 0) + 1
+    state._rej_sym.setdefault(symbol, {})
+    state._rej_sym[symbol][reason] = state._rej_sym[symbol].get(reason, 0) + 1
+
+
 def ai_trading_session():
     """
     SCALPING LIGHTNING V2.0: Main trading loop
@@ -11918,7 +11940,7 @@ def ai_trading_session():
                 # duplicate stop orders to stack on one symbol -- see the
                 # _committed_symbols comment above.
                 if symbol in _committed_symbols:
-                    state._rej['position_exists'] += 1
+                    _reject(symbol, 'position_exists')
                     continue
 
                 # Daily trade limit guard
@@ -11935,14 +11957,14 @@ def ai_trading_session():
                 df_h4  = cached_data.get('H4')
 
                 if df_m1 is None or df_m5 is None or df_h1 is None or df_m1.empty or df_m5.empty or df_h1.empty:
-                    state._rej['no_data'] += 1
+                    _reject(symbol, 'no_data')
                     logger.debug(f"[SCAN] {symbol}: missing data")
                     continue
 
                 # DATA FRESHNESS: reject if cache is over 2 hours old (stale H1/H4)
                 _cache_age = time.time() - cached_data.get('timestamp', 0)
                 if _cache_age > 7200:
-                    state._rej['no_data'] += 1
+                    _reject(symbol, 'no_data')
                     logger.warning(f"[SCAN] {symbol}: stale cache ({_cache_age/3600:.1f}h) -- skip")
                     continue
 
@@ -11974,7 +11996,7 @@ def ai_trading_session():
                 # If either is NEUTRAL, there's no conflict (just uncertainty)
                 if h4_bias != "NEUTRAL" and h1_trend != "NEUTRAL" and h4_bias != h1_trend:
                     logger.debug(f"[MTF] {symbol}: H4={h4_bias} conflicts H1={h1_trend} -- skip")
-                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                    _reject(symbol, 'no_setup')
                     continue
 
                 # Effective trend: H4 leads, H1 confirms; both neutral = skip
@@ -11988,7 +12010,7 @@ def ai_trading_session():
                         effective_trend = 'BEARISH'
                     else:
                         logger.debug(f"[MTF] {symbol}: H4={h4_bias} H1={h1_trend} L1=NEUT -- skip")
-                        state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                        _reject(symbol, 'no_setup')
                         continue
                 h1_trend = effective_trend  # downstream uses h1_trend
 
@@ -12010,7 +12032,7 @@ def ai_trading_session():
                         f"[CHOCH VETO] {symbol}: M30 structure just flipped "
                         f"{_m30_char['break_direction']} against {effective_trend} H4/H1 bias -- skip"
                     )
-                    state._rej['choch_veto'] = state._rej.get('choch_veto', 0) + 1
+                    _reject(symbol, 'choch_veto')
                     continue
 
                 # -- EMA MOMENTUM GATE (9/15 EMA slope filter) ----------------
@@ -12019,7 +12041,7 @@ def ai_trading_session():
                 if _ema_m5['strength'] == 'FLAT':
                     # Truly flat = no momentum at all = all strategies will fail anyway
                     logger.debug(f"[EMA] {symbol}: M5 truly flat (ranging) -- skip. {_ema_m5['reason']}")
-                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                    _reject(symbol, 'no_setup')
                     continue
                 # WEAK or stronger: allow all three strategies to check their own signals
 
@@ -12076,7 +12098,7 @@ def ai_trading_session():
                         f"[PULLBACK GUARD] {symbol}: {_dist_from_mean:.3f} from 50EMA "
                         f"(>{_atr_m5*2.0:.3f} = 2xATR). Waiting for pullback."
                     )
-                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                    _reject(symbol, 'no_setup')
                     continue
 
                 # MARKET INTELLIGENCE INTEGRATION: auction-theory regime
@@ -12134,7 +12156,7 @@ def ai_trading_session():
                         f"favorable per M5 auction state ({_regime['reason']}) -- "
                         f"only gates EMA Scalp below, not SSM/Swappy (see comment)."
                     )
-                    state._rej['regime_stand_aside'] = state._rej.get('regime_stand_aside', 0) + 1
+                    _reject(symbol, 'regime_stand_aside')
 
                 # PDH/PDL liquidity reference -- small, cheap fetch (10 D1
                 # bars), not part of the async fetcher's cached timeframe
@@ -12265,14 +12287,14 @@ def ai_trading_session():
                                 # and should not be blocked by Swappy's latch.
                                 logger.debug(f"[SWAPPY 3C] {symbol}: setup already actioned "
                                              f"for candle {_sw_ct} -- not re-placing")
-                                state._rej['same_candle'] = state._rej.get('same_candle', 0) + 1
+                                _reject(symbol, 'same_candle')
                                 _sw_allowed, _sw_reason = False, 'already actioned this candle'
                             else:
                                 _sw_allowed, _sw_reason = can_take_swappy_entry(
                                     symbol, _trade_direction, _sw_low, _sw_high)
                                 if not _sw_allowed:
                                     logger.info(f"[SWAPPY 3RD-RULE] {symbol}: {_trade_direction} blocked -- {_sw_reason}")
-                                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                                    _reject(symbol, 'no_setup')
 
                             if _sw_allowed:
                                 if _sw_reason != 'first_setup':
@@ -12311,7 +12333,7 @@ def ai_trading_session():
                                     _entries_this_symbol += 1  # placed; other strategies still get to scan
                                 else:
                                     logger.warning(f"[SWAPPY 3C] {symbol}: pending order placement failed -- falling through to other strategies")
-                                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                                    _reject(symbol, 'no_setup')
 
                 # STRATEGY D: AOX MODEL -- 25/25/50 Layered Execution
                 # Layer 1 (25%): SD zone tap
@@ -12445,7 +12467,7 @@ def ai_trading_session():
                     setup = None
 
                 if not _candidates:
-                    state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                    _reject(symbol, 'no_setup')
                     continue
 
                 # Each candidate is evaluated on its own merits. `continue`
@@ -12466,7 +12488,7 @@ def ai_trading_session():
                     _setup_signal = setup.get('signal', _trade_direction)
                     if _setup_signal != _trade_direction:
                         logger.debug(f"[DIR GATE] {symbol}: setup={_setup_signal} vs H4={_trade_direction} -- counter-trend rejected")
-                        state._rej['no_setup'] = state._rej.get('no_setup', 0) + 1
+                        _reject(symbol, 'no_setup')
                         continue
                     direction    = _trade_direction  # always H4-aligned
                     trigger_type = setup.get('reason', 'UNKNOWN')
@@ -12514,14 +12536,14 @@ def ai_trading_session():
                         _l1_str = getattr(state, 'ai_bias_strength', {}).get(symbol, 0)
                         if _l1_str < 8:
                             logger.debug(f"[3C] {symbol} SSM: 3C not confirmed, L1={_l1_str}/10 -- skip. {_3c['reason']}")
-                            state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
+                            _reject(symbol, 'edge_ignore')
                             continue
                     elif not _3c['confirmed'] and _strat_type_early in ('EMA', 'SWAPPY', 'AOX'):
                         # EMA, Swappy, AOX: don't require 3C (they have built-in confirmation)
                         logger.debug(f"[3C] {symbol} {_strat_type_early}: 3C not required for this strategy type -- pass")
 
                     if any(banned.upper() in trigger_type.upper() for banned in state.banned_strategies):
-                        state._rej['banned'] += 1
+                        _reject(symbol, 'banned')
                         logger.info(f"[SCAN] {symbol}: blocked by strategy ban ('{trigger_type}')")
                         continue
 
@@ -12535,7 +12557,7 @@ def ai_trading_session():
                     # Cooldown check
                     if symbol in state.symbol_cooldowns:
                         if datetime.now(timezone.utc) < state.symbol_cooldowns[symbol]:
-                            state._rej['cooldown'] += 1
+                            _reject(symbol, 'cooldown')
                             _rem_secs = (state.symbol_cooldowns[symbol] - datetime.now(timezone.utc)).total_seconds()
                             _rem_str  = f"{int(_rem_secs)}s" if _rem_secs < 60 else f"{int(_rem_secs//60)}m {int(_rem_secs%60)}s"
                             logger.debug(f"[SCAN] {symbol}: cooldown active ({_rem_str} left)")
@@ -12547,7 +12569,7 @@ def ai_trading_session():
                     current_candle_time = df_m5['time'].iloc[-1]
                     _candle_key = f"{symbol}|{setup.get('strategy_type', trigger_type)}"
                     if state.last_trade_candle.get(_candle_key) == current_candle_time:
-                        state._rej['same_candle'] += 1
+                        _reject(symbol, 'same_candle')
                         logger.debug(f"[SCAN] {symbol}: already traded this M5 candle")
                         continue
 
@@ -12588,7 +12610,7 @@ def ai_trading_session():
                     # EdgeEngine IGNORE only blocks if score is truly terrible (<25)
                     # EMA scalp naturally scores lower than SSM but is still valid
                     if (edge_result.state == "IGNORE" or not edge_result.allow_entry) and edge_result.score < 25:
-                        state._rej['edge_ignore'] += 1
+                        _reject(symbol, 'edge_ignore')
                         logger.debug(f"[SCAN] {symbol}: EdgeEngine hard block score={edge_result.score:.1f}")
                         continue
                     elif edge_result.state == "IGNORE" or not edge_result.allow_entry:
@@ -12618,7 +12640,7 @@ def ai_trading_session():
                     # itself never matched a single real symbol.)
                     _corr_allowed, _corr_reason = correlation_tracker.should_allow_trade(symbol)
                     if not _corr_allowed:
-                        state._rej['correlation'] = state._rej.get('correlation', 0) + 1
+                        _reject(symbol, 'correlation')
                         logger.debug(f"[SCAN] {symbol}: correlation blocked ({_corr_reason})")
                         continue
 
@@ -12632,7 +12654,7 @@ def ai_trading_session():
                             continue
 
                     if cap_ctrl.should_throttle_frequency(edge_score < 50):
-                        state._rej['throttle'] += 1
+                        _reject(symbol, 'throttle')
                         logger.debug(f"[SCAN] {symbol}: frequency throttled (edge={edge_score:.1f})")
                         continue
 
@@ -12806,7 +12828,7 @@ def ai_trading_session():
                             if _m5_regime == 'RANGING':
                                 # No local trend on M5 -- skip regardless of H4
                                 logger.debug(f"[REGIME] {symbol}: M5=RANGING -- no local trend, skip")
-                                state._rej['m5_ranging'] = state._rej.get('m5_ranging', 0) + 1
+                                _reject(symbol, 'm5_ranging')
                                 continue
 
                             # Step 2: H4 context from `regime` variable (already computed above)
@@ -12814,7 +12836,7 @@ def ai_trading_session():
 
                             if _h4_regime == 'CHOPPY':
                                 logger.debug(f"[REGIME] {symbol}: H4=CHOPPY -- skip")
-                                state._rej['h4_choppy'] = state._rej.get('h4_choppy', 0) + 1
+                                _reject(symbol, 'h4_choppy')
                                 continue
 
                             # Step 3: Set trade mode based on combined regime
@@ -12832,7 +12854,7 @@ def ai_trading_session():
                             if _strat_type in ('EMA', 'SWAPPY') and _h4_regime == 'TRENDING':
                                 if _ema_str == 'WEAK' and not _3c_conf:
                                     logger.debug(f"[WEAK+NO3C] {symbol}: TRENDING H4 + EMA:WEAK + no 3C -- skip")
-                                    state._rej['weak_no3c'] = state._rej.get('weak_no3c', 0) + 1
+                                    _reject(symbol, 'weak_no3c')
                                     continue
 
                             # PULLBACK GATE: if HTF is bearish but M5 signal is BUY,
@@ -12865,7 +12887,7 @@ def ai_trading_session():
                                 _l3_min_score = 6
 
                             if _l3_score < _l3_min_score or (_l3_score <= 5 and not _l3_approved):
-                                state._rej['edge_ignore'] = state._rej.get('edge_ignore', 0) + 1
+                                _reject(symbol, 'edge_ignore')
                                 # Cooldown based on score (prevents retry spam)
                                 if _l3_score <= 3:
                                     _cd_mins = 30
@@ -12979,16 +13001,35 @@ def ai_trading_session():
             elapsed = time.time() - cycle_start
             if elapsed < 0.5:
                 time.sleep(0.5 - elapsed)
-            elif iteration % 20 == 0:
+
+            # STATUS + REJECTION SUMMARY.
+            #
+            # This used to be the `elif` of the sleep above, so it only ran
+            # when a cycle took LONGER than 0.5s -- and the whole point of the
+            # sleep is that cycles finish faster than that. On a healthy bot
+            # the branch was never taken, which means the entire diagnostic
+            # output of this file, every skip reason it carefully counts in 25
+            # places, was unreachable in normal operation. A symbol could sit
+            # blocked for days with nothing in the log to say why.
+            if iteration % 20 == 0:
                 rej = getattr(state, '_rej', {})
-                # Build human-readable skip reason summary
-                skip_reasons = []
-                if rej.get('no_setup', 0):     skip_reasons.append(f"no-setup/HTF-zone:{rej['no_setup']}")
-                if rej.get('edge_ignore', 0):  skip_reasons.append(f"AI-L3-score:{rej['edge_ignore']}")
-                if rej.get('cooldown', 0):     skip_reasons.append(f"cooldown:{rej['cooldown']}")
-                if rej.get('no_data', 0):      skip_reasons.append(f"no-data:{rej['no_data']}")
-                if rej.get('banned', 0):       skip_reasons.append(f"banned:{rej['banned']}")
-                if rej.get('position_exists', 0): skip_reasons.append(f"max-positions:{rej['position_exists']}")
+                # EVERY reason, not a hand-picked six. The old list named
+                # no_setup / edge_ignore / cooldown / no_data / banned /
+                # position_exists and silently dropped m5_ranging, h4_choppy,
+                # weak_no3c, regime_stand_aside, choch_veto, correlation,
+                # same_candle and throttle -- so a symbol dying on one of
+                # those showed up as "Skips:[none]".
+                _REJ_LABEL = {
+                    'no_setup': 'no-setup/HTF-zone', 'edge_ignore': 'AI-L3-score',
+                    'cooldown': 'cooldown', 'no_data': 'no-data', 'banned': 'banned',
+                    'position_exists': 'already-committed', 'm5_ranging': 'M5-ranging',
+                    'h4_choppy': 'H4-choppy', 'weak_no3c': 'weak-no-3C',
+                    'regime_stand_aside': 'regime-stand-aside', 'choch_veto': 'CHoCH-veto',
+                    'correlation': 'correlation', 'same_candle': 'same-candle',
+                    'throttle': 'throttle',
+                }
+                skip_reasons = [f"{_REJ_LABEL.get(k, k)}:{v}"
+                                for k, v in sorted(rej.items(), key=lambda kv: -kv[1]) if v]
 
                 _eq = account_info.equity
                 _session = get_current_session()
@@ -13012,8 +13053,32 @@ def ai_trading_session():
                     f"L1:{_l1_active}/{len(config.SYMBOLS)} | "
                     f"Skips:[{' '.join(skip_reasons) if skip_reasons else 'none'}]"
                 )
+                # PER-SYMBOL BREAKDOWN -- the line that answers "why has this
+                # symbol not traded in two days?".
+                #
+                # Only symbols that produced NO trade this window are listed,
+                # each with its single biggest blocker, so the line stays
+                # short and names the thing worth changing. A symbol absent
+                # from both this line and the trade log is getting no data at
+                # all, which is a different problem and worth knowing.
+                try:
+                    _sym_rej = getattr(state, '_rej_sym', {}) or {}
+                    _blocked = []
+                    for _s in actual_symbols:
+                        _counts = _sym_rej.get(_s, {})
+                        if not _counts:
+                            _blocked.append(f"{_s}=NOT-SCANNED")
+                            continue
+                        _top, _n = max(_counts.items(), key=lambda kv: kv[1])
+                        _blocked.append(f"{_s}={_REJ_LABEL.get(_top, _top)}x{_n}")
+                    if _blocked:
+                        logger.info(f"[WHY-NO-TRADE] {' | '.join(_blocked)}")
+                except Exception as _wnt:
+                    logger.debug(f"[WHY-NO-TRADE] summary failed: {_wnt}")
+
                 # Reset counters after logging
                 state._rej = {k: 0 for k in state._rej}
+                state._rej_sym = {}
             
             # Scalping Lightning: Speed is key. Short sleep.
             time.sleep(0.1)
