@@ -6054,7 +6054,29 @@ def get_dynamic_trade_params(symbol: str, direction: str, df, signal_sl: float =
                     else:
                         sl = entry_price + _max_safe_sl_dist
         except Exception as _cap_err:
-            logger.debug(f"[SL CAP] Skipped: {_cap_err}")
+            # LOUD, not debug. This block is the PRIMARY per-trade risk
+            # control -- it narrows the stop so a min-lot position lands near
+            # MAX_RISK_PERCENT. When it does not run, the only thing left
+            # between the account and an oversized position is the min-lot
+            # backstop in place_ai_trade, which is deliberately set several
+            # times looser.
+            #
+            # At debug level that fact was invisible: the trade went out
+            # under the backstop and nothing said the real control had been
+            # skipped. Trading continues (a spec read that fails once should
+            # not stop the bot), but the operator finds out.
+            logger.error(f"[SL CAP] Could not compute the risk-based SL cap for "
+                         f"{symbol}: {_cap_err}. This trade is protected only by "
+                         f"the min-lot backstop -- risk may exceed "
+                         f"{config.MAX_RISK_PERCENT}%.")
+            _slc_key = '_sl_cap_alerted'
+            if time.time() - getattr(state, _slc_key, 0) > 3600:
+                setattr(state, _slc_key, time.time())
+                send_telegram_notification(
+                    f"\u26A0\uFE0F <b>Risk cap not applied</b>\n\n"
+                    f"{symbol}: the stop-distance risk cap could not be computed "
+                    f"({_cap_err}).\n\nTrades are still being placed, protected only "
+                    f"by the min-lot backstop. Worth checking the MT5 terminal.")
         
         # ?? SPREAD-SAFETY ENFORCEMENT ?????????????????????????????????????????
         # CRITICAL FIX: MT5 checks BID vs SL for long positions and ASK vs SL for short.
@@ -8154,15 +8176,32 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         # looks affordable) instead of throwing.
         actual_risk_pct = (actual_risk_dollars / account_equity * 100) if account_equity > 0 else 0.0
 
-        # Smart risk decision
-        hard_cap_pct = 10.0   # Never exceed 3% on any single trade
+        # THE MIN-LOT BACKSTOP.
+        #
+        # This is not a second ceiling on intended risk -- CapitalController
+        # already clamps that to [0.25%, 1.5%], and get_dynamic_trade_params
+        # narrows the stop so min lot lands near 1.5%. It is the line past
+        # which a min-lot overshoot stops being "a tight structural stop on a
+        # small account" and becomes a loss too big to accept.
+        #
+        # Was 10.0, on a line commented "Never exceed 3% on any single trade".
+        # On a $189 account that authorised $18.93 of risk on one trade where
+        # the intent was $1.89. 5% keeps the layers meaningfully separate
+        # (1.5% intended, 5% genuinely-too-much) while still refusing to put a
+        # tenth of the account on one setup.
+        hard_cap_pct = 5.0
         if actual_risk_pct <= hard_cap_pct:
             # PROCEED: risk is within acceptable bounds
             if actual_risk_pct > final_risk_percent * 1.5:
-                logger.info(
+                # WARNING, not INFO. Nothing here can reduce the size -- the
+                # position is already at min lot -- so this is the operator's
+                # only notice that a trade went out at several times its
+                # intended risk. It belongs at a level that gets read.
+                logger.warning(
                     f"[LOT SIZING] {symbol}: lot_raw={lot_raw:.5f} < min_lot={min_lot:.2f}. "
                     f"Using min_lot. Actual risk: ${actual_risk_dollars:.2f} ({actual_risk_pct:.1f}%) "
-                    f"vs intended {final_risk_percent:.1f}%. Proceeding -- tight structural SL."
+                    f"vs intended {final_risk_percent:.1f}% -- min lot forces "
+                    f"{actual_risk_pct / max(final_risk_percent, 0.01):.1f}x the intended size."
                 )
         else:
             # SKIP: SL too wide for this account size at min lot
