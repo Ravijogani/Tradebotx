@@ -7080,6 +7080,28 @@ def manage_all_positions():
                     return True
                 return False
 
+            def _lock_floor_for(_r: float) -> float:
+                """
+                One-way floor on how much of a runner may be given back.
+
+                Deliberately R-based, unlike the trail itself: "how far has this
+                trade come" is a fact about the TRADE, and that is the right
+                basis for deciding how much of it to protect. Where the stop
+                GOES is a fact about the market, which is why that half follows
+                structure instead.
+
+                Below 2R there is no floor -- the structural stop is the only
+                protection, because a trade that has not yet doubled its risk
+                has not earned a guarantee.
+                """
+                if _r >= 4.0:
+                    return 2.0
+                if _r >= 3.0:
+                    return 1.0
+                if _r >= 2.0:
+                    return 0.5
+                return 0.0
+
             def _try_structural_trail(_label: str, _min_lock_r: float = 0.0,
                                       _tp_override: float = 0.0) -> bool:
                 """Trail behind the newest confirmed swing. Optional
@@ -7114,7 +7136,19 @@ def manage_all_positions():
                 if config.ENABLE_BREAKEVEN and ticket not in state.be_moved:
                     _try_structural_be(1.0, 'AOX',
                                        ' -- SD levels still handle the profit target')
-                continue  # AOX exits via MT5 TP levels set on entry, not trailing
+                elif ticket in state.be_moved:
+                    # AOX used to stop here: breakeven, then nothing at all,
+                    # with the SD take-profit as its only remaining exit. That
+                    # left a position sitting at its 1R stop through whatever
+                    # the market did next, however far the trade ran.
+                    #
+                    # A trailing stop does not compete with the SD plan -- it
+                    # never touches the target, only follows structure behind
+                    # price. No _tp_override, so the SD level still decides
+                    # where this trade takes profit; the trail only decides
+                    # how much of the run it is allowed to give back.
+                    _try_structural_trail('AOX', _min_lock_r=_lock_floor_for(r_multiple))
+                continue  # AOX's target stays with its SD levels
 
             # -- SWAPPY: Must hold to minimum 3R. No early tightening.
             # BE at BREAKEVEN_TRIGGER_RR (1.0R) -- but structurally, behind the
@@ -7133,8 +7167,20 @@ def manage_all_positions():
                 if (config.ENABLE_BREAKEVEN and ticket not in state.be_moved):
                     _try_structural_be(config.BREAKEVEN_TRIGGER_RR, 'SWAPPY',
                                        ' -- holding for the 3R+ structural target')
-                elif r_multiple >= 3.0 and ticket in state.be_moved:
-                    _try_structural_trail('SWAPPY3R', _min_lock_r=2.0)
+                elif ticket in state.be_moved:
+                    # Was `r_multiple >= 3.0` with a flat 2.0R ratchet: the stop
+                    # sat frozen wherever breakeven put it for a full TWO R, and
+                    # a trade that peaked at 2.9R and came back got no more
+                    # protection than one that peaked at 1.1R.
+                    #
+                    # "Hold to 3R" survives intact, because the trail is
+                    # STRUCTURAL: it exits when a confirmed swing breaks, not on
+                    # a profit threshold, so it cannot cut the run short -- it
+                    # follows it. The shared ratchet then protects the same way
+                    # it does everywhere else, and the flat 2.0R floor is gone:
+                    # applied below 2R it asked for a stop above current price,
+                    # which structural_trail rejected anyway.
+                    _try_structural_trail('SWAPPY', _min_lock_r=_lock_floor_for(r_multiple))
                 continue  # SWAPPY uses above logic only
 
             sl_dist = abs(entry_price - params.get('initial_sl', sl))
@@ -7240,15 +7286,25 @@ def manage_all_positions():
             # trade before the trail can ever matter, so it moves out to the
             # runner target (tp2).
             # ------------------------------------------------------------------
-            elif r_multiple >= 1.5 and ticket in state.be_moved:
-                if r_multiple >= 4.0:
-                    _lock_floor = 2.0
-                elif r_multiple >= 3.0:
-                    _lock_floor = 1.0
-                elif r_multiple >= 2.0:
-                    _lock_floor = 0.5
-                else:
-                    _lock_floor = 0.0
+            elif ticket in state.be_moved:
+                # CONTINUOUS ONCE RISK IS OFF. This was `r_multiple >= 1.5`, so
+                # the stop sat frozen wherever breakeven put it for half an R
+                # before the trail resumed following structure.
+                #
+                # That threshold was a leftover from the arithmetic ladder this
+                # replaced, where "stage 2" meant lock 50% of open gains and
+                # genuinely needed a trigger to begin. A structural trail needs
+                # no trigger: the rule is simply "keep the stop behind the
+                # newest confirmed swing", and there is no market reason to stop
+                # doing that for half an R and then start again.
+                #
+                # It cost a real trade. ETHUSD on 2026-08-20 took breakeven at
+                # ~1.0R with the stop behind a swing at 2281.04 (+0.30R), ran to
+                # 1.14R, and never reached 1.5R -- so the trail never engaged,
+                # higher lows formed above 2281 with nothing following them, and
+                # the retrace took the frozen stop for +$0.95 out of a +$3.65
+                # peak.
+                _lock_floor = _lock_floor_for(r_multiple)
 
                 _tp_use = tp
                 if r_multiple >= 2.0:

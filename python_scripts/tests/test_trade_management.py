@@ -201,10 +201,13 @@ def t16():
     # structure_tools' structural trail; the target extension survived that
     # rewrite, and pinning the old "TRAIL STAGE3" string would fail on a
     # rename while a genuine regression slipped past.
-    i = SRC.find('runner target')
+    # Anchored on the ASSIGNMENT, not on the phrase "runner target" -- that
+    # phrase now appears in the comment above the branch as well, and the
+    # first match was the prose rather than the code.
+    i = SRC.find("_tp2 = params.get('tp2', 0.0)")
     assert i > 0, "nothing extends the target when the trail takes over"
-    body = SRC[max(0, i - 1500):i + 900]
-    assert "params.get('tp2'" in body, "the trail never reaches for the runner target"
+    body = SRC[i:i + 400]
+    assert '_tp_use = _tp2' in body, "the runner target is read but never applied"
     assert "'tp2':           params.get('tp2', 0.0)," in SRC, \
         "tp2 is still discarded at entry, so there is nothing to extend to"
 check("the trail extends the target instead of trailing into a fixed TP", t16)
