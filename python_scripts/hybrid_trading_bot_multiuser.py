@@ -11735,6 +11735,33 @@ def _reject(symbol: str, reason: str, terminal: bool = True) -> None:
         state._rej_note[symbol][reason] = state._rej_note[symbol].get(reason, 0) + 1
 
 
+def _strat_tally(strategy: str, event: str) -> None:
+    """
+    Count what each STRATEGY did this window, not just what each symbol did.
+
+    [WHY-NO-TRADE] answers "why did XAUUSD not trade?". It cannot answer the
+    question that actually gets asked -- "why does every Telegram alert say
+    SHAAKUNI_SSM?" -- because a symbol has one line and six detectors, and a
+    symbol that traded is simply absent from the summary. So the one strategy
+    that does fire is invisible in the telemetry and the five that don't are
+    indistinguishable from strategies that are switched off.
+
+    Two events per strategy:
+        candidate -- the detector returned a setup
+        entered   -- that setup became a live order
+
+    The gap between them is the shared pipeline (direction gate, EdgeEngine,
+    AI L3, lessons, risk caps). A strategy with candidates and no entries is
+    being filtered; a strategy with neither is not detecting anything. Those
+    are different problems with different fixes, and until now they produced
+    identical output: silence.
+    """
+    if not hasattr(state, '_strat'):
+        state._strat = {}
+    s = state._strat.setdefault(strategy or '?', {'candidate': 0, 'entered': 0})
+    s[event] = s.get(event, 0) + 1
+
+
 def ai_trading_session():
     """
     SCALPING LIGHTNING V2.0: Main trading loop
@@ -12486,6 +12513,7 @@ def ai_trading_session():
                 # -- collect (independent scan): this detector's result is a
                 # candidate, it does not suppress the strategies below it.
                 if setup:
+                    _strat_tally(setup.get('strategy_type', '?'), 'candidate')
                     _candidates.append(setup)
                     setup = None
 
@@ -12511,6 +12539,7 @@ def ai_trading_session():
                 # -- collect (independent scan): this detector's result is a
                 # candidate, it does not suppress the strategies below it.
                 if setup:
+                    _strat_tally(setup.get('strategy_type', '?'), 'candidate')
                     _candidates.append(setup)
                     setup = None
 
@@ -12538,6 +12567,10 @@ def ai_trading_session():
                     _sw = detect_swappy_3c(df_m5, _trade_direction, df_h1, _df_d1_liq,
                                            last_bar_closed=False)
                     if _sw['confirmed']:
+                        # Self-executing strategies bypass _candidates
+                        # entirely, so they have to tally themselves or they
+                        # look identical to a strategy that is switched off.
+                        _strat_tally('SWAPPY_3C', 'candidate')
                         # Location check: near M5 support (BUY) or resistance (SELL)
                         _recent_hi = float(df_m5['high'].iloc[-20:-1].max())
                         _recent_lo = float(df_m5['low'].iloc[-20:-1].min())
@@ -12616,6 +12649,7 @@ def ai_trading_session():
                                     account_equity=account_info.equity, df_m5=df_m5,
                                 )
                                 if _sw_placed:
+                                    _strat_tally('SWAPPY_3C', 'entered')
                                     if _sw_ct is not None:
                                         state.swappy_last_setup[symbol] = _sw_ct
                                     logger.info(f"[SWAPPY 3C] {symbol}: {_sw['pattern']} stop order placed "
@@ -12650,6 +12684,10 @@ def ai_trading_session():
                         _aox_executed = run_aox_layered_entry(
                             symbol, df_m5, df_m1, effective_trend, _acct_now_aox.equity)
                         if _aox_executed:
+                            # AOX decides internally which of its three layers
+                            # (if any) fires, so only the outcome is visible
+                            # from here -- no candidate event to tally.
+                            _strat_tally('AOX', 'entered')
                             _entries_this_symbol += 1  # placed; other strategies still get to scan
 
                 # STRATEGY B2: SWAPPY 3C REVERSAL (impulse -> stall -> confirmation)
@@ -12706,6 +12744,7 @@ def ai_trading_session():
                 # -- collect (independent scan): this detector's result is a
                 # candidate, it does not suppress the strategies below it.
                 if setup:
+                    _strat_tally(setup.get('strategy_type', '?'), 'candidate')
                     _candidates.append(setup)
                     setup = None
 
@@ -12729,6 +12768,7 @@ def ai_trading_session():
                 # -- collect (independent scan): this detector's result is a
                 # candidate, it does not suppress the strategies below it.
                 if setup:
+                    _strat_tally(setup.get('strategy_type', '?'), 'candidate')
                     _candidates.append(setup)
                     setup = None
 
@@ -12766,6 +12806,7 @@ def ai_trading_session():
                 # -- collect (independent scan): this detector's result is a
                 # candidate, it does not suppress the strategies below it.
                 if setup:
+                    _strat_tally(setup.get('strategy_type', '?'), 'candidate')
                     _candidates.append(setup)
                     setup = None
 
@@ -13284,6 +13325,7 @@ def ai_trading_session():
 
                     trade_result = place_ai_trade(local_signal, account_info.equity, state.daily_pnl)
                     if trade_result is True:
+                        _strat_tally(setup.get('strategy_type', '?'), 'entered')
                         signals_found += 1
                         state.last_trade_candle[_candle_key] = current_candle_time
                         _entries_this_symbol += 1
@@ -13391,10 +13433,67 @@ def ai_trading_session():
                 except Exception as _wnt:
                     logger.debug(f"[WHY-NO-TRADE] summary failed: {_wnt}")
 
+                # PER-STRATEGY BREAKDOWN -- the line that answers "why does
+                # every alert say SHAAKUNI_SSM?".
+                #
+                # Note the running order: SSM is evaluated LAST of the six
+                # detectors and _candidates is consumed front-to-back, so SSM
+                # is not winning on priority -- it wins the slot because the
+                # five ahead of it produced nothing that survived. That is a
+                # detection/filter story, and these two lines are how you read
+                # which of the two it is for each strategy.
+                try:
+                    _sm = getattr(state, '_strat', {}) or {}
+                    _known = [('EMA', config.ENABLE_STRATEGY_EMA_SCALP),
+                              ('BANKO', getattr(config, 'ENABLE_STRATEGY_BANKO', True)),
+                              ('SWAPPY_3C', True),
+                              ('AOX', True),
+                              ('SWAPPY_REV', getattr(config, 'ENABLE_SWAPPY_REVERSAL', False)),
+                              ('SSM_OPEN', getattr(config, 'ENABLE_STRATEGY_SSM_OPENING', True)),
+                              ('SSM', True)]
+                    _mix = []
+                    for _name, _on in _known:
+                        if not _on:
+                            # An OFF strategy and a strategy that detected
+                            # nothing both score zero. Saying which is which
+                            # here saves hunting through config to find out
+                            # that ENABLE_SWAPPY_REVERSAL defaults to False.
+                            _mix.append(f"{_name}=OFF")
+                            continue
+                        _c = _sm.get(_name, {})
+                        _mix.append(f"{_name}={_c.get('candidate', 0)}c/"
+                                    f"{_c.get('entered', 0)}e")
+                    # Strategies that tallied under a name not in the list
+                    # above -- surfaced rather than silently dropped.
+                    for _name in sorted(set(_sm) - {n for n, _ in _known}):
+                        _c = _sm[_name]
+                        _mix.append(f"{_name}={_c.get('candidate', 0)}c/"
+                                    f"{_c.get('entered', 0)}e")
+                    logger.info(f"[STRATEGY MIX] {' | '.join(_mix)}")
+
+                    # And WHERE the ones with no candidates are dying.
+                    # decision_journal has recorded every refusal with its
+                    # decisive gate since the day it was added, and nothing
+                    # has ever read the buffer back -- it filled to its 5000
+                    # cap and then dropped silently. Draining it here both
+                    # publishes the answer and stops the buffer stalling.
+                    _funnel = dj.rejection_funnel(dj.drain_rejections())
+                    if _funnel:
+                        _gates = []
+                        for _strat in sorted(_funnel):
+                            _top = sorted(_funnel[_strat].items(),
+                                          key=lambda kv: -kv[1])[:2]
+                            _gates.append(f"{_strat}: " + ", ".join(
+                                f"{_k}x{_v}" for _k, _v in _top))
+                        logger.info(f"[STRATEGY GATES] {' | '.join(_gates)}")
+                except Exception as _smx:
+                    logger.debug(f"[STRATEGY MIX] summary failed: {_smx}")
+
                 # Reset counters after logging
                 state._rej = {k: 0 for k in state._rej}
                 state._rej_sym = {}
                 state._rej_note = {}
+                state._strat = {}
             
             # Scalping Lightning: Speed is key. Short sleep.
             time.sleep(0.1)

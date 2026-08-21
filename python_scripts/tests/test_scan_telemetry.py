@@ -81,7 +81,11 @@ def t4():
 check("every rejection is attributed to the symbol it blocked", t4)
 
 def t5():
-    i = SRC.find('[WHY-NO-TRADE]')
+    # Anchor on the logger CALL, not on the bare token: the token now also
+    # appears in _strat_tally's docstring, which explains what this line
+    # cannot answer. Matching prose instead of code is the recurring way
+    # these source-searching tests go wrong.
+    i = SRC.find('logger.info(f"[WHY-NO-TRADE]')
     assert i > 0, "no per-symbol summary line"
     body = SRC[max(0, i - 1400):i + 600]
     assert 'actual_symbols' in body, \
