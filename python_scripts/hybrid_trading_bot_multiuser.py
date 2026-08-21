@@ -7112,6 +7112,29 @@ def manage_all_positions():
                     _df_struct, _dir_m, entry_price, _init_sl_m, current_price, sl,
                     m_atr, _spread_trail, min_lock_r=_min_lock_r, digits=_dig_m)
                 if not _tr:
+                    # SAY WHY. structural_trail returns None for three
+                    # different correct reasons -- no confirmed swing yet, the
+                    # swing would not improve the stop, or the swing is inside
+                    # the noise band -- and used to report none of them. "My
+                    # stop is not trailing" was therefore unanswerable from the
+                    # log, which is exactly the question a live winner raises.
+                    #
+                    # Throttled per position: this runs every management cycle,
+                    # and the answer only changes when structure does.
+                    _ts_key = f'_trail_why_{ticket}'
+                    if time.time() - getattr(state, _ts_key, 0) > 120:
+                        setattr(state, _ts_key, time.time())
+                        try:
+                            _why = st.trail_status(
+                                _df_struct, _dir_m, entry_price, _init_sl_m,
+                                current_price, sl, m_atr, _spread_trail,
+                                min_lock_r=_min_lock_r, digits=_dig_m)
+                        except Exception as _tse:
+                            _why = f"unavailable ({_tse})"
+                        _locked = (sl - entry_price) if _dir_m == 'BUY' else (entry_price - sl)
+                        logger.info(
+                            f"[{_label} HOLD] {symbol} #{ticket}: at {r_multiple:.2f}R, "
+                            f"stop locks {_locked:+.{_dig_m}f} -- {_why}")
                     return False
                 _tp_use2 = _tp_override if _tp_override else tp
                 logger.info(

@@ -138,5 +138,70 @@ def t9():
 check("the noise band still protects a continuously-trailing stop", t9)
 
 
+def t10():
+    # A declining trail must say WHY. structural_trail returns None for three
+    # different correct reasons and used to report none of them, so "my stop
+    # is not trailing" was unanswerable from the log.
+    import structure_tools as st
+    import pandas as pd
+
+    def bars(cl, w=0.15):
+        return pd.DataFrame([(c - .05, c + w, c - w, c) for c in cl],
+                            columns=['open', 'high', 'low', 'close'])
+
+    trend = ([100, 100.6, 101.2, 101.9, 102.6, 103.3]
+             + [102.9, 102.3, 101.8, 102.0]
+             + [102.8, 103.6, 104.4, 105.1, 105.8]
+             + [105.4, 104.9, 105.3]
+             + [105.9, 106.6, 107.2, 107.8])
+    df = bars(trend)
+
+    # (a) swing too close to price -> the noise-band answer, the one that
+    #     looks like a bug and is not
+    why = st.trail_status(df, 'BUY', 100.0, 98.0, 104.9, 98.0,
+                          atr=0.55, spread=0.02, pivot_n=2)
+    assert 'noise band' in why, f"noise-band case not explained: {why}"
+
+    # (b) stop already better than the swing would give
+    why2 = st.trail_status(df, 'BUY', 100.0, 98.0, 107.8, 106.0,
+                           atr=0.55, spread=0.02, pivot_n=2)
+    assert 'no better' in why2, f"no-improvement case not explained: {why2}"
+
+    # (c) nothing confirmed yet
+    flat = bars([100 + i * 0.5 for i in range(25)])
+    why3 = st.trail_status(flat, 'BUY', 100.0, 98.0, 112.0, 98.0,
+                           atr=0.55, spread=0.02, pivot_n=2)
+    assert 'no confirmed swing' in why3, f"no-swing case not explained: {why3}"
+
+    # (d) and when it WOULD move, it says where
+    why4 = st.trail_status(df, 'BUY', 100.0, 98.0, 107.8, 98.0,
+                           atr=0.55, spread=0.02, pivot_n=2)
+    assert 'would trail to' in why4, f"the positive case is not explained: {why4}"
+check("a trail that declines explains which of the three reasons applies", t10)
+
+def t11():
+    # Diagnostic only -- it must never be able to change what the bot does.
+    # Scope precisely to the declining branch: from `if not _tr:` to the
+    # `return False` that ends it. A fixed character window would either miss
+    # the return or spill into the success path below it.
+    i = MGMT.find('if not _tr:')
+    assert i > 0, "the declining branch vanished"
+    end = MGMT.find('return False', i)
+    assert end > i, "the declining branch no longer returns False"
+    branch = MGMT[i:end]
+    assert 'st.trail_status' in branch, "the explanation is not in the declining branch"
+    assert 'modify_position' not in branch, "the diagnostic path can move a stop"
+    assert 'order_send' not in branch, "the diagnostic path can place an order"
+check("the explanation is logging only, never a decision", t11)
+
+def t12():
+    # Throttled: this runs every management cycle and the answer only changes
+    # when structure does.
+    i = MGMT.find('_trail_why_')
+    assert i > 0, "the explanation is not throttled per position"
+    assert '> 120' in MGMT[i:i + 300], "no throttle interval"
+check("the explanation is throttled per position, not once per cycle", t12)
+
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

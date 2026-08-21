@@ -441,6 +441,56 @@ def structural_trail(df, direction: str, entry_price: float, initial_sl: float,
 # LIQUIDITY TARGETS
 # =============================================================================
 
+def trail_status(df, direction: str, entry_price: float, initial_sl: float,
+                 current_price: float, current_sl: float, atr: float, spread: float,
+                 pivot_n: int = 2, lookback: int = 120, min_lock_r: float = 0.0,
+                 digits: int = 5) -> str:
+    """
+    WHY the trail is not moving the stop. Diagnostic only -- never called by
+    the decision path, so it cannot change what the bot does.
+
+    structural_trail() returns None for three completely different reasons and
+    says which for none of them, so "my stop is not trailing" was unanswerable
+    from the log. Each of these is a correct outcome; the operator just could
+    not tell them apart:
+
+      no confirmed swing -- nothing has formed yet to trail behind
+      would retreat      -- the swing is further from price than the stop
+                            already is, and a stop never moves backwards
+      inside noise band  -- a swing exists and is nearer, but so near that a
+                            stop there would be taken by ordinary noise. This
+                            is the one that looks like a bug and is not.
+    """
+    try:
+        if atr is None or atr <= 0:
+            return "no ATR"
+        is_buy = direction.upper() == 'BUY'
+        buf = structure_buffer(atr, spread)
+        band = noise_band(atr, spread)
+
+        swing = last_protective_swing(df, direction, current_price, pivot_n, lookback)
+        if swing is None:
+            return (f"no confirmed swing {'below' if is_buy else 'above'} price yet "
+                    f"(pivot_n={pivot_n})")
+
+        level = (swing - buf) if is_buy else (swing + buf)
+        limit = (current_price - band) if is_buy else (current_price + band)
+
+        if (is_buy and level > limit) or ((not is_buy) and level < limit):
+            return (f"swing {swing:.{digits}f} is inside the noise band -- a stop at "
+                    f"{level:.{digits}f} needs to be beyond {limit:.{digits}f} "
+                    f"(band {band:.{digits}f} = max(0.75xATR, 3xspread))")
+
+        if current_sl and ((is_buy and level <= current_sl) or
+                           ((not is_buy) and level >= current_sl)):
+            return (f"swing {swing:.{digits}f} would put the stop at {level:.{digits}f}, "
+                    f"no better than the current {current_sl:.{digits}f}")
+
+        return f"would trail to {level:.{digits}f} behind the swing at {swing:.{digits}f}"
+    except Exception as e:
+        return f"unavailable ({e})"
+
+
 def equal_level_clusters(df, direction: str, reference_price: float, atr: float,
                          lookback: int = 200, tol_atr: float = 0.12,
                          min_touches: int = 2) -> List[float]:
