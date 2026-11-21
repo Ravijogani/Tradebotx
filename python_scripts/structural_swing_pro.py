@@ -799,7 +799,7 @@ class SwingTradingState:
         self.open_positions: Dict[int, Dict] = {}
         self.position_open_times: Dict[int, datetime] = {}
         self.be_moved: set = set()
-        self.last_reset_day: Optional[int] = None
+        self.last_reset_day: Optional[str] = None
         self.symbol_cooldowns: Dict[str, datetime] = {}
 
 
