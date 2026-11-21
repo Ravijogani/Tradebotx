@@ -85,12 +85,12 @@ def t5():
 check("the execution backstop has no looser hardcoded override", t5)
 
 def t6():
-    # Nothing downstream can shrink a min-lot position, so an overshoot is
-    # the operator's only warning and must not be INFO.
-    i = SRC.find('lot_raw={lot_raw:.5f} < min_lot')
-    assert i > 0, "the overshoot notice vanished"
+    # Contract-value or volume-step deviations must remain visible at warning
+    # level even though the final hard cap now blocks oversized positions.
+    i = SRC.find('[LOT SIZING] {symbol}: lot_raw=')
+    assert i > 0, "the execution sizing notice vanished"
     assert 'logger.warning' in SRC[max(0, i - 400):i], \
-        "a trade going out at several times intended risk is still only INFO"
+        "an execution sizing deviation is still only INFO"
 check("execution sizing deviations are logged as a warning, not buried at INFO", t6)
 
 
