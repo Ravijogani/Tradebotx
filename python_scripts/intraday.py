@@ -138,14 +138,15 @@ class IntradayTradingConfig:
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = args.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
 
-    # RISK: max 10% of account equity per trade. Simple rule.
-    BASE_RISK_PERCENT: float = 10.0
-    MAX_RISK_PERCENT:  float = 10.0
-    MAX_RISK_PER_TRADE_PERCENT: float = 10.0  # Set via: export GEMINI_API_KEY='your-key'
+    # Shared platform risk policy: 1% target risk, 1.5% hard per-trade ceiling.
+    BASE_RISK_PERCENT: float = 1.0
+    MAX_RISK_PERCENT: float = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT
+    MAX_RISK_PER_TRADE_PERCENT: float = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT
     GEMINI_MODEL: str = "gemini-3-flash-preview"
     
     # AI Feature Flags
-    ENABLE_AI_VALIDATION: bool = True
+    # AI is advisory and disabled by default; deterministic rules must work without a provider.
+    ENABLE_AI_VALIDATION: bool = False
     ENABLE_AI_RISK_MANAGEMENT: bool = True
     ENABLE_AI_TRADE_LEARNING: bool = True
     
@@ -3104,8 +3105,8 @@ def _project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
         pip_value_per_lot = 10.0
 
     lot_raw = intended_risk_amount / max(pip_risk * pip_value_per_lot, 0.001)
-    lot_size = round(lot_raw / lot_step) * lot_step
-    lot_size = max(spec['min_lot'], min(lot_size, spec['max_lot']))
+    lot_size = risk_limits.floor_volume_to_step(
+        lot_raw, lot_step, spec['min_lot'], spec['max_lot'])
 
     # Real dollar/percent risk this lot size actually carries -- not the
     # intended risk_percent, the number that would really hit the account
@@ -3179,6 +3180,9 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         pip_risk = projection['pip_risk']
         risk_amount = projection['actual_risk_amount']
         actual_risk_percent = projection['actual_risk_percent']
+        if projection['lot_size'] <= 0:
+            return False, (f"Calculated volume for {symbol} is below broker minimum; "
+                           "trade rejected rather than rounding risk upward")
         if projection['lot_raw'] < projection['spec']['min_lot']:
             logger.info(
                 f"[RISK] {symbol}: ideal lot {projection['lot_raw']:.5f} < broker min "
@@ -3270,7 +3274,7 @@ def ai_validate_intraday_trade(symbol: str, direction: str, strategy_name: str,
         return cache[key]
 
     if not ai_provider.client:
-        return {'score': 6, 'approved': True, 'reason': 'AI not initialized'}
+        return {'score': 0, 'approved': False, 'reason': 'ai_unavailable'}
 
     # Build context from H1 candles
     try:
@@ -3310,10 +3314,10 @@ def ai_validate_intraday_trade(symbol: str, direction: str, strategy_name: str,
                 except Exception: pass
     except Exception as e:
         if "429" in str(e) or "quota" in str(e).lower():
-            logger.warning(f"[AI L3] Quota exceeded -- proceeding without L3 for {symbol}")
-            return {'score': 7, 'approved': True, 'reason': 'quota_fallback', 'ts': now_t}
+            logger.warning(f"[AI L3] Quota exceeded -- L3 unavailable for {symbol}")
+            return {'score': 0, 'approved': False, 'reason': 'quota_unavailable', 'ts': now_t}
 
-    return {'score': 6, 'approved': True, 'reason': 'parse_fallback', 'ts': now_t}
+    return {'score': 0, 'approved': False, 'reason': 'invalid_ai_response', 'ts': now_t}
 
 
 def resolve_intraday_tp(signal: Dict, symbol: str, direction: str,
@@ -3388,15 +3392,20 @@ def place_intraday_trade(signal: Dict, account_equity: float):
 
         df_h1 = get_market_data(symbol, mt5.TIMEFRAME_H1, 30)
 
-        # L3 AI validation -- score this specific setup
-        tp_for_l3 = signal.get('tp', entry_price + abs(entry_price - signal['stop_loss']) * 2.0)
-        l3 = ai_validate_intraday_trade(symbol, direction,
-                                         signal.get('strategy_name','INTRADAY'),
-                                         entry_price, signal['stop_loss'], tp_for_l3, df_h1)
-        logger.info(f"[AI L3] {symbol} {direction}: score={l3['score']}/10 {l3['reason']}")
-        if not l3['approved']:
-            logger.info(f"[AI L3] {symbol}: score={l3['score']}/10 -- skip")
-            return False
+        # Optional AI confirmation. Disabled by default so an external AI API
+        # cannot become a hidden execution dependency. If explicitly enabled,
+        # provider failures fail closed rather than approving an unknown result.
+        if config.ENABLE_AI_VALIDATION:
+            tp_for_l3 = signal.get('tp', entry_price + abs(entry_price - signal['stop_loss']) * 2.0)
+            l3 = ai_validate_intraday_trade(symbol, direction,
+                                             signal.get('strategy_name','INTRADAY'),
+                                             entry_price, signal['stop_loss'], tp_for_l3, df_h1)
+            logger.info(f"[AI L3] {symbol} {direction}: score={l3['score']}/10 {l3['reason']}")
+            if not l3['approved']:
+                logger.info(f"[AI L3] {symbol}: score={l3['score']}/10 -- skip")
+                return False
+        else:
+            logger.debug(f"[AI L3] {symbol}: disabled; deterministic strategy/risk gates remain authoritative")
 
         if signal.get('strategy_name') == 'BALANCE_FADE':
             # Balance Fade already computed its own precise target (POC or
@@ -4485,10 +4494,13 @@ def intraday_trading_session():
         account_info = mt5.account_info()
         # Use CURRENT equity as baseline (includes floating P&L of any open positions)
         # This means the 25% loss limit measures loss from NOW, not from some previous state
-        state.daily_start_equity = account_info.equity if account_info else 0.0
+        _today_key = risk_limits.utc_day_key()
+        state.daily_start_equity = (risk_limits.load_or_init_daily_baseline(
+            DATA_DIR, account_info.equity, _today_key) if account_info else 0.0)
+        state.last_reset_day = _today_key
         logger.info(
-            f"[RISK] Daily start equity set to ${state.daily_start_equity:.2f} "
-            f"(includes floating P&L of any pre-existing positions)"
+            f"[RISK] Daily start equity baseline ${state.daily_start_equity:.2f} "
+            f"for {_today_key} (restored if this process restarted today)"
         )
     except Exception as e:
         logger.error(f"Failed to get initial account info: {e}")
@@ -4527,14 +4539,16 @@ def intraday_trading_session():
                     portfolio_manager.add_exposure(stack_symbol, stack.get('consumed_risk', 0.0))
             
             # 0. DAILY RESET at midnight UTC
-            current_day = datetime.now(timezone.utc).day
-            if not hasattr(state, 'last_reset_day'):
+            current_day = risk_limits.utc_day_key()
+            if not hasattr(state, 'last_reset_day') or state.last_reset_day is None:
                 state.last_reset_day = current_day
             if current_day != state.last_reset_day:
                 logger.info(f"[NEW DAY] Resetting P&L (was ${state.daily_pnl:.2f}) and trade count")
                 state.daily_pnl = 0.0
                 state.daily_trades = 0
-                state.daily_start_equity = account_info.equity if account_info else state.daily_start_equity
+                if account_info:
+                    state.daily_start_equity = risk_limits.load_or_init_daily_baseline(
+                        DATA_DIR, account_info.equity, current_day)
                 state.last_reset_day = current_day
 
             # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
