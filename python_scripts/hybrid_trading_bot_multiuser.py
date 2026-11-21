@@ -8027,40 +8027,47 @@ def validate_lot_size(symbol: str, lot_size: float) -> float:
     try:
         spec = get_symbol_specs(symbol)
         if not spec:
-            logger.warning(f"Cannot get specs for {symbol}, using minimum lot")
-            return 0.01
-        
+            logger.error(f"Cannot get specs for {symbol}; refusing to guess a tradable volume")
+            return 0.0
+
         min_lot = spec['min_lot']
         max_lot = spec['max_lot']
         lot_step = spec['lot_step']
-        
-        lot_size = round(lot_size / lot_step) * lot_step
-        lot_size = max(min_lot, min(max_lot, lot_size))
-        
+        lot_size = risk_limits.floor_volume_to_step(lot_size, lot_step, min_lot, max_lot)
+        if lot_size <= 0:
+            logger.info(f"{symbol}: risk budget is below broker minimum volume; trade rejected")
+            return 0.0
+
         tick = mt5.symbol_info_tick(symbol)
-        if not tick: return min_lot
-        
+        if not tick:
+            logger.error(f"Cannot get tick for {symbol}; refusing to size without a margin check")
+            return 0.0
+
         margin_required = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot_size, tick.ask)
-        if margin_required is None:
-            logger.error(f"Cannot calculate margin for {symbol} {lot_size}")
-            return min_lot
-        
+        if margin_required is None or margin_required <= 0:
+            logger.error(f"Cannot calculate valid margin for {symbol} {lot_size}")
+            return 0.0
+
         account_info = mt5.account_info()
-        if not account_info: return min_lot
-        
+        if not account_info:
+            logger.error(f"Cannot read account margin for {symbol}; refusing trade")
+            return 0.0
+
         max_allowed_margin = account_info.margin_free * 0.8
-        
         if margin_required > max_allowed_margin:
             logger.warning(f"Lot size {lot_size} requires too much margin. Reducing.")
-            affordable_lot = (max_allowed_margin / margin_required) * lot_size if margin_required > 0 else lot_size
-            lot_size = round(affordable_lot / lot_step) * lot_step
-            lot_size = max(min_lot, lot_size)
-        
+            affordable_lot = (max_allowed_margin / margin_required) * lot_size
+            lot_size = risk_limits.floor_volume_to_step(
+                affordable_lot, lot_step, min_lot, max_lot)
+            if lot_size <= 0:
+                logger.info(f"{symbol}: available margin cannot support broker minimum volume")
+                return 0.0
+
         return lot_size
-    
+
     except Exception as e:
         logger.error(f"Error validating lot size: {e}")
-        return 0.01
+        return 0.0
 
 def is_spread_safe(symbol: str, target_pips: float) -> bool:
     """
@@ -8296,8 +8303,14 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
 
         # Validate and snap to lot step
         lot_size = validate_lot_size(symbol, lot_raw)
+        if lot_size <= 0:
+            logger.info(f"[SIZE SKIP] {symbol}: no volume fits risk and margin limits")
+            return False
         sym_info_ls = mt5.symbol_info(symbol)
-        min_lot = sym_info_ls.volume_min if sym_info_ls else 0.01
+        if not sym_info_ls:
+            logger.error(f"[SIZE SKIP] {symbol}: broker symbol info disappeared before order")
+            return False
+        min_lot = sym_info_ls.volume_min
 
         # ACTUAL risk after clamping, measured the same authoritative way.
         #
@@ -8327,12 +8340,10 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         # which a min-lot overshoot stops being "a tight structural stop on a
         # small account" and becomes a loss too big to accept.
         #
-        # Was 10.0, on a line commented "Never exceed 3% on any single trade".
-        # On a $189 account that authorised $18.93 of risk on one trade where
-        # the intent was $1.89. 5% keeps the layers meaningfully separate
-        # (1.5% intended, 5% genuinely-too-much) while still refusing to put a
-        # tenth of the account on one setup.
-        hard_cap_pct = 5.0
+        # The hard backstop matches the shared platform ceiling. If broker
+        # minimum volume cannot fit inside 1.5%, skip the trade; never waive
+        # the cap merely because the account cannot trade smaller.
+        hard_cap_pct = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT
         if actual_risk_pct <= hard_cap_pct:
             # PROCEED: risk is within acceptable bounds
             if actual_risk_pct > final_risk_percent * 1.5:
