@@ -89,6 +89,21 @@ def test_daily_baseline_fails_closed_when_storage_unavailable():
         assert baseline == 0.0
 
 
+
+def test_secondary_bots_use_broker_pnl_for_risk_sizing():
+    for name, marker in (
+        ("intraday.py", "def _project_lot_and_risk("),
+        ("structural_swing_pro.py", "def project_lot_and_risk("),
+    ):
+        source = (ROOT / name).read_text(encoding="utf-8")
+        start = source.index(marker)
+        end = source.index("\ndef ", start + 5)
+        body = source[start:end]
+        assert "mt5.order_calc_profit(" in body
+        assert "floor_volume_to_step(" in body
+        assert "pip_value_per_lot = 10.0" not in body
+
+
 def test_all_bot_tiers_use_persistent_full_date_baseline():
     for name in ("intraday.py", "structural_swing_pro.py"):
         source = (ROOT / name).read_text(encoding="utf-8")
@@ -140,6 +155,7 @@ check("daily baseline uses full date and rolls across month boundary", test_dail
 check("daily baseline writes atomically with compatible schema", test_daily_baseline_uses_atomic_legacy_compatible_schema)
 check("corrupt daily baseline is not reset from current equity", test_corrupt_daily_baseline_is_not_reset_from_current_equity)
 check("daily baseline failure blocks rather than silently allowing trading", test_daily_baseline_fails_closed_when_storage_unavailable)
+check("intraday and swing sizing use broker P&L and fail-closed volume flooring", test_secondary_bots_use_broker_pnl_for_risk_sizing)
 check("all bot tiers use persistent full-date daily baselines", test_all_bot_tiers_use_persistent_full_date_baseline)
 check("primary bot volume validation fails closed below minimum or on margin errors", test_main_execution_volume_guard_fails_closed)
 check("primary bot rejects invalid equity and risk overrides before sizing", test_main_execution_rejects_invalid_equity_and_risk_override)
