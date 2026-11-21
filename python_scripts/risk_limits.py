@@ -209,16 +209,30 @@ def load_or_init_daily_baseline(data_dir: str, current_equity: float,
                                 date_key: Optional[str] = None) -> float:
     """Reuse today's persisted equity baseline after restarts; initialize only on a new UTC day."""
     date_key = date_key or utc_day_key()
+    saved = None
     try:
         with open(_daily_baseline_path(data_dir), 'r', encoding='utf-8') as f:
             saved = json.load(f)
-        if (saved.get('date') == date_key
-                and isinstance(saved.get('baseline'), (int, float))
-                and math.isfinite(float(saved['baseline']))
-                and saved['baseline'] > 0):
-            return float(saved['baseline'])
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
+    except FileNotFoundError:
+        # First boot for this data directory: create today's baseline below.
         pass
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        # A present but unreadable baseline may contain the only record of
+        # today's prior losses. Never replace it with current equity.
+        return 0.0
+
+    if saved is not None:
+        if not isinstance(saved, dict) or not isinstance(saved.get('date'), str) or not saved.get('date'):
+            return 0.0
+        try:
+            saved_baseline = float(saved.get('baseline'))
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(saved_baseline) or saved_baseline <= 0:
+            return 0.0
+        if saved['date'] == date_key:
+            return saved_baseline
+        # A valid record for a different date is a genuine UTC day rollover.
 
     if not current_equity or current_equity <= 0:
         return 0.0
