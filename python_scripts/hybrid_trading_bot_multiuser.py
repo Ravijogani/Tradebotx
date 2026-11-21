@@ -7929,7 +7929,8 @@ def check_emergency_conditions(account_info) -> bool:
         state.daily_start_equity = load_or_init_daily_baseline(DATA_DIR, account_info.equity, today_str)
 
     if state.daily_start_equity <= 0:
-        return False
+        logger.critical("[RISK] Durable daily equity baseline unavailable; halting new trading")
+        return True
 
     # Calculate current daily loss
     daily_loss_percent = ((account_info.equity - state.daily_start_equity) / state.daily_start_equity) * 100
