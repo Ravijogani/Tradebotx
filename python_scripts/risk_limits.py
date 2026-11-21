@@ -220,16 +220,21 @@ def load_or_init_daily_baseline(data_dir: str, current_equity: float,
     except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
         pass
 
-    persist_daily_baseline(data_dir, date_key, current_equity)
-    return float(current_equity) if current_equity and current_equity > 0 else 0.0
+    if not current_equity or current_equity <= 0:
+        return 0.0
+    # A baseline that cannot be durably written is not safe to trade against:
+    # a restart could otherwise erase the day's loss history.
+    if not persist_daily_baseline(data_dir, date_key, current_equity):
+        return 0.0
+    return float(current_equity)
 
 
-def persist_daily_baseline(data_dir: str, date_key: str, baseline: float) -> None:
+def persist_daily_baseline(data_dir: str, date_key: str, baseline: float) -> bool:
     """Atomically persist the daily equity baseline using the legacy-compatible file schema."""
     try:
         value = float(baseline)
         if not math.isfinite(value) or value <= 0:
-            return
+            return False
         os.makedirs(data_dir, exist_ok=True)
         path = _daily_baseline_path(data_dir)
         temp_path = path + '.tmp'
@@ -238,8 +243,10 @@ def persist_daily_baseline(data_dir: str, date_key: str, baseline: float) -> Non
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_path, path)
+        return True
     except (OSError, TypeError, ValueError) as e:
         print(f"[BASELINE] WARNING: could not persist daily equity baseline: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
