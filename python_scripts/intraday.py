@@ -4295,11 +4295,16 @@ def check_emergency_conditions(account_info) -> bool:
     # account_info is already in hand here, so adopt it as the baseline
     # and let real emergency checks run from the next call on.
     if state.daily_start_equity <= 0:
-        state.daily_start_equity = account_info.equity
+        _today_key = risk_limits.utc_day_key()
+        state.daily_start_equity = risk_limits.load_or_init_daily_baseline(
+            DATA_DIR, account_info.equity, _today_key)
+        state.last_reset_day = _today_key
         logger.warning(
-            f"[RISK] daily_start_equity was not set (likely a startup MT5 "
-            f"hiccup) -- resetting baseline to current equity ${account_info.equity:.2f}"
+            f"[RISK] daily_start_equity was not set -- restored/initialized "
+            f"persistent baseline ${state.daily_start_equity:.2f} for {_today_key}"
         )
+        if state.daily_start_equity <= 0:
+            return True
         return False
 
     daily_loss_percent = 0.0
@@ -4550,6 +4555,9 @@ def intraday_trading_session():
                     state.daily_start_equity = risk_limits.load_or_init_daily_baseline(
                         DATA_DIR, account_info.equity, current_day)
                 state.last_reset_day = current_day
+            elif state.daily_start_equity <= 0 and account_info:
+                state.daily_start_equity = risk_limits.load_or_init_daily_baseline(
+                    DATA_DIR, account_info.equity, current_day)
 
             # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
             # The weekly loss limit the public site advertises had no
