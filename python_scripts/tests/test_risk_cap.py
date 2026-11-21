@@ -81,21 +81,18 @@ check("instrument, session and exposure all reduce size", t3)
 def t4():
     i = SRC.find('hard_cap_pct = ')
     assert i > 0, "the min-lot backstop vanished"
-    val = float(SRC[i:i + 40].split('=')[1].split()[0])
-    assert val <= 5.0, f"a single trade may still risk {val}% of the account"
-    assert val > cfg.MAX_RISK_PERCENT, (
-        "the backstop is at or below the intended ceiling -- it is a second "
-        "ceiling, not a backstop, and will reject ordinary min-lot trades")
-check("one trade cannot risk more than 5% of the account", t4)
+    line = SRC[i:SRC.find('\n', i)]
+    assert 'PLATFORM_MAX_RISK_PER_TRADE_PERCENT' in line, (
+        "the backstop must use the same shared 1.5% ceiling as every strategy")
+    assert cfg.MAX_RISK_PERCENT == 1.5
+check("minimum-lot trades cannot bypass the shared 1.5% per-trade ceiling", t4)
 
 def t5():
-    # The comment and the value must agree. They disagreed by 3.3x, which is
-    # how the old value survived review.
     i = SRC.find('hard_cap_pct = ')
     line = SRC[i:SRC.find('\n', i)]
-    assert 'Never exceed 3%' not in line, \
-        "the comment still claims 3% on a line that does not say 3"
-check("the backstop's comment no longer contradicts its value", t5)
+    assert '5.0' not in line and '10.0' not in line, \
+        "a looser hardcoded risk backstop remains"
+check("the execution backstop has no looser hardcoded override", t5)
 
 def t6():
     # Nothing downstream can shrink a min-lot position, so an overshoot is
