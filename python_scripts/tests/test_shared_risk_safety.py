@@ -73,6 +73,14 @@ def test_daily_baseline_uses_atomic_legacy_compatible_schema():
 
 
 
+
+def test_corrupt_daily_baseline_is_not_reset_from_current_equity():
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "daily_equity_baseline.json"
+        path.write_text("{corrupt", encoding="utf-8")
+        assert rl.load_or_init_daily_baseline(directory, 9300.0, "2026-11-21") == 0.0
+
+
 def test_daily_baseline_fails_closed_when_storage_unavailable():
     with tempfile.TemporaryDirectory() as directory:
         blocker = pathlib.Path(directory) / "not_a_directory"
@@ -128,6 +136,7 @@ check("volume respects broker maximum", test_volume_caps_at_broker_max)
 check("daily baseline survives same-day process restart", test_daily_baseline_survives_restart)
 check("daily baseline uses full date and rolls across month boundary", test_daily_baseline_rolls_on_full_utc_date)
 check("daily baseline writes atomically with compatible schema", test_daily_baseline_uses_atomic_legacy_compatible_schema)
+check("corrupt daily baseline is not reset from current equity", test_corrupt_daily_baseline_is_not_reset_from_current_equity)
 check("daily baseline failure blocks rather than silently allowing trading", test_daily_baseline_fails_closed_when_storage_unavailable)
 check("all bot tiers use persistent full-date daily baselines", test_all_bot_tiers_use_persistent_full_date_baseline)
 check("primary bot volume validation fails closed below minimum or on margin errors", test_main_execution_volume_guard_fails_closed)
