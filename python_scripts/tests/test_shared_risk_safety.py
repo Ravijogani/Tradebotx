@@ -96,6 +96,8 @@ def test_all_bot_tiers_use_persistent_full_date_baseline():
         assert "risk_limits.load_or_init_daily_baseline(" in source
         assert "datetime.now(timezone.utc).day" not in source
     assert "risk_limits.load_or_init_daily_baseline(data_dir, current_equity, today)" in MAIN_SOURCE
+    assert "datetime.now(timezone.utc).day" not in MAIN_SOURCE
+    assert "Durable daily equity baseline unavailable; stopping bot safely" in MAIN_SOURCE
 
 
 def test_main_execution_volume_guard_fails_closed():
