@@ -641,26 +641,37 @@ def project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
     pip_risk = abs(entry_price - stop_loss) / spec['pip_size']
 
     tick_val = spec.get('trade_tick_value', 0)
-    tick_size = spec.get('trade_tick_size', spec.get('pip_size', 0.0001))
+    tick_size = spec.get('trade_tick_size', 0)
     lot_step = spec.get('lot_step', 0.01)
 
     intended_risk_amount = account_equity * (risk_percent / 100.0)
+    risk_per_lot = 0.0
 
-    if tick_val and tick_val > 0 and tick_size > 0:
-        pip_value_per_lot = (tick_val / tick_size) * spec.get('pip_size', tick_size)
-    else:
-        pip_value_per_lot = 10.0  # forex fallback -- standard pairs only
+    # Prefer MT5's contract-aware P&L calculation for this exact entry/stop.
+    try:
+        order_type = mt5.ORDER_TYPE_BUY if stop_loss < entry_price else mt5.ORDER_TYPE_SELL
+        broker_loss = mt5.order_calc_profit(order_type, symbol, 1.0, entry_price, stop_loss)
+        if broker_loss is not None and abs(float(broker_loss)) > 0:
+            risk_per_lot = abs(float(broker_loss))
+    except Exception:
+        pass
 
-    lot_raw = intended_risk_amount / max(pip_risk * pip_value_per_lot, 0.001)
+    # Use broker tick economics only as a fallback; never assume a generic
+    # forex pip value for metals, crypto, oil or other CFD contracts.
+    if risk_per_lot <= 0 and tick_val and tick_val > 0 and tick_size and tick_size > 0:
+        risk_per_lot = abs(entry_price - stop_loss) / tick_size * tick_val
+
+    pip_value_per_lot = risk_per_lot / pip_risk if risk_per_lot > 0 and pip_risk > 0 else 0.0
+    lot_raw = intended_risk_amount / risk_per_lot if risk_per_lot > 0 else 0.0
     lot_size = risk_limits.floor_volume_to_step(
         lot_raw, lot_step, spec['min_lot'], spec['max_lot'])
 
-    actual_risk_amount = lot_size * pip_risk * pip_value_per_lot
+    actual_risk_amount = lot_size * risk_per_lot
     actual_risk_percent = (actual_risk_amount / account_equity) * 100 if account_equity > 0 else 0.0
 
     return {
         'spec': spec, 'pip_risk': pip_risk, 'lot_raw': lot_raw, 'lot_size': lot_size,
-        'pip_value_per_lot': pip_value_per_lot,
+        'pip_value_per_lot': pip_value_per_lot, 'risk_per_lot': risk_per_lot,
         'intended_risk_amount': intended_risk_amount, 'intended_risk_percent': risk_percent,
         'actual_risk_amount': actual_risk_amount, 'actual_risk_percent': actual_risk_percent,
     }
