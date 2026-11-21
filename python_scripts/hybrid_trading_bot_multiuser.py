@@ -8347,15 +8347,13 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
         if actual_risk_pct <= hard_cap_pct:
             # PROCEED: risk is within acceptable bounds
             if actual_risk_pct > final_risk_percent * 1.5:
-                # WARNING, not INFO. Nothing here can reduce the size -- the
-                # position is already at min lot -- so this is the operator's
-                # only notice that a trade went out at several times its
-                # intended risk. It belongs at a level that gets read.
+                # WARNING, not INFO. Contract-value or volume-step drift can
+                # still make realized risk differ from the target; surface it
+                # clearly even though the shared hard ceiling remains enforced.
                 logger.warning(
-                    f"[LOT SIZING] {symbol}: lot_raw={lot_raw:.5f} < min_lot={min_lot:.2f}. "
-                    f"Using min_lot. Actual risk: ${actual_risk_dollars:.2f} ({actual_risk_pct:.1f}%) "
-                    f"vs intended {final_risk_percent:.1f}% -- min lot forces "
-                    f"{actual_risk_pct / max(final_risk_percent, 0.01):.1f}x the intended size."
+                    f"[LOT SIZING] {symbol}: lot_raw={lot_raw:.5f}, broker_min={min_lot:.2f}. "
+                    f"Verified risk: ${actual_risk_dollars:.2f} ({actual_risk_pct:.2f}%) "
+                    f"vs intended {final_risk_percent:.2f}%."
                 )
         else:
             # SKIP: SL too wide for this account size at min lot
