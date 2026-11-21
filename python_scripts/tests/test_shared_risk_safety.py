@@ -8,6 +8,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import risk_limits as rl
 
+MAIN_SOURCE = (ROOT / "hybrid_trading_bot_multiuser.py").read_text(encoding="utf-8")
+
 
 passed = failed = 0
 
@@ -69,6 +71,22 @@ def test_daily_baseline_uses_atomic_legacy_compatible_schema():
         assert not pathlib.Path(str(path) + ".tmp").exists()
 
 
+
+def test_main_execution_volume_guard_fails_closed():
+    start = MAIN_SOURCE.index("def validate_lot_size(")
+    end = MAIN_SOURCE.index("\ndef is_spread_safe(", start)
+    helper = MAIN_SOURCE[start:end]
+    assert "floor_volume_to_step" in helper
+    assert "return min_lot" not in helper
+    assert "return 0.0" in helper
+    callsite = MAIN_SOURCE.index("lot_size = validate_lot_size(symbol, lot_raw)")
+    assert "if lot_size <= 0:" in MAIN_SOURCE[callsite:callsite + 500]
+
+
+def test_main_final_hard_cap_uses_shared_constant():
+    assert "hard_cap_pct = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT" in MAIN_SOURCE
+
+
 def test_per_trade_limit_is_shared_and_stricter_only():
     assert rl.resolve_user_limits(None)["per_trade"] == 1.5
     assert rl.resolve_user_limits({"max_risk_per_trade_percent": 0.5})["per_trade"] == 0.5
@@ -82,6 +100,8 @@ check("volume respects broker maximum", test_volume_caps_at_broker_max)
 check("daily baseline survives same-day process restart", test_daily_baseline_survives_restart)
 check("daily baseline uses full date and rolls across month boundary", test_daily_baseline_rolls_on_full_utc_date)
 check("daily baseline writes atomically with compatible schema", test_daily_baseline_uses_atomic_legacy_compatible_schema)
+check("primary bot volume validation fails closed below minimum or on margin errors", test_main_execution_volume_guard_fails_closed)
+check("primary bot final execution cap uses the shared per-trade constant", test_main_final_hard_cap_uses_shared_constant)
 check("per-trade ceiling is shared and user overrides can only tighten", test_per_trade_limit_is_shared_and_stricter_only)
 
 print(f"\n{passed} passed, {failed} failed")
