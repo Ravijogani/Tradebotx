@@ -88,6 +88,7 @@ import numpy as np
 import time
 import os
 import json
+import math
 import requests
 import google.generativeai as genai
 
@@ -8159,8 +8160,20 @@ def place_ai_trade(local_signal: Dict, account_equity: float, current_daily_pnl:
             logger.error(f"[EXEC GUARD] Signal for {symbol} lacked CapitalController risk override. Rejecting.")
             return False
             
-        final_risk_percent = local_signal['risk_percent_override']
-        
+        try:
+            account_equity = float(account_equity)
+            final_risk_percent = float(local_signal['risk_percent_override'])
+        except (TypeError, ValueError):
+            logger.error(f"[EXEC GUARD] {symbol}: invalid equity or risk override; rejecting")
+            return False
+        if (not math.isfinite(account_equity) or account_equity <= 0
+                or not math.isfinite(final_risk_percent) or final_risk_percent <= 0
+                or final_risk_percent > risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT):
+            logger.error(
+                f"[EXEC GUARD] {symbol}: equity/risk outside safe bounds "
+                f"(equity={account_equity}, risk={final_risk_percent}%). Rejecting.")
+            return False
+
         # 1. FINAL EXECUTION GUARDS (Risk guards allowed here)
         # ---------------------------------------------------------------------
         tick = mt5.symbol_info_tick(symbol)
