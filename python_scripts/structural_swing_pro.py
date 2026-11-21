@@ -231,7 +231,7 @@ class SwingTradingConfig:
     # multi-day stop distances, the same risk_percent swings more dollars
     # per unit of price movement than a tight intraday stop would.
     BASE_RISK_PERCENT: float = 1.0
-    MAX_RISK_PER_TRADE_PERCENT: float = 2.0
+    MAX_RISK_PER_TRADE_PERCENT: float = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT
     # Sourced from risk_limits.py -- the ceilings the public site promises
     # clients (5% daily / 10% weekly). Were 8.0 / 15.0 here: tighter than
     # the other two bots, still looser than what was advertised.
@@ -652,8 +652,8 @@ def project_lot_and_risk(symbol: str, entry_price: float, stop_loss: float,
         pip_value_per_lot = 10.0  # forex fallback -- standard pairs only
 
     lot_raw = intended_risk_amount / max(pip_risk * pip_value_per_lot, 0.001)
-    lot_size = round(lot_raw / lot_step) * lot_step
-    lot_size = max(spec['min_lot'], min(lot_size, spec['max_lot']))
+    lot_size = risk_limits.floor_volume_to_step(
+        lot_raw, lot_step, spec['min_lot'], spec['max_lot'])
 
     actual_risk_amount = lot_size * pip_risk * pip_value_per_lot
     actual_risk_percent = (actual_risk_amount / account_equity) * 100 if account_equity > 0 else 0.0
@@ -677,6 +677,9 @@ def validate_trade_risk(signal: Dict, account_equity: float) -> Tuple[bool, str]
         projection = project_lot_and_risk(symbol, signal['entry_price'], signal['stop_loss'],
                                            risk_percent, account_equity)
         actual_risk_percent = projection['actual_risk_percent']
+        if projection['lot_size'] <= 0:
+            return False, (f"Calculated volume for {symbol} is below broker minimum; "
+                           "trade rejected rather than rounding risk upward")
         if projection['lot_raw'] < projection['spec']['min_lot']:
             logger.info(
                 f"[RISK] {symbol}: ideal lot {projection['lot_raw']:.5f} < broker min "
@@ -1372,7 +1375,10 @@ def swing_trading_session() -> None:
 
     try:
         account_info = mt5.account_info()
-        state.daily_start_equity = account_info.equity if account_info else 0.0
+        _today_key = risk_limits.utc_day_key()
+        state.daily_start_equity = (risk_limits.load_or_init_daily_baseline(
+            DATA_DIR, account_info.equity, _today_key) if account_info else 0.0)
+        state.last_reset_day = _today_key
     except Exception as e:
         logger.error(f"Failed to get initial account info: {e}")
         state.daily_start_equity = 0.0
@@ -1419,14 +1425,15 @@ def swing_trading_session() -> None:
                 last_heartbeat = now
                 db_manager.send_heartbeat()
 
-            current_day = datetime.now(timezone.utc).day
+            current_day = risk_limits.utc_day_key()
             if state.last_reset_day is None:
                 state.last_reset_day = current_day
             if current_day != state.last_reset_day:
                 logger.info(f"[NEW DAY] Resetting daily P&L (was ${state.daily_pnl:.2f}) and trade count")
                 state.daily_pnl = 0.0
                 state.daily_trades = 0
-                state.daily_start_equity = account_info.equity
+                state.daily_start_equity = risk_limits.load_or_init_daily_baseline(
+                    DATA_DIR, account_info.equity, current_day)
                 state.last_reset_day = current_day
 
             # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
