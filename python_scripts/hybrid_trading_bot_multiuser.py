@@ -11972,18 +11972,23 @@ def ai_trading_session():
                 state._zero_equity_waits = 0
 
             # --- 0. DAILY RESET LOGIC ---
-            # Reset baseline at 00:00 UTC so "Daily Drawdown" is truly DAILY
-            current_day = datetime.now(timezone.utc).day
-            if not hasattr(state, 'last_reset_day'):
+            # Use the full UTC date (year-month-day), not day-of-month, and
+            # reuse the durable baseline shared by every strategy tier.
+            current_day = risk_limits.utc_day_key()
+            if not hasattr(state, 'last_reset_day') or state.last_reset_day is None:
                 state.last_reset_day = current_day
-            
+
             if current_day != state.last_reset_day:
                 logger.info(f" [NEW DAY] Resetting Daily Statistics (P&L: ${state.daily_pnl:.2f})")
                 state.daily_pnl = 0.0
                 state.daily_trades = 0
-                state.daily_start_equity = account_info.equity
+                state.daily_start_equity = load_or_init_daily_baseline(
+                    DATA_DIR, account_info.equity, current_day)
                 state.last_reset_day = current_day
-                persist_daily_baseline(DATA_DIR, datetime.now(timezone.utc).strftime('%Y-%m-%d'), account_info.equity)
+
+            if state.daily_start_equity <= 0:
+                logger.critical("[RISK] Durable daily equity baseline unavailable; stopping bot safely")
+                break
 
             # --- WEEKLY BASELINE (restart-safe, rolls on a real ISO week) ---
             # The weekly loss limit the site advertises had no implementation
