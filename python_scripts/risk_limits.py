@@ -210,9 +210,11 @@ def load_or_init_daily_baseline(data_dir: str, current_equity: float,
     """Reuse today's persisted equity baseline after restarts; initialize only on a new UTC day."""
     date_key = date_key or utc_day_key()
     saved = None
+    saved_exists = False
     try:
         with open(_daily_baseline_path(data_dir), 'r', encoding='utf-8') as f:
             saved = json.load(f)
+            saved_exists = True
     except FileNotFoundError:
         # First boot for this data directory: create today's baseline below.
         pass
@@ -221,7 +223,7 @@ def load_or_init_daily_baseline(data_dir: str, current_equity: float,
         # today's prior losses. Never replace it with current equity.
         return 0.0
 
-    if saved is not None:
+    if saved_exists:
         if not isinstance(saved, dict) or not isinstance(saved.get('date'), str) or not saved.get('date'):
             return 0.0
         try:
@@ -234,7 +236,11 @@ def load_or_init_daily_baseline(data_dir: str, current_equity: float,
             return saved_baseline
         # A valid record for a different date is a genuine UTC day rollover.
 
-    if not current_equity or current_equity <= 0:
+    try:
+        current_equity = float(current_equity)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(current_equity) or current_equity <= 0:
         return 0.0
     # A baseline that cannot be durably written is not safe to trade against:
     # a restart could otherwise erase the day's loss history.
