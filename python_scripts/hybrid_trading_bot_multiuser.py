@@ -728,35 +728,18 @@ def _daily_baseline_path(data_dir: str) -> str:
 
 
 def load_or_init_daily_baseline(data_dir: str, current_equity: float, today: str) -> float:
-    """Restart-safe daily-loss baseline.
-
-    Previously this was set to *current* equity on every process start with
-    no persistence, so a bot restart mid-day (crash, VM reboot, redeploy)
-    would silently re-baseline the daily-loss circuit breaker from whatever
-    equity happened to be left — erasing losses already taken earlier that
-    same day and letting the account drop further than MAX_DAILY_LOSS_PERCENT
-    / MAX_DAILY_DRAWDOWN_PERCENT actually allow. If a baseline was already
-    recorded for today, reuse it; only a genuine new day gets a fresh one.
-    """
-    try:
-        with open(_daily_baseline_path(data_dir), 'r', encoding='utf-8') as f:
-            saved = json.load(f)
-        if saved.get('date') == today and isinstance(saved.get('baseline'), (int, float)) and saved['baseline'] > 0:
-            print(f"[BASELINE] Restored daily start equity ${saved['baseline']:.2f} for {today} (restart-safe)")
-            return float(saved['baseline'])
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-
-    persist_daily_baseline(data_dir, today, current_equity)
-    return current_equity
+    """Use the shared atomic, restart-safe daily baseline implementation."""
+    baseline = risk_limits.load_or_init_daily_baseline(data_dir, current_equity, today)
+    if baseline > 0:
+        print(f"[BASELINE] Daily start equity ${baseline:.2f} for {today}")
+    else:
+        print(f"[BASELINE] ERROR: no durable daily baseline available for {today}; entries must remain blocked")
+    return baseline
 
 
 def persist_daily_baseline(data_dir: str, date_str: str, baseline: float) -> None:
-    try:
-        with open(_daily_baseline_path(data_dir), 'w', encoding='utf-8') as f:
-            json.dump({'date': date_str, 'baseline': baseline}, f)
-    except OSError as e:
-        print(f"[BASELINE] WARNING: could not persist daily equity baseline: {e}")
+    if not risk_limits.persist_daily_baseline(data_dir, date_str, baseline):
+        print(f"[BASELINE] WARNING: could not persist daily equity baseline for {date_str}")
 
 
 # MAGIC NUMBER MANAGEMENT - Deterministic per user+strategy, collision-checked
