@@ -45,6 +45,7 @@ DESIGN NOTES
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, NamedTuple, Optional, Tuple
@@ -52,6 +53,7 @@ from typing import Any, Dict, Iterable, NamedTuple, Optional, Tuple
 # The advertised ceilings. These are the numbers on the public pricing/
 # landing page; they are the contract with the client, so they live here as
 # the default rather than being restated (differently) in three configs.
+PLATFORM_MAX_RISK_PER_TRADE_PERCENT: float = 1.5
 PLATFORM_MAX_DAILY_LOSS_PERCENT: float = 5.0
 PLATFORM_MAX_WEEKLY_LOSS_PERCENT: float = 10.0
 
@@ -81,13 +83,15 @@ def resolve_user_limits(user_settings: Optional[Dict] = None) -> Dict[str, float
     makes, not a default a row can override.
     """
     limits = {
+        'per_trade': PLATFORM_MAX_RISK_PER_TRADE_PERCENT,
         'daily': PLATFORM_MAX_DAILY_LOSS_PERCENT,
         'weekly': PLATFORM_MAX_WEEKLY_LOSS_PERCENT,
         'drawdown': PLATFORM_MAX_DRAWDOWN_PERCENT,
     }
     if not user_settings:
         return limits
-    for key, field in (('daily', 'max_daily_loss_percent'),
+    for key, field in (('per_trade', 'max_risk_per_trade_percent'),
+                       ('daily', 'max_daily_loss_percent'),
                        ('weekly', 'max_weekly_loss_percent'),
                        ('drawdown', 'max_drawdown_percent')):
         raw = user_settings.get(field)
@@ -156,6 +160,86 @@ def evaluate_risk_limits(current_equity: float,
                 max(usages))
 
     return RiskVerdict(False, '', 'within all limits', max(usages) if usages else 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Shared broker-volume normalization and restart-safe daily baseline
+# ---------------------------------------------------------------------------
+
+def floor_volume_to_step(raw_volume: float, volume_step: float,
+                         volume_min: float, volume_max: float) -> float:
+    """Round volume DOWN to a broker's step; return 0 when min volume is unaffordable.
+
+    This helper deliberately never rounds a requested size up. Callers must
+    treat 0 as a hard risk veto; do not replace it with volume_min.
+    """
+    try:
+        raw = float(raw_volume)
+        step = float(volume_step)
+        minimum = float(volume_min)
+        maximum = float(volume_max)
+    except (TypeError, ValueError):
+        return 0.0
+    if not all(math.isfinite(v) for v in (raw, step, minimum, maximum)):
+        return 0.0
+    if raw <= 0 or step <= 0 or minimum <= 0 or maximum < minimum:
+        return 0.0
+    if raw + step * 1e-9 < minimum:
+        return 0.0
+    steps = math.floor((raw + step * 1e-9) / step)
+    volume = round(steps * step, 8)
+    if volume + step * 1e-9 < minimum:
+        return 0.0
+    return min(volume, maximum)
+
+
+def utc_day_key(now: Optional[datetime] = None) -> str:
+    """Return the full UTC calendar date (YYYY-MM-DD), never day-of-month only."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc).date().isoformat()
+
+
+def _daily_baseline_path(data_dir: str) -> str:
+    return os.path.join(data_dir, 'daily_equity_baseline.json')
+
+
+def load_or_init_daily_baseline(data_dir: str, current_equity: float,
+                                date_key: Optional[str] = None) -> float:
+    """Reuse today's persisted equity baseline after restarts; initialize only on a new UTC day."""
+    date_key = date_key or utc_day_key()
+    try:
+        with open(_daily_baseline_path(data_dir), 'r', encoding='utf-8') as f:
+            saved = json.load(f)
+        if (saved.get('date') == date_key
+                and isinstance(saved.get('baseline'), (int, float))
+                and math.isfinite(float(saved['baseline']))
+                and saved['baseline'] > 0):
+            return float(saved['baseline'])
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
+        pass
+
+    persist_daily_baseline(data_dir, date_key, current_equity)
+    return float(current_equity) if current_equity and current_equity > 0 else 0.0
+
+
+def persist_daily_baseline(data_dir: str, date_key: str, baseline: float) -> None:
+    """Atomically persist the daily equity baseline using the legacy-compatible file schema."""
+    try:
+        value = float(baseline)
+        if not math.isfinite(value) or value <= 0:
+            return
+        os.makedirs(data_dir, exist_ok=True)
+        path = _daily_baseline_path(data_dir)
+        temp_path = path + '.tmp'
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump({'date': date_key, 'baseline': value}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    except (OSError, TypeError, ValueError) as e:
+        print(f"[BASELINE] WARNING: could not persist daily equity baseline: {e}")
 
 
 # ---------------------------------------------------------------------------
