@@ -1045,7 +1045,7 @@ class AITradingConfig:
     # 6-trade losing streak for Swappy in just 18 total trades -- a ~47%
     # drawdown from that one streak at 10% risk, vs ~6% at the correct 1%.
     BASE_RISK_PERCENT: float = 1.0       # 1% risk per trade
-    MAX_RISK_PERCENT: float = 1.5        # Hard cap -- never exceed 1.5% for scalping
+    MAX_RISK_PERCENT: float = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT  # Shared platform hard cap
 
     # ?? SPREAD-SAFE SL SETTINGS (NEW) ????????????????????????????????????????
     # MT5 compares BID vs SL for longs, ASK vs SL for shorts.
@@ -8977,8 +8977,11 @@ def execute_aox_layer(symbol: str, direction: str, entry_price: float,
             return 0
 
         lot_step = sym_info.volume_step
-        lot_size = max(sym_info.volume_min, min(
-            round(lot_raw / lot_step) * lot_step, sym_info.volume_max))
+        lot_size = risk_limits.floor_volume_to_step(
+            lot_raw, lot_step, sym_info.volume_min, sym_info.volume_max)
+        if lot_size <= 0:
+            logger.info(f"[AOX {layer_name}] {symbol}: risk budget is below broker minimum volume; layer skipped")
+            return 0
 
         mode = sym_info.filling_mode
         fill = (mt5.ORDER_FILLING_FOK if mode & 1 else
@@ -11476,8 +11479,11 @@ def place_swappy_pending_order(symbol: str, sw: dict, direction: str,
             lot_raw = risk_amount / max(sl_dist * 10, 0.001)
 
         lot_step = sym_info.volume_step
-        lot_size = round(lot_raw / lot_step) * lot_step
-        lot_size = max(sym_info.volume_min, min(lot_size, sym_info.volume_max))
+        lot_size = risk_limits.floor_volume_to_step(
+            lot_raw, lot_step, sym_info.volume_min, sym_info.volume_max)
+        if lot_size <= 0:
+            logger.info(f"[SWAPPY 3C] {symbol}: risk budget is below broker minimum volume; setup skipped")
+            return False
 
         # DYNAMIC TP FIX: was unconditionally 3:1 RR regardless of market
         # structure -- see find_swappy_structural_tp's docstring. Try a real
