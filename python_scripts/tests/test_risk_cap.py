@@ -1,23 +1,13 @@
 """
 How much can ONE trade lose? The answer used to depend on a silent failure.
 
-Four layers set position size, and two of them disagreed with their own
-comments:
+The primary bot must apply one shared per-trade ceiling at the final
+execution boundary, not just in its strategy controller. Broker volume
+normalization must floor to the broker step and refuse a minimum lot that
+cannot fit inside the risk or margin budget.
 
-  1. CapitalController.calculate() clamps INTENDED risk to [0.25%, 1.5%].
-     This layer works.
-  2. get_dynamic_trade_params narrows the STOP so a min-lot position lands
-     near MAX_RISK_PERCENT. This is the primary control -- and it sat in a
-     try/except that swallowed failures to logger.debug, so when it did not
-     run, nothing said so.
-  3. place_ai_trade's min-lot backstop refused trades over `hard_cap_pct`.
-     That was 10.0 on a line commented "Never exceed 3% on any single
-     trade" -- $18.93 authorised on a $189 account where intent was $1.89.
-  4. The portfolio cap reads 25.0 (commented 3%) but MAX_CONCURRENT_TRADES
-     binds first at 2, so the real portfolio ceiling is 2x1.0 + 1.5 = 3.5%.
-
-Layers 1 and 3 are asserted against the real objects; 2 and 4 by inspection,
-because both live inside the MT5 call path.
+The test checks the real CapitalController and inspects the MT5 execution
+path for the final hard cap and fail-closed sizing behavior.
 """
 import pathlib as _pl
 import sys
@@ -101,7 +91,7 @@ def t6():
     assert i > 0, "the overshoot notice vanished"
     assert 'logger.warning' in SRC[max(0, i - 400):i], \
         "a trade going out at several times intended risk is still only INFO"
-check("a min-lot overshoot is logged as a warning, not buried at INFO", t6)
+check("execution sizing deviations are logged as a warning, not buried at INFO", t6)
 
 
 # ---------- layer 2: the primary control must not fail silently ----------
