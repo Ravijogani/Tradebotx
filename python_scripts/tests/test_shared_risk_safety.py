@@ -83,6 +83,16 @@ def test_main_execution_volume_guard_fails_closed():
     assert "if lot_size <= 0:" in MAIN_SOURCE[callsite:callsite + 500]
 
 
+
+def test_main_execution_rejects_invalid_equity_and_risk_override():
+    start = MAIN_SOURCE.index("def place_ai_trade(")
+    end = MAIN_SOURCE.index("\ndef ", start + 5)
+    body = MAIN_SOURCE[start:end]
+    assert "not math.isfinite(account_equity)" in body
+    assert "account_equity <= 0" in body
+    assert "final_risk_percent > risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT" in body
+
+
 def test_main_final_hard_cap_uses_shared_constant():
     assert "hard_cap_pct = risk_limits.PLATFORM_MAX_RISK_PER_TRADE_PERCENT" in MAIN_SOURCE
 
@@ -101,6 +111,7 @@ check("daily baseline survives same-day process restart", test_daily_baseline_su
 check("daily baseline uses full date and rolls across month boundary", test_daily_baseline_rolls_on_full_utc_date)
 check("daily baseline writes atomically with compatible schema", test_daily_baseline_uses_atomic_legacy_compatible_schema)
 check("primary bot volume validation fails closed below minimum or on margin errors", test_main_execution_volume_guard_fails_closed)
+check("primary bot rejects invalid equity and risk overrides before sizing", test_main_execution_rejects_invalid_equity_and_risk_override)
 check("primary bot final execution cap uses the shared per-trade constant", test_main_final_hard_cap_uses_shared_constant)
 check("per-trade ceiling is shared and user overrides can only tighten", test_per_trade_limit_is_shared_and_stricter_only)
 
