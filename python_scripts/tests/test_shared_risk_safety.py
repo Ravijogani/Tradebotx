@@ -72,6 +72,24 @@ def test_daily_baseline_uses_atomic_legacy_compatible_schema():
 
 
 
+
+def test_daily_baseline_fails_closed_when_storage_unavailable():
+    with tempfile.TemporaryDirectory() as directory:
+        blocker = pathlib.Path(directory) / "not_a_directory"
+        blocker.write_text("file", encoding="utf-8")
+        baseline = rl.load_or_init_daily_baseline(str(blocker), 10000.0, "2026-11-21")
+        assert baseline == 0.0
+
+
+def test_all_bot_tiers_use_persistent_full_date_baseline():
+    for name in ("intraday.py", "structural_swing_pro.py"):
+        source = (ROOT / name).read_text(encoding="utf-8")
+        assert "risk_limits.utc_day_key()" in source
+        assert "risk_limits.load_or_init_daily_baseline(" in source
+        assert "datetime.now(timezone.utc).day" not in source
+    assert "risk_limits.load_or_init_daily_baseline(data_dir, current_equity, today)" in MAIN_SOURCE
+
+
 def test_main_execution_volume_guard_fails_closed():
     start = MAIN_SOURCE.index("def validate_lot_size(")
     end = MAIN_SOURCE.index("\ndef is_spread_safe(", start)
@@ -110,6 +128,8 @@ check("volume respects broker maximum", test_volume_caps_at_broker_max)
 check("daily baseline survives same-day process restart", test_daily_baseline_survives_restart)
 check("daily baseline uses full date and rolls across month boundary", test_daily_baseline_rolls_on_full_utc_date)
 check("daily baseline writes atomically with compatible schema", test_daily_baseline_uses_atomic_legacy_compatible_schema)
+check("daily baseline failure blocks rather than silently allowing trading", test_daily_baseline_fails_closed_when_storage_unavailable)
+check("all bot tiers use persistent full-date daily baselines", test_all_bot_tiers_use_persistent_full_date_baseline)
 check("primary bot volume validation fails closed below minimum or on margin errors", test_main_execution_volume_guard_fails_closed)
 check("primary bot rejects invalid equity and risk overrides before sizing", test_main_execution_rejects_invalid_equity_and_risk_override)
 check("primary bot final execution cap uses the shared per-trade constant", test_main_final_hard_cap_uses_shared_constant)
